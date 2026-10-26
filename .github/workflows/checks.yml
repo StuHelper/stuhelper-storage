@@ -32,6 +32,6 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           sudo apt-get update -qq
-          sudo apt-get install -y postgresql-18=18.6-0ubuntu0.26.04.1
+          sudo apt-get install -y postgresql-18=18.6-1.pgdg26.04+2 postgresql-client-18=18.6-1.pgdg26.04+2
       - name: Check standalone module with isolated database
         run: bash scripts/check-with-postgres.sh
