@@ -216,6 +216,14 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		if op.Attempts >= 5 {
 			return storage.ErrCapacity
 		}
+		recent, e := tx.RecentAttempts(op.Owner, s.cfg.Clock().Add(-5*time.Minute))
+		if e != nil {
+			return e
+		}
+		if recent >= 5 {
+			return storage.ErrCapacity
+		}
+		op.AttemptedAt = s.cfg.Clock()
 		op.Attempts++
 		op.LeaseUntil = s.cfg.Clock().Add(2 * time.Minute)
 		return tx.SaveOperation(op)

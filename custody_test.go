@@ -290,3 +290,36 @@ func TestCustodyDuplicateAccountsClaimsAndPagination(t *testing.T) {
 		t.Fatal(page, e)
 	}
 }
+
+func TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart(t *testing.T) {
+	h, s, p, auth, user, q := custodyFixture(t)
+	p.failPrepare.Store(true)
+	var v custody.View
+	for n := 1; n <= 5; n++ {
+		target := ""
+		if n > 1 {
+			target = v.ID
+			q.Revision = v.Revision
+		}
+		var e error
+		v, e = s.Submit(h.ctx, user, target, fmt.Sprintf("40000000-0000-4000-8000-%012d", n), q)
+		if e != nil || v.State != "credentials_required" {
+			t.Fatal(v, e)
+		}
+	}
+	// Reconstructing the service does not reset the persisted per-owner budget.
+	next, e := custody.New(&postgres.CustodyRepository{Repository: h.repo}, auth, h.s, p, custody.Config{Actor: h.actor, Policy: s.Policy(), PublicScopes: []string{"school-a"}, Clock: h.clock.Now, Timeout: time.Minute})
+	if e != nil {
+		t.Fatal(e)
+	}
+	q.Revision = v.Revision
+	v, e = next.Submit(h.ctx, user, v.ID, "40000000-0000-4000-8000-000000000006", q)
+	if !errors.Is(e, storage.ErrCapacity) {
+		t.Fatal("new key reset login budget", e)
+	}
+	h.clock.Add(6 * time.Minute)
+	v, e = next.Resume(h.ctx, user, v.ID, custody.ResumeRequest{RequestID: v.RequestID, Revision: v.Revision}, false)
+	if e != nil || v.State != "credentials_required" {
+		t.Fatal("budget did not recover after cooldown", v, e)
+	}
+}

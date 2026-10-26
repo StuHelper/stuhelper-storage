@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	storage "github.com/StuHelper/stuhelper-storage"
 	"github.com/StuHelper/stuhelper-storage/custody"
@@ -64,5 +65,11 @@ func (t *custodyTx) Count(p storage.Principal) (int, error) {
 func (t *custodyTx) OperationCount() (int, error) {
 	var n int
 	e := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM storage.custody_operations`).Scan(&n)
+	return n, safe(e)
+}
+
+func (t *custodyTx) RecentAttempts(p storage.Principal, since time.Time) (int, error) {
+	var n int
+	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(sum((data->>'Attempts')::int),0) FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3`, p.Issuer, p.Subject, since).Scan(&n)
 	return n, safe(e)
 }

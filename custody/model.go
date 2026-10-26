@@ -70,6 +70,7 @@ type Operation struct {
 	Until            time.Time
 	ExpectedRevision int64
 	Attempts         int
+	AttemptedAt      time.Time
 	LeaseUntil       time.Time
 	Result           *storage.Instance
 	Complete         bool
@@ -81,6 +82,7 @@ type Tx interface {
 	SaveOperation(Operation) error
 	List(storage.Principal, int, string) ([]Binding, error)
 	Count(storage.Principal) (int, error)
+	RecentAttempts(storage.Principal, time.Time) (int, error)
 	OperationCount() (int, error)
 	Event(storage.Event) error
 }
