@@ -104,6 +104,9 @@
     "STORAGE-25": [
       "contribution_test.go#TestContributionControlFencesOwnershipReplayAndConsentExpiry",
       "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup"
+    ],
+    "STORAGE-26": [
+      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe"
     ]
   }
 }

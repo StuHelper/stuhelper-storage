@@ -1,11 +1,65 @@
 package storage_test
 
 import (
+	"encoding/json"
 	"errors"
 	storage "github.com/StuHelper/stuhelper-storage"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestContributionCandidatesAreOwnedEmptyAndDoNotProbe(t *testing.T) {
+	h := harnessFor(t)
+	for _, id := range []string{"a", "b", "foreign", "platform", "active"} {
+		owner, kind := "owner", "contributor"
+		if id == "foreign" {
+			owner = "other"
+		}
+		if id == "platform" {
+			kind = "platform"
+		}
+		i := h.instance(t, id, owner, kind, 1024)
+		if id != "active" {
+			i.State = "paused"
+			if _, e := h.s.UpdateInstance(h.ctx, h.actor, "pause-"+id, i); e != nil {
+				t.Fatal(e)
+			}
+		}
+	}
+	before := h.provider.verifyCalls
+	page, e := h.s.ListContributionCandidates(h.ctx, h.actor, "owner", 1, "")
+	if e != nil || len(page.Items) != 1 || page.Items[0].ID != "a" || page.NextCursor != "a" {
+		t.Fatal(page, e)
+	}
+	page, e = h.s.ListContributionCandidates(h.ctx, h.actor, "owner", 1, page.NextCursor)
+	if e != nil || len(page.Items) != 1 || page.Items[0].ID != "b" || page.NextCursor != "" {
+		t.Fatal(page, e)
+	}
+	if h.provider.verifyCalls != before {
+		t.Fatal("selection probed provider")
+	}
+	b, e := json.Marshal(page)
+	if e != nil || strings.Contains(string(b), "credential") || strings.Contains(string(b), "account_domain") || strings.Contains(string(b), "root") {
+		t.Fatal("custody data leaked")
+	}
+	snapshot, e := h.s.InspectContribution(h.ctx, h.actor, "a", "owner")
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = h.s.ApplyContribution(h.ctx, h.actor, "a", storage.ContributionControl{ID: "bound", OwnerDomain: "owner", Revision: 1, ExpectedRevision: snapshot.Revision, State: "paused", LimitBytes: 1024, Until: h.clock.Now().Add(time.Hour)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	page, e = h.s.ListContributionCandidates(h.ctx, h.actor, "owner", 100, "")
+	if e != nil || len(page.Items) != 1 || page.Items[0].ID != "b" {
+		t.Fatal("bound instance selectable", page, e)
+	}
+	h.auth.denied.Store(true)
+	if _, e = h.s.ListContributionCandidates(h.ctx, h.actor, "owner", 100, ""); !errors.Is(e, storage.ErrDenied) {
+		t.Fatal(e)
+	}
+}
 
 func TestContributionControlFencesOwnershipReplayAndConsentExpiry(t *testing.T) {
 	h := harnessFor(t)

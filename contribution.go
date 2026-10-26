@@ -5,6 +5,46 @@ import (
 	"time"
 )
 
+type ContributionCandidate struct {
+	ID                     string    `json:"id"`
+	Adapter                string    `json:"adapter"`
+	AvailableBytes         int64     `json:"available_bytes"`
+	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
+}
+type ContributionCandidates struct {
+	Items      []ContributionCandidate `json:"items"`
+	NextCursor string                  `json:"next_cursor"`
+}
+
+func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, owner string, n int, after string) (ContributionCandidates, error) {
+	out := ContributionCandidates{Items: []ContributionCandidate{}}
+	if !validID(owner) || n < 1 || n > 100 || (after != "" && !validID(after)) {
+		return out, ErrInput
+	}
+	if e := s.authorize(ctx, p, "storage.contributions.read", "", Protection{}); e != nil {
+		return out, e
+	}
+	e := s.repo.Transaction(ctx, func(tx Transaction) error {
+		items, e := tx.ContributionCandidates(owner, n+1, after)
+		if e != nil {
+			return e
+		}
+		if len(items) > n {
+			items = items[:n]
+			out.NextCursor = items[n-1].ID
+		}
+		for _, i := range items {
+			if !i.Authorized || !i.ExpiresAt.After(s.now()) {
+				continue
+			}
+			i.State = "active" // Compute potential capacity without enabling the instance.
+			out.Items = append(out.Items, ContributionCandidate{i.ID, i.Adapter, instanceHealth(i, s.now()).AvailableBytes, i.ExpiresAt})
+		}
+		return s.authorize(ctx, p, "storage.contributions.read", "", Protection{})
+	})
+	return out, e
+}
+
 // ContributionControl is a permanent, monotonically revised business binding.
 // It contains no provider credential and cannot extend provider authorization.
 type ContributionControl struct {

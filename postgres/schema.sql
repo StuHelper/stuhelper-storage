@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS storage.jobs (
     lease_until timestamptz NOT NULL,
     data jsonb NOT NULL
 );
+CREATE INDEX IF NOT EXISTS replicas_instance ON storage.replicas(instance_id);
 CREATE INDEX IF NOT EXISTS jobs_claim ON storage.jobs(state,available_at,lease_until);
 CREATE TABLE IF NOT EXISTS storage.idempotency (
     key text PRIMARY KEY,

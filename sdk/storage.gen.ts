@@ -201,6 +201,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material. */
+        get: operations["listContributionCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -473,6 +490,18 @@ export interface components {
             remaining_replicas: number;
             /** Format: date-time */
             observed_at: string;
+        };
+        ContributionCandidate: {
+            id: string;
+            adapter: string;
+            /** Format: int64 */
+            available_bytes: number;
+            /** Format: date-time */
+            authorization_expires_at: string;
+        };
+        ContributionCandidates: {
+            items: components["schemas"]["ContributionCandidate"][];
+            next_cursor: string;
         };
     };
     responses: never;
@@ -1929,6 +1958,93 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContributionSnapshot"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listContributionCandidates: {
+        parameters: {
+            query: {
+                owner_domain: string;
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionCandidates"];
                 };
             };
             /** @description Stable sanitized error */

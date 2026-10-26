@@ -261,6 +261,7 @@ type Transaction interface {
 	Lock(string) error
 	Instance(string) (Instance, error)
 	Instances(int, string) ([]Instance, error)
+	ContributionCandidates(string, int, string) ([]Instance, error)
 	SaveInstance(Instance) error
 	InstanceReplicas(string) (int64, error)
 	Object(string) (Object, error)

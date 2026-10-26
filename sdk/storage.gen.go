@@ -175,6 +175,20 @@ type Admission struct {
 	Scope     string    `json:"scope"`
 }
 
+// ContributionCandidate defines model for ContributionCandidate.
+type ContributionCandidate struct {
+	Adapter                string    `json:"adapter"`
+	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
+	AvailableBytes         int64     `json:"available_bytes"`
+	Id                     string    `json:"id"`
+}
+
+// ContributionCandidates defines model for ContributionCandidates.
+type ContributionCandidates struct {
+	Items      []ContributionCandidate `json:"items"`
+	NextCursor string                  `json:"next_cursor"`
+}
+
 // ContributionControl defines model for ContributionControl.
 type ContributionControl struct {
 	ExpectedRevision int64                    `json:"expected_revision"`
@@ -418,6 +432,13 @@ type Revision struct {
 	Revision int64 `json:"revision"`
 }
 
+// ListContributionCandidatesParams defines parameters for ListContributionCandidates.
+type ListContributionCandidatesParams struct {
+	OwnerDomain string  `form:"owner_domain" json:"owner_domain"`
+	Limit       *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	After       *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
 // InspectContributionInstanceParams defines parameters for InspectContributionInstance.
 type InspectContributionInstanceParams struct {
 	OwnerDomain string `form:"owner_domain" json:"owner_domain"`
@@ -593,6 +614,11 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// ListContributionCandidates performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
+	//
+	// Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
+	ListContributionCandidates(ctx context.Context, params *ListContributionCandidatesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InspectContributionInstance performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
 	//
 	// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
@@ -715,6 +741,21 @@ type ClientInterface interface {
 	//
 	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
 	RetryStorageJob(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ListContributionCandidates performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
+//
+// Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
+func (c *Client) ListContributionCandidates(ctx context.Context, params *ListContributionCandidatesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListContributionCandidatesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // InspectContributionInstance performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
@@ -1118,6 +1159,80 @@ func (c *Client) RetryStorageJob(ctx context.Context, objectId string, jobId str
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewListContributionCandidatesRequest constructs an http.Request for the ListContributionCandidates method
+func NewListContributionCandidatesRequest(server string, params *ListContributionCandidatesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/contributions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "owner_domain", params.OwnerDomain, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewInspectContributionInstanceRequest constructs an http.Request for the InspectContributionInstance method
@@ -2102,6 +2217,13 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ListContributionCandidatesWithResponse performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
+	//
+	// Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListContributionCandidatesWithResponse(ctx context.Context, params *ListContributionCandidatesParams, reqEditors ...RequestEditorFn) (*ListContributionCandidatesResponse, error)
+
 	// InspectContributionInstanceWithResponse performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
 	//
 	// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
@@ -2258,6 +2380,96 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
 	RetryStorageJobWithResponse(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*RetryStorageJobResponse, error)
+}
+
+type ListContributionCandidatesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributionCandidates
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON200() *ContributionCandidates {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListContributionCandidatesResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListContributionCandidatesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListContributionCandidatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListContributionCandidatesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListContributionCandidatesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type InspectContributionInstanceResponse struct {
@@ -3783,6 +3995,19 @@ func (r RetryStorageJobResponse) ContentType() string {
 	return ""
 }
 
+// ListContributionCandidatesWithResponse performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
+//
+// Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListContributionCandidatesWithResponse(ctx context.Context, params *ListContributionCandidatesParams, reqEditors ...RequestEditorFn) (*ListContributionCandidatesResponse, error) {
+	rsp, err := c.ListContributionCandidates(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListContributionCandidatesResponse(rsp)
+}
+
 // InspectContributionInstanceWithResponse performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
 //
 // Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
@@ -4106,6 +4331,81 @@ func (c *ClientWithResponses) RetryStorageJobWithResponse(ctx context.Context, o
 		return nil, err
 	}
 	return ParseRetryStorageJobResponse(rsp)
+}
+
+// ParseListContributionCandidatesResponse parses an HTTP response from a ListContributionCandidatesWithResponse call
+func ParseListContributionCandidatesResponse(rsp *http.Response) (*ListContributionCandidatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListContributionCandidatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributionCandidates
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseInspectContributionInstanceResponse parses an HTTP response from a InspectContributionInstanceWithResponse call

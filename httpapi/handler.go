@@ -33,6 +33,17 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h := &handler{s, auth, maxUpload}
 	mux := http.NewServeMux()
 	h.mount(mux, "GET /api/v1/storage/operations", false, h.operations)
+	h.mount(mux, "GET /api/v1/storage/contributions", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+		n := 25
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			var e error
+			n, e = strconv.Atoi(raw)
+			if e != nil {
+				return nil, storage.ErrInput
+			}
+		}
+		return s.ListContributionCandidates(r.Context(), p, r.URL.Query().Get("owner_domain"), n, r.URL.Query().Get("after"))
+	})
 	h.mount(mux, "GET /api/v1/storage/contributions/{id}", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 		return h.s.InspectContribution(r.Context(), p, r.PathValue("id"), r.URL.Query().Get("owner_domain"))
 	})
