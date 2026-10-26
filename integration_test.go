@@ -548,6 +548,12 @@ func TestRevocationDuringWriteAndDeleteCannotResurrectObject(t *testing.T) {
 
 func TestRuntimeDatabaseIdentityAndAtomicAuditOutbox(t *testing.T) {
 	h := harnessFor(t)
+	if err := h.repo.CheckRuntime(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&postgres.Repository{DB: h.admin}).CheckRuntime(h.ctx); !errors.Is(err, storage.ErrDenied) {
+		t.Fatal("accepted administrative database identity", err)
+	}
 	for _, query := range []string{`SELECT * FROM other_module.private_data`, `CREATE TABLE storage.forbidden(id integer)`, `DELETE FROM storage.audit`} {
 		if _, err := h.db.Exec(query); err == nil {
 			t.Fatalf("runtime permitted %s", query)
