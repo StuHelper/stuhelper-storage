@@ -24,7 +24,7 @@
     "STORAGE-16": ["runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"],
     "STORAGE-17": ["runtime_integration_test.go#TestBlockedJobsKeepRetryLimit", "runtime_integration_test.go#TestBlockedPeriodicVerificationDoesNotRestart"],
     "STORAGE-18": ["drivers/bhpan/restore_test.go#TestRestoreExistingBindingAndReplaceSession", "drivers/bhpan/restore_test.go#TestRestoreRejectsForeignRootAndRevokedLateResult"],
-    "STORAGE-19": ["runtime_integration_test.go#TestDisabledInstanceCannotTriggerProviderRefresh"],
+    "STORAGE-19": ["runtime_integration_test.go#TestDisabledInstanceCannotTriggerProviderRefresh", "runtime_integration_test.go#TestDisabledReplicaDoesNotSchedulePeriodicVerification"],
     "STORAGE-20": ["operations_test.go#TestMissingReplicaIsRebuiltWithNewIntentAndBalancedCapacity"],
     "STORAGE-21": ["operations_test.go#TestOperationsAuthorizationCapacityFailuresAndPagination", "operations_test.go#TestSupersededVerificationIsNotAnActionableBlockage"],
     "STORAGE-22": ["media_boundary_test.go#TestStableClientKeySurvivesReplayExpiryAndDeletion", "media_boundary_test.go#TestProtectionChangePreservesLastVerifiedSource"]

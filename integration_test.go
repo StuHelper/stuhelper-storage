@@ -43,18 +43,19 @@ func (a *authorization) Authorize(_ context.Context, p storage.Principal, action
 }
 
 type provider struct {
-	mu              sync.Mutex
-	files           map[string]map[string][]byte
-	accounts        map[string]string
-	writes          int
-	verifyCalls     int
-	lostReply       bool
-	lostBegin       bool
-	corruptWrite    bool
-	readUnavailable bool
-	readStarted     chan struct{}
-	readWait        chan struct{}
-	afterWrite      func()
+	mu                sync.Mutex
+	files             map[string]map[string][]byte
+	accounts          map[string]string
+	writes            int
+	verifyCalls       int
+	verificationClock func() time.Time
+	lostReply         bool
+	lostBegin         bool
+	corruptWrite      bool
+	readUnavailable   bool
+	readStarted       chan struct{}
+	readWait          chan struct{}
+	afterWrite        func()
 }
 
 func (p *provider) Verify(_ context.Context, i storage.Instance) (storage.InstanceEvidence, error) {
@@ -65,7 +66,11 @@ func (p *provider) Verify(_ context.Context, i storage.Instance) (storage.Instan
 	if domain == "" {
 		domain = "account:" + i.CredentialRef
 	}
-	return storage.InstanceEvidence{AccountDomain: domain, ProviderFree: 1 << 30, VerifiedAt: time.Now()}, nil
+	now := time.Now()
+	if p.verificationClock != nil {
+		now = p.verificationClock()
+	}
+	return storage.InstanceEvidence{AccountDomain: domain, ProviderFree: 1 << 30, VerifiedAt: now}, nil
 }
 func (p *provider) Resolve(context.Context, storage.Instance) (storage.Driver, error) { return p, nil }
 func (p *provider) Find(_ context.Context, i storage.Instance, intent string, expected storage.Locator) (storage.Locator, error) {

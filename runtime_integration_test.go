@@ -44,6 +44,66 @@ func TestDisabledInstanceCannotTriggerProviderRefresh(t *testing.T) {
 	}
 }
 
+func TestDisabledReplicaDoesNotSchedulePeriodicVerification(t *testing.T) {
+	for _, mode := range []string{"revoked", "unauthorized", "expired"} {
+		t.Run(mode, func(t *testing.T) {
+			h := harnessFor(t)
+			h.provider.verificationClock = h.clock.Now
+			first := h.instance(t, "a", "a", "platform", 1024)
+			for _, id := range []string{"b", "c"} {
+				h.instance(t, id, id, "platform", 1024)
+			}
+			data := []byte("idle instance remains idle")
+			o := h.object(t, "create", data)
+			h.ingest(t, o.ID, data)
+			h.reconcile(t)
+			h.run(t)
+			switch mode {
+			case "revoked":
+				first.State = "revoked"
+			case "unauthorized":
+				first.Authorized = false
+			case "expired":
+				first.ExpiresAt = h.clock.Now().Add(time.Minute)
+				for n := range first.Admissions {
+					first.Admissions[n].ExpiresAt = first.ExpiresAt
+				}
+			}
+			var err error
+			first, err = h.s.UpdateInstance(h.ctx, h.actor, "disable", first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.clock.Add(31 * time.Minute)
+			h.reconcile(t)
+			var count int
+			if err = h.db.QueryRow(`SELECT count(*) FROM storage.jobs j JOIN storage.replicas r ON r.id=j.data->>'replica_id' WHERE r.instance_id='a' AND j.data->>'kind'='verify' AND j.state IN ('pending','running','blocked')`).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("disabled verification queued: %d %v", count, err)
+			}
+			h.run(t)
+			out, err := h.s.Operations(h.ctx, h.actor, 100, "", "")
+			if err != nil || out.Jobs.Blocked != 0 {
+				t.Fatalf("idle account caused an actionable blockage: %v %+v", err, out.Jobs)
+			}
+			first.Authorized = true
+			first.State = "active"
+			first.ExpiresAt = h.clock.Now().Add(time.Hour)
+			for n := range first.Admissions {
+				first.Admissions[n].ExpiresAt = first.ExpiresAt
+			}
+			if _, err = h.s.UpdateInstance(h.ctx, h.actor, "renew", first); err != nil {
+				t.Fatal(err)
+			}
+			h.reconcile(t)
+			h.run(t)
+			st, err := h.s.Status(h.ctx, h.actor, o.ID)
+			if err != nil || st.Healthy != 3 {
+				t.Fatalf("renewed account did not verify: %v %+v", err, st)
+			}
+		})
+	}
+}
+
 func TestTransferAdmissionAndShutdownCancellation(t *testing.T) {
 	h := harnessFor(t, func(c *storage.Config) { c.ParallelTransfers = 1 })
 	for _, id := range []string{"a", "b", "c"} {
