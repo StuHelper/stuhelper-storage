@@ -293,6 +293,7 @@ func (s *Service) Instances(ctx context.Context, p Principal, limit int, after s
 }
 
 type CreateRequest struct {
+	ClientKey  string     `json:"client_key,omitempty"`
 	Size       int64      `json:"size"`
 	SHA256     string     `json:"sha256"`
 	Protection Protection `json:"protection"`
@@ -316,11 +317,31 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 	if r.Policy == (Policy{}) {
 		r.Policy = DefaultPolicy()
 	}
-	if r.Size < 1 || r.Size > s.cfg.MaxObjectSize || !digest.MatchString(r.SHA256) || !r.Protection.Valid() || !r.Policy.Valid() {
+	if r.Size < 1 || r.Size > s.cfg.MaxObjectSize || !digest.MatchString(r.SHA256) || !r.Protection.Valid() || !r.Policy.Valid() || r.ClientKey != "" && !validID(r.ClientKey) {
 		return out, ErrInput
 	}
 	err := s.mutation(ctx, p, "storage.objects.create", "", key, r, func(tx Transaction) error { return s.authorize(ctx, p, "storage.objects.create", "", r.Protection) }, func(tx Transaction) (any, error) {
 		o := Object{ID: newID(), Owner: p, Size: r.Size, SHA256: r.SHA256, Protection: r.Protection, Policy: r.Policy, Revision: 1, State: "pending", CreatedAt: s.now(), References: []Reference{}}
+		if r.ClientKey != "" {
+			o.ID = requestHash([]string{"client-object", p.Issuer, p.Subject, r.ClientKey})
+			o.CreationHash = requestHash(r)
+			if err := tx.Lock("object:" + o.ID); err != nil {
+				return nil, err
+			}
+			existing, err := tx.Object(o.ID)
+			if err == nil {
+				if existing.Owner != p || existing.CreationHash != o.CreationHash {
+					return nil, ErrConflict
+				}
+				if err := s.authorize(ctx, p, "storage.objects.read", existing.ID, existing.Protection); err != nil {
+					return nil, err
+				}
+				return s.status(tx, existing)
+			}
+			if !errors.Is(err, ErrNotFound) {
+				return nil, err
+			}
+		}
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
@@ -528,13 +549,31 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 		if len(o.References) > 0 {
 			return nil, ErrConflict
 		}
-		o.Protection = protection
-		o.Revision++
-		o.Published = false
 		replicas, err := tx.Replicas(id)
 		if err != nil {
 			return nil, err
 		}
+		// Making controlled content public must not erase its verified source.
+		// A controlled staging instance can be admitted to both classifications;
+		// otherwise migration requires a separate object and explicit transfer.
+		retained := false
+		for _, r := range replicas {
+			i, err := tx.Instance(r.InstanceID)
+			if err != nil {
+				return nil, err
+			}
+			if r.State == "healthy" && r.ObjectRevision == o.Revision && !r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) && i.Allows(o.Protection, s.now()) && i.Allows(protection, s.now()) {
+				retained = true
+			}
+		}
+		// Restricting previously public content still stops incompatible delivery
+		// immediately; preservation must not postpone that security decision.
+		if !o.Protection.Public && protection.Public && len(replicas) > 0 && !retained {
+			return nil, ErrUnavailable
+		}
+		o.Protection = protection
+		o.Revision++
+		o.Published = false
 		for _, r := range replicas {
 			i, err := tx.Instance(r.InstanceID)
 			if err != nil {

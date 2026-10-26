@@ -262,6 +262,8 @@ export interface components {
             sha256: string;
             protection: components["schemas"]["Protection"];
             policy?: components["schemas"]["Policy"];
+            /** @description Optional stable key scoped to the service principal. Its object identity survives the 24-hour request replay window; changed creation parameters conflict and deleted objects are not recreated. */
+            client_key?: string;
         };
         ObjectStatus: {
             id: string;

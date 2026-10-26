@@ -126,17 +126,18 @@ func DefaultPolicy() Policy  { return Policy{Target: 3, Publish: 2} }
 func (p Policy) Valid() bool { return p.Publish >= 2 && p.Target >= p.Publish && p.Target <= 10 }
 
 type Object struct {
-	ID         string      `json:"id"`
-	Owner      Principal   `json:"owner"`
-	Size       int64       `json:"size"`
-	SHA256     string      `json:"sha256"`
-	Protection Protection  `json:"protection"`
-	Policy     Policy      `json:"policy"`
-	Revision   int64       `json:"revision"`
-	State      string      `json:"state"`
-	Published  bool        `json:"published"`
-	CreatedAt  time.Time   `json:"created_at"`
-	References []Reference `json:"references"`
+	CreationHash string      `json:"creation_hash,omitempty"`
+	ID           string      `json:"id"`
+	Owner        Principal   `json:"owner"`
+	Size         int64       `json:"size"`
+	SHA256       string      `json:"sha256"`
+	Protection   Protection  `json:"protection"`
+	Policy       Policy      `json:"policy"`
+	Revision     int64       `json:"revision"`
+	State        string      `json:"state"`
+	Published    bool        `json:"published"`
+	CreatedAt    time.Time   `json:"created_at"`
+	References   []Reference `json:"references"`
 }
 
 type Reference struct {

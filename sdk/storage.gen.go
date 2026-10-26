@@ -126,6 +126,8 @@ type Admission struct {
 
 // CreateObject defines model for CreateObject.
 type CreateObject struct {
+	// ClientKey Optional stable key scoped to the service principal. Its object identity survives the 24-hour request replay window; changed creation parameters conflict and deleted objects are not recreated.
+	ClientKey  *string    `json:"client_key,omitempty"`
 	Policy     *Policy    `json:"policy,omitempty"`
 	Protection Protection `json:"protection"`
 	Sha256     string     `json:"sha256"`
