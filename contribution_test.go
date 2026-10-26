@@ -101,6 +101,7 @@ func TestContributionExitWaitsForRecordedReplicaCleanup(t *testing.T) {
 	c.Revision++
 	c.ExpectedRevision = bound.Revision
 	c.State = "draining"
+	c.LimitBytes = 0 // A stop request must not be blocked by concurrent occupancy.
 	drain, err := h.s.ApplyContribution(h.ctx, h.actor, i.ID, c)
 	if err != nil || drain.UsedBytes != 1 || drain.RemainingReplicas != 1 {
 		t.Fatal("remaining object mistaken for complete exit", drain, err)

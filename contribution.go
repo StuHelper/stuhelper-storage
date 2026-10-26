@@ -121,7 +121,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 		if c.State == "active" && (!c.Until.After(s.now()) || i.State == "draining") {
 			return ErrConflict
 		}
-		if c.LimitBytes < i.Used+i.Reserved {
+		if c.State == "active" && c.LimitBytes < i.Used+i.Reserved {
 			return ErrConflict
 		}
 		i.ContributionControl = &c
