@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"os"
 	"time"
 )
 
@@ -24,34 +23,12 @@ func (w *boundedWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (s *Service) slot(ctx context.Context) (func(), error) {
-	select {
-	case s.slots <- struct{}{}:
-		return func() { <-s.slots }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-func (s *Service) temporary() (f *os.File, err error) {
-	f, err = os.CreateTemp(s.cfg.TemporaryDirectory, "stuhelper-transfer-*")
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	return f, nil
-}
-func removeTemporary(f *os.File) {
-	if f != nil {
-		name := f.Name()
-		_ = f.Close()
-		_ = os.Remove(name)
-	}
-}
-func verifyFile(f *os.File, o Object) error {
+func verifyFile(ctx context.Context, f *stagedFile, o Object) error {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return ErrUnavailable
 	}
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(f, o.Size+1))
+	n, err := io.Copy(h, io.LimitReader(&pacedReader{ctx: ctx, src: f}, o.Size+1))
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -68,7 +45,7 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 	if !validKey(key) || src == nil {
 		return Status{}, ErrInput
 	}
-	release, err := s.slot(ctx)
+	ctx, release, err := s.begin(ctx)
 	if err != nil {
 		return Status{}, err
 	}
@@ -88,15 +65,15 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 	if err != nil {
 		return Status{}, err
 	}
-	f, err := s.temporary()
+	f, err := s.staging.create(o.Size + 1)
 	if err != nil {
 		return Status{}, err
 	}
 	defer removeTemporary(f)
-	if _, err = io.Copy(f, io.LimitReader(src, o.Size+1)); err != nil {
+	if _, err = io.Copy(f, io.LimitReader(&pacedReader{ctx: ctx, src: src, global: s.bandwidth}, o.Size+1)); err != nil {
 		return Status{}, ErrUnavailable
 	}
-	if err = verifyFile(f, o); err != nil {
+	if err = verifyFile(ctx, f, o); err != nil {
 		return Status{}, err
 	}
 	var job Job
@@ -136,7 +113,7 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 			return err
 		}
 		job = Job{ID: newID(), ObjectID: id, ReplicaID: replica.ID, Intent: replica.Intent, ObjectRevision: replica.ObjectRevision, InstanceRevision: replica.InstanceRevision, CredentialRevision: replica.CredentialRevision, Kind: "ingest", State: "running", Generation: 1, LeaseOwner: newID(), LeaseUntil: s.now().Add(s.cfg.Lease), AvailableAt: s.now(), Attempts: 1}
-		return tx.SaveJob(job)
+		return s.queue(tx, job)
 	})
 	if err != nil {
 		return Status{}, err
@@ -162,7 +139,7 @@ func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.W
 	if dst == nil {
 		return ErrInput
 	}
-	release, err := s.slot(ctx)
+	ctx, release, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -204,11 +181,11 @@ func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.W
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(dst, f)
+	_, err = io.Copy(&pacedWriter{ctx: ctx, dst: dst, global: s.bandwidth}, f)
 	return err
 }
 
-func (s *Service) readSource(ctx context.Context, o Object, excluded string) (*os.File, error) {
+func (s *Service) readSource(ctx context.Context, o Object, excluded string) (*stagedFile, error) {
 	var replicas []Replica
 	err := s.repo.Transaction(ctx, func(tx Transaction) error { var err error; replicas, err = tx.Replicas(o.ID); return err })
 	if err != nil {
@@ -264,12 +241,12 @@ func (s *Service) readSource(ctx context.Context, o Object, excluded string) (*o
 	}
 	return nil, ErrUnavailable
 }
-func (s *Service) readRemote(ctx context.Context, o Object, i Instance, remote Locator) (*os.File, error) {
+func (s *Service) readRemote(ctx context.Context, o Object, i Instance, remote Locator) (*stagedFile, error) {
 	driver, err := s.resolver.Resolve(ctx, i)
 	if err != nil {
 		return nil, err
 	}
-	f, err := s.temporary()
+	f, err := s.staging.create(o.Size + 1)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +256,7 @@ func (s *Service) readRemote(ctx context.Context, o Object, i Instance, remote L
 		err = ErrIntegrity
 	}
 	if err == nil {
-		err = verifyFile(f, o)
+		err = verifyFile(ctx, f, o)
 	}
 	if err != nil {
 		removeTemporary(f)
@@ -483,7 +460,7 @@ func (s *Service) RunOne(ctx context.Context, worker string) (bool, error) {
 	if !validID(worker) {
 		return false, ErrInput
 	}
-	release, err := s.slot(ctx)
+	ctx, release, err := s.begin(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -502,7 +479,7 @@ func (s *Service) RunOne(ctx context.Context, worker string) (bool, error) {
 		var o Object
 		o, _, _, err = s.snapshotJob(workCtx, j, false)
 		if err == nil {
-			var f *os.File
+			var f *stagedFile
 			f, err = s.readSource(workCtx, o, j.ReplicaID)
 			if err == nil {
 				err = s.writeReplica(workCtx, j, f)
@@ -517,7 +494,7 @@ func (s *Service) RunOne(ctx context.Context, worker string) (bool, error) {
 		var i Instance
 		o, r, i, err = s.snapshotJob(workCtx, j, false)
 		if err == nil {
-			var f *os.File
+			var f *stagedFile
 			f, err = s.readRemote(workCtx, o, i, r.Remote)
 			if err == nil {
 				removeTemporary(f)

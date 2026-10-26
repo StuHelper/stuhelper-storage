@@ -67,6 +67,15 @@ func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoi
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 		defer cancel()
+		controller := http.NewResponseController(w)
+		deadline, _ := ctx.Deadline()
+		_ = controller.SetReadDeadline(deadline)
+		_ = controller.SetWriteDeadline(deadline)
+		stopIO := context.AfterFunc(ctx, func() {
+			_ = controller.SetReadDeadline(time.Now())
+			_ = controller.SetWriteDeadline(time.Now())
+		})
+		defer stopIO()
 		r = r.WithContext(ctx)
 		limit := int64(1 << 20)
 		if upload {

@@ -235,7 +235,14 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			if status.Healthy == 0 {
 				return nil
 			}
-			planned, err := s.plan(tx, o, o.Policy.Target)
+			if err := tx.Lock("queue-budget"); err != nil {
+				return err
+			}
+			queued, err := tx.OutstandingJobs("", s.cfg.MaxOutstandingJobs)
+			if err != nil {
+				return err
+			}
+			planned, err := s.plan(tx, o, min(o.Policy.Target, s.cfg.MaxOutstandingJobs-queued))
 			if err != nil {
 				return err
 			}
@@ -276,6 +283,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			return nil
 		})
 		if err != nil {
+			result.NextCursor = snapshot.ID
 			return result, err
 		}
 		result.Processed++

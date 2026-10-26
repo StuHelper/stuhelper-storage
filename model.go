@@ -255,6 +255,7 @@ type Transaction interface {
 	SaveReplica(Replica) error
 	Job(string) (Job, error)
 	SaveJob(Job) error
+	OutstandingJobs(string, int) (int, error)
 	ActiveWrites(string, time.Time) (bool, error)
 	Idempotency(string) (Idempotency, error)
 	SaveIdempotency(Idempotency) error

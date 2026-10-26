@@ -43,14 +43,17 @@ func (a *authorization) Authorize(_ context.Context, p storage.Principal, action
 }
 
 type provider struct {
-	mu           sync.Mutex
-	files        map[string]map[string][]byte
-	accounts     map[string]string
-	writes       int
-	lostReply    bool
-	lostBegin    bool
-	corruptWrite bool
-	afterWrite   func()
+	mu              sync.Mutex
+	files           map[string]map[string][]byte
+	accounts        map[string]string
+	writes          int
+	lostReply       bool
+	lostBegin       bool
+	corruptWrite    bool
+	readUnavailable bool
+	readStarted     chan struct{}
+	readWait        chan struct{}
+	afterWrite      func()
 }
 
 func (p *provider) Verify(_ context.Context, i storage.Instance) (storage.InstanceEvidence, error) {
@@ -176,7 +179,18 @@ func TestExpiredEmptyObjectIsTombstoned(t *testing.T) {
 		t.Fatalf("expired: %+v %v", st, err)
 	}
 }
-func (p *provider) Read(_ context.Context, i storage.Instance, r storage.Locator, dst io.Writer) (int64, error) {
+func (p *provider) Read(ctx context.Context, i storage.Instance, r storage.Locator, dst io.Writer) (int64, error) {
+	if p.readWait != nil {
+		p.readStarted <- struct{}{}
+		select {
+		case <-p.readWait:
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+	if p.readUnavailable {
+		return 0, storage.ErrUnavailable
+	}
 	p.mu.Lock()
 	data, ok := p.files[i.ID][r.ID]
 	data = bytes.Clone(data)
@@ -203,9 +217,10 @@ type harness struct {
 	clock     *clock
 	actor     storage.Principal
 	ctx       context.Context
+	cfg       storage.Config
 }
 
-func harnessFor(t *testing.T) *harness {
+func harnessFor(t *testing.T, configure ...func(*storage.Config)) *harness {
 	t.Helper()
 	dsn := os.Getenv("STUHELPER_STORAGE_TEST_DSN")
 	if dsn == "" {
@@ -259,11 +274,20 @@ REVOKE ALL ON SCHEMA public FROM PUBLIC;`); err != nil {
 	auth := &authorization{}
 	p := &provider{files: map[string]map[string][]byte{}, accounts: map[string]string{}}
 	c := &clock{now: time.Now().UTC()}
-	s, err := storage.New(repo, auth, p, p, storage.Config{Clock: c.Now, MaxObjectSize: 1 << 20, TemporaryDirectory: t.TempDir(), ParallelTransfers: 4, Lease: time.Minute, VerificationAge: time.Hour, MaxAttempts: 3})
+	cfg := storage.Config{Clock: c.Now, MaxObjectSize: 1 << 20, TemporaryDirectory: t.TempDir(), ParallelTransfers: 4, Lease: time.Minute, VerificationAge: time.Hour, MaxAttempts: 3}
+	for _, apply := range configure {
+		apply(&cfg)
+	}
+	s, err := storage.New(repo, auth, p, p, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &harness{s, repo, db, admin, p, auth, c, storage.Principal{Issuer: "test-issuer", Subject: "operator"}, ctx}
+	t.Cleanup(func() {
+		if err := s.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	return &harness{s, repo, db, admin, p, auth, c, storage.Principal{Issuer: "test-issuer", Subject: "operator"}, ctx, cfg}
 }
 func (h *harness) instance(t *testing.T, id, owner, kind string, limit int64) storage.Instance {
 	t.Helper()

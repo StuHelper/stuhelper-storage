@@ -8,39 +8,82 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
 type Config struct {
-	Clock              func() time.Time
-	MaxObjectSize      int64
-	TemporaryDirectory string
-	ParallelTransfers  int
-	Lease              time.Duration
-	VerificationAge    time.Duration
-	MaxAttempts        int
+	Clock                 func() time.Time
+	MaxObjectSize         int64
+	TemporaryDirectory    string
+	ParallelTransfers     int
+	Lease                 time.Duration
+	VerificationAge       time.Duration
+	MaxAttempts           int
+	TemporaryBytes        int64
+	MaxOutstandingJobs    int
+	AccountTransfers      int
+	BytesPerSecond        int64
+	AccountBytesPerSecond int64
 }
 type Service struct {
-	repo     Repository
-	auth     Authorizer
-	resolver Resolver
-	verifier Verifier
-	cfg      Config
-	now      func() time.Time
-	slots    chan struct{}
+	repo      Repository
+	auth      Authorizer
+	resolver  Resolver
+	verifier  Verifier
+	cfg       Config
+	now       func() time.Time
+	slots     chan struct{}
+	staging   *staging
+	lifecycle sync.Mutex
+	stopping  bool
+	active    int
+	stopCtx   context.Context
+	cancel    context.CancelFunc
+	closed    chan struct{}
+	closeErr  error
+	bandwidth *pacer
 }
 
 func New(repo Repository, auth Authorizer, resolver Resolver, verifier Verifier, cfg Config) (*Service, error) {
 	if repo == nil || auth == nil || resolver == nil || verifier == nil || cfg.MaxObjectSize < 1 || cfg.MaxObjectSize > 1<<30 || cfg.TemporaryDirectory == "" || cfg.ParallelTransfers < 1 || cfg.ParallelTransfers > 16 || cfg.Lease < time.Minute || cfg.Lease > 30*time.Minute || cfg.VerificationAge < time.Minute || cfg.MaxAttempts < 1 || cfg.MaxAttempts > 100 {
 		return nil, ErrInput
 	}
+	if cfg.TemporaryBytes == 0 {
+		cfg.TemporaryBytes = 2 * (cfg.MaxObjectSize + 1) * int64(cfg.ParallelTransfers)
+	}
+	if cfg.MaxOutstandingJobs == 0 {
+		cfg.MaxOutstandingJobs = 10000
+	}
+	if cfg.AccountTransfers == 0 {
+		cfg.AccountTransfers = 1
+	}
+	if cfg.BytesPerSecond == 0 {
+		cfg.BytesPerSecond = 64 << 20
+	}
+	if cfg.AccountBytesPerSecond == 0 {
+		cfg.AccountBytesPerSecond = 16 << 20
+	}
+	if cfg.TemporaryBytes < 2*(cfg.MaxObjectSize+1) || cfg.MaxOutstandingJobs < 1 || cfg.MaxOutstandingJobs > 100000 || cfg.AccountTransfers < 1 || cfg.AccountTransfers > cfg.ParallelTransfers || cfg.BytesPerSecond < 1 || cfg.AccountBytesPerSecond < 1 {
+		return nil, ErrInput
+	}
+	staging, err := openStaging(cfg.TemporaryDirectory, cfg.TemporaryBytes)
+	if err != nil {
+		return nil, err
+	}
 	clock := cfg.Clock
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{repo: repo, auth: auth, resolver: resolver, verifier: verifier, cfg: cfg, now: clock, slots: make(chan struct{}, cfg.ParallelTransfers)}, nil
+	stopCtx, cancel := context.WithCancel(context.Background())
+	bandwidth := newPacer(cfg.BytesPerSecond)
+	resolver = &limitedResolver{inner: resolver, parallel: cfg.AccountTransfers, global: bandwidth, accountRate: cfg.AccountBytesPerSecond, accounts: map[string]*accountLimit{}}
+	return &Service{repo: repo, auth: auth, resolver: resolver, verifier: verifier, cfg: cfg, now: clock, slots: make(chan struct{}, cfg.ParallelTransfers), staging: staging, stopCtx: stopCtx, cancel: cancel, closed: make(chan struct{}), bandwidth: bandwidth}, nil
 }
 func (s *Service) authorize(ctx context.Context, p Principal, action, id string, protection Protection) error {
+	if s.stopCtx.Err() != nil {
+		return ErrUnavailable
+	}
 	if !p.Valid() {
 		return ErrDenied
 	}
@@ -532,13 +575,33 @@ func (s *Service) enqueue(tx Transaction, objectID, replicaID, kind string) erro
 		return err
 	}
 	existing, err := tx.Job(id)
-	if err == nil && (existing.State == "pending" || existing.State == "running") && existing.Intent == r.Intent && existing.ObjectRevision == r.ObjectRevision && existing.InstanceRevision == r.InstanceRevision && existing.CredentialRevision == r.CredentialRevision {
+	if err == nil && (existing.State == "pending" || existing.State == "running" || existing.State == "blocked") && existing.Intent == r.Intent && existing.ObjectRevision == r.ObjectRevision && existing.InstanceRevision == r.InstanceRevision && existing.CredentialRevision == r.CredentialRevision {
 		return nil
 	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
-	return tx.SaveJob(Job{ID: id, ObjectID: objectID, ReplicaID: replicaID, Intent: r.Intent, ObjectRevision: r.ObjectRevision, InstanceRevision: r.InstanceRevision, CredentialRevision: r.CredentialRevision, Kind: kind, State: "pending", Generation: existing.Generation + 1, AvailableAt: s.now()})
+	err = s.queue(tx, Job{ID: id, ObjectID: objectID, ReplicaID: replicaID, Intent: r.Intent, ObjectRevision: r.ObjectRevision, InstanceRevision: r.InstanceRevision, CredentialRevision: r.CredentialRevision, Kind: kind, State: "pending", Generation: existing.Generation + 1, AvailableAt: s.now()})
+	// Cleanup and verification intent lives in object/replica state. A full
+	// runnable queue must not undo a deletion or classification change.
+	if errors.Is(err, ErrCapacity) {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) queue(tx Transaction, j Job) error {
+	if err := tx.Lock("queue-budget"); err != nil {
+		return err
+	}
+	count, err := tx.OutstandingJobs(j.ID, s.cfg.MaxOutstandingJobs)
+	if err != nil {
+		return err
+	}
+	if count >= s.cfg.MaxOutstandingJobs {
+		return ErrCapacity
+	}
+	return tx.SaveJob(j)
 }
 func findReplica(replicas []Replica, id string) (Replica, error) {
 	for _, r := range replicas {

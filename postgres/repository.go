@@ -128,6 +128,11 @@ func (t *transaction) Job(id string) (storage.Job, error) {
 func (t *transaction) SaveJob(v storage.Job) error {
 	return t.save(`INSERT INTO storage.jobs(id,object_id,state,available_at,lease_until,data) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET state=excluded.state,available_at=excluded.available_at,lease_until=excluded.lease_until,data=excluded.data`, v, v.ID, v.ObjectID, v.State, v.AvailableAt, v.LeaseUntil)
 }
+func (t *transaction) OutstandingJobs(exclude string, limit int) (int, error) {
+	var count int
+	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM (SELECT 1 FROM storage.jobs WHERE id<>$1 AND state IN ('pending','running') LIMIT $2) bounded`, exclude, limit).Scan(&count)
+	return count, safe(err)
+}
 func (t *transaction) Idempotency(key string) (storage.Idempotency, error) {
 	return read[storage.Idempotency](t, `SELECT data FROM storage.idempotency WHERE key=$1 FOR UPDATE`, key)
 }
