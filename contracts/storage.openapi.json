@@ -2110,6 +2110,444 @@
         },
         "description": "Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material."
       }
+    },
+    "/api/v1/storage/custody/policy": {
+      "get": {
+        "operationId": "getCustodyPolicy",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyPolicy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        }
+      }
+    },
+    "/api/v1/storage/custody": {
+      "get": {
+        "operationId": "listOwnCustody",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createCustody",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Client UUID. Reuse the original key on an uncertain outcome; a changed body is rejected."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustodyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/custody/operations": {
+      "get": {
+        "operationId": "listCustodyOperations",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/storage/custody/{id}/reauthorize": {
+      "post": {
+        "operationId": "reauthorizeCustody",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Client UUID. Reuse the original key on an uncertain outcome; a changed body is rejected."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustodyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/custody/{id}/resume": {
+      "post": {
+        "operationId": "resumeCustody",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustodyResume"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/custody/requests/{id}": {
+      "get": {
+        "operationId": "getOwnCustodyRequest",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/storage/custody/operations/{id}/resume": {
+      "post": {
+        "operationId": "resumeCustodyOperation",
+        "description": "Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Current operation state; pending is not completion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustodyBinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current permission denied"
+          },
+          "409": {
+            "description": "Revision or idempotency conflict"
+          },
+          "503": {
+            "description": "Unavailable; query original request before retrying"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustodyResume"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3077,6 +3515,207 @@
           },
           "next_cursor": {
             "type": "string"
+          }
+        }
+      },
+      "CustodyConsent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "accepted",
+          "version",
+          "digest"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      },
+      "CustodyPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "digest",
+          "url",
+          "max_term_seconds"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "max_term_seconds": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CustodyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "adapter",
+          "credential",
+          "until",
+          "consent"
+        ],
+        "properties": {
+          "adapter": {
+            "type": "string",
+            "enum": [
+              "bhpan"
+            ]
+          },
+          "credential": {
+            "type": "object",
+            "additionalProperties": false,
+            "writeOnly": true,
+            "required": [
+              "mode",
+              "username",
+              "password"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "sso"
+                ]
+              },
+              "username": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "writeOnly": true
+              },
+              "password": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "writeOnly": true
+              }
+            }
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "consent": {
+            "$ref": "#/components/schemas/CustodyConsent"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CustodyBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "adapter",
+          "revision",
+          "state",
+          "authorization_expires_at",
+          "request_id",
+          "last_error"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "adapter": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "blocked",
+              "credentials_required"
+            ]
+          },
+          "authorization_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string",
+            "enum": [
+              "",
+              "authorization_rejected",
+              "dependency_unavailable",
+              "result_unknown",
+              "conflict",
+              "attempts_exhausted",
+              "credentials_required"
+            ]
+          }
+        }
+      },
+      "CustodyPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/CustodyBinding"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        }
+      },
+      "CustodyResume": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "revision"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
           }
         }
       }

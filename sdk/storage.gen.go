@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for ContributionControlState.
@@ -35,6 +36,111 @@ func (e ContributionControlState) Valid() bool {
 	case ContributionControlStatePaused:
 		return true
 	case ContributionControlStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CustodyBindingLastError.
+const (
+	CustodyBindingLastErrorAttemptsExhausted     CustodyBindingLastError = "attempts_exhausted"
+	CustodyBindingLastErrorAuthorizationRejected CustodyBindingLastError = "authorization_rejected"
+	CustodyBindingLastErrorConflict              CustodyBindingLastError = "conflict"
+	CustodyBindingLastErrorCredentialsRequired   CustodyBindingLastError = "credentials_required"
+	CustodyBindingLastErrorDependencyUnavailable CustodyBindingLastError = "dependency_unavailable"
+	CustodyBindingLastErrorEmpty                 CustodyBindingLastError = ""
+	CustodyBindingLastErrorResultUnknown         CustodyBindingLastError = "result_unknown"
+)
+
+// Valid indicates whether the value is a known member of the CustodyBindingLastError enum.
+func (e CustodyBindingLastError) Valid() bool {
+	switch e {
+	case CustodyBindingLastErrorAttemptsExhausted:
+		return true
+	case CustodyBindingLastErrorAuthorizationRejected:
+		return true
+	case CustodyBindingLastErrorConflict:
+		return true
+	case CustodyBindingLastErrorCredentialsRequired:
+		return true
+	case CustodyBindingLastErrorDependencyUnavailable:
+		return true
+	case CustodyBindingLastErrorEmpty:
+		return true
+	case CustodyBindingLastErrorResultUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CustodyBindingState.
+const (
+	CustodyBindingStateBlocked             CustodyBindingState = "blocked"
+	CustodyBindingStateCredentialsRequired CustodyBindingState = "credentials_required"
+	CustodyBindingStatePending             CustodyBindingState = "pending"
+	CustodyBindingStateReady               CustodyBindingState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the CustodyBindingState enum.
+func (e CustodyBindingState) Valid() bool {
+	switch e {
+	case CustodyBindingStateBlocked:
+		return true
+	case CustodyBindingStateCredentialsRequired:
+		return true
+	case CustodyBindingStatePending:
+		return true
+	case CustodyBindingStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CustodyConsentAccepted.
+const (
+	True CustodyConsentAccepted = true
+)
+
+// Valid indicates whether the value is a known member of the CustodyConsentAccepted enum.
+func (e CustodyConsentAccepted) Valid() bool {
+	switch e {
+	case True:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CustodyRequestAdapter.
+const (
+	Bhpan CustodyRequestAdapter = "bhpan"
+)
+
+// Valid indicates whether the value is a known member of the CustodyRequestAdapter enum.
+func (e CustodyRequestAdapter) Valid() bool {
+	switch e {
+	case Bhpan:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CustodyRequestCredentialMode.
+const (
+	Local CustodyRequestCredentialMode = "local"
+	Sso   CustodyRequestCredentialMode = "sso"
+)
+
+// Valid indicates whether the value is a known member of the CustodyRequestCredentialMode enum.
+func (e CustodyRequestCredentialMode) Valid() bool {
+	switch e {
+	case Local:
+		return true
+	case Sso:
 		return true
 	default:
 		return false
@@ -229,6 +335,72 @@ type CreateObject struct {
 	Protection Protection `json:"protection"`
 	Sha256     string     `json:"sha256"`
 	Size       int64      `json:"size"`
+}
+
+// CustodyBinding defines model for CustodyBinding.
+type CustodyBinding struct {
+	Adapter                string                  `json:"adapter"`
+	AuthorizationExpiresAt time.Time               `json:"authorization_expires_at"`
+	Id                     string                  `json:"id"`
+	LastError              CustodyBindingLastError `json:"last_error"`
+	RequestId              string                  `json:"request_id"`
+	Revision               int64                   `json:"revision"`
+	State                  CustodyBindingState     `json:"state"`
+}
+
+// CustodyBindingLastError defines model for CustodyBinding.LastError.
+type CustodyBindingLastError string
+
+// CustodyBindingState defines model for CustodyBinding.State.
+type CustodyBindingState string
+
+// CustodyConsent defines model for CustodyConsent.
+type CustodyConsent struct {
+	Accepted CustodyConsentAccepted `json:"accepted"`
+	Digest   string                 `json:"digest"`
+	Version  string                 `json:"version"`
+}
+
+// CustodyConsentAccepted defines model for CustodyConsent.Accepted.
+type CustodyConsentAccepted bool
+
+// CustodyPage defines model for CustodyPage.
+type CustodyPage struct {
+	Items      []CustodyBinding `json:"items"`
+	NextCursor string           `json:"next_cursor"`
+}
+
+// CustodyPolicy defines model for CustodyPolicy.
+type CustodyPolicy struct {
+	Digest         string `json:"digest"`
+	MaxTermSeconds int64  `json:"max_term_seconds"`
+	Url            string `json:"url"`
+	Version        string `json:"version"`
+}
+
+// CustodyRequest defines model for CustodyRequest.
+type CustodyRequest struct {
+	Adapter    CustodyRequestAdapter `json:"adapter"`
+	Consent    CustodyConsent        `json:"consent"`
+	Credential *struct {
+		Mode     CustodyRequestCredentialMode `json:"mode"`
+		Password *string                      `json:"password,omitempty"`
+		Username *string                      `json:"username,omitempty"`
+	} `json:"credential,omitempty"`
+	Revision *int64    `json:"revision,omitempty"`
+	Until    time.Time `json:"until"`
+}
+
+// CustodyRequestAdapter defines model for CustodyRequest.Adapter.
+type CustodyRequestAdapter string
+
+// CustodyRequestCredentialMode defines model for CustodyRequest.Credential.Mode.
+type CustodyRequestCredentialMode string
+
+// CustodyResume defines model for CustodyResume.
+type CustodyResume struct {
+	RequestId string `json:"request_id"`
+	Revision  int64  `json:"revision"`
 }
 
 // Instance defines model for Instance.
@@ -444,6 +616,30 @@ type InspectContributionInstanceParams struct {
 	OwnerDomain string `form:"owner_domain" json:"owner_domain"`
 }
 
+// ListOwnCustodyParams defines parameters for ListOwnCustody.
+type ListOwnCustodyParams struct {
+	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	After *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
+// CreateCustodyParams defines parameters for CreateCustody.
+type CreateCustodyParams struct {
+	// IdempotencyKey Client UUID. Reuse the original key on an uncertain outcome; a changed body is rejected.
+	IdempotencyKey openapi_types.UUID `json:"Idempotency-Key"`
+}
+
+// ListCustodyOperationsParams defines parameters for ListCustodyOperations.
+type ListCustodyOperationsParams struct {
+	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	After *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
+// ReauthorizeCustodyParams defines parameters for ReauthorizeCustody.
+type ReauthorizeCustodyParams struct {
+	// IdempotencyKey Client UUID. Reuse the original key on an uncertain outcome; a changed body is rejected.
+	IdempotencyKey openapi_types.UUID `json:"Idempotency-Key"`
+}
+
 // ListInstancesParams defines parameters for ListInstances.
 type ListInstancesParams struct {
 	After *string `form:"after,omitempty" json:"after,omitempty"`
@@ -509,6 +705,18 @@ type RetryStorageJobParams struct {
 
 // ApplyContributionControlJSONRequestBody defines body for ApplyContributionControl for application/json ContentType.
 type ApplyContributionControlJSONRequestBody = ContributionControl
+
+// CreateCustodyJSONRequestBody defines body for CreateCustody for application/json ContentType.
+type CreateCustodyJSONRequestBody = CustodyRequest
+
+// ResumeCustodyOperationJSONRequestBody defines body for ResumeCustodyOperation for application/json ContentType.
+type ResumeCustodyOperationJSONRequestBody = CustodyResume
+
+// ReauthorizeCustodyJSONRequestBody defines body for ReauthorizeCustody for application/json ContentType.
+type ReauthorizeCustodyJSONRequestBody = CustodyRequest
+
+// ResumeCustodyJSONRequestBody defines body for ResumeCustody for application/json ContentType.
+type ResumeCustodyJSONRequestBody = CustodyResume
 
 // RegisterInstanceJSONRequestBody defines body for RegisterInstance for application/json ContentType.
 type RegisterInstanceJSONRequestBody = InstanceInput
@@ -635,6 +843,74 @@ type ClientInterface interface {
 	//
 	// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
 	ApplyContributionControl(ctx context.Context, id string, body ApplyContributionControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListOwnCustody performs a GET /api/v1/storage/custody (the `ListOwnCustody` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ListOwnCustody(ctx context.Context, params *ListOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCustodyWithBody performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	CreateCustodyWithBody(ctx context.Context, params *CreateCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCustody performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	CreateCustody(ctx context.Context, params *CreateCustodyParams, body CreateCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCustodyOperations performs a GET /api/v1/storage/custody/operations (the `ListCustodyOperations` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ListCustodyOperations(ctx context.Context, params *ListCustodyOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeCustodyOperationWithBody performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ResumeCustodyOperationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeCustodyOperation performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ResumeCustodyOperation(ctx context.Context, id string, body ResumeCustodyOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCustodyPolicy performs a GET /api/v1/storage/custody/policy (the `GetCustodyPolicy` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	GetCustodyPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOwnCustodyRequest performs a GET /api/v1/storage/custody/requests/{id} (the `GetOwnCustodyRequest` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	GetOwnCustodyRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReauthorizeCustodyWithBody performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ReauthorizeCustodyWithBody(ctx context.Context, id string, params *ReauthorizeCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReauthorizeCustody performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ReauthorizeCustody(ctx context.Context, id string, params *ReauthorizeCustodyParams, body ReauthorizeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeCustodyWithBody performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ResumeCustodyWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeCustody performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ResumeCustody(ctx context.Context, id string, body ResumeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListInstances performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 	ListInstances(ctx context.Context, params *ListInstancesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -795,6 +1071,194 @@ func (c *Client) ApplyContributionControlWithBody(ctx context.Context, id string
 // Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
 func (c *Client) ApplyContributionControl(ctx context.Context, id string, body ApplyContributionControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyContributionControlRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListOwnCustody performs a GET /api/v1/storage/custody (the `ListOwnCustody` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ListOwnCustody(ctx context.Context, params *ListOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOwnCustodyRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCustodyWithBody performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) CreateCustodyWithBody(ctx context.Context, params *CreateCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustodyRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCustody performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) CreateCustody(ctx context.Context, params *CreateCustodyParams, body CreateCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustodyRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCustodyOperations performs a GET /api/v1/storage/custody/operations (the `ListCustodyOperations` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ListCustodyOperations(ctx context.Context, params *ListCustodyOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCustodyOperationsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeCustodyOperationWithBody performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ResumeCustodyOperationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeCustodyOperationRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeCustodyOperation performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ResumeCustodyOperation(ctx context.Context, id string, body ResumeCustodyOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeCustodyOperationRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCustodyPolicy performs a GET /api/v1/storage/custody/policy (the `GetCustodyPolicy` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) GetCustodyPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCustodyPolicyRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOwnCustodyRequest performs a GET /api/v1/storage/custody/requests/{id} (the `GetOwnCustodyRequest` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) GetOwnCustodyRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOwnCustodyRequestRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReauthorizeCustodyWithBody performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ReauthorizeCustodyWithBody(ctx context.Context, id string, params *ReauthorizeCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReauthorizeCustodyRequestWithBody(c.Server, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReauthorizeCustody performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ReauthorizeCustody(ctx context.Context, id string, params *ReauthorizeCustodyParams, body ReauthorizeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReauthorizeCustodyRequest(c.Server, id, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeCustodyWithBody performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ResumeCustodyWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeCustodyRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeCustody performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *Client) ResumeCustody(ctx context.Context, id string, body ResumeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeCustodyRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1330,6 +1794,406 @@ func NewApplyContributionControlRequestWithBody(server string, id string, conten
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListOwnCustodyRequest constructs an http.Request for the ListOwnCustody method
+func NewListOwnCustodyRequest(server string, params *ListOwnCustodyParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateCustodyRequest calls the generic CreateCustody builder with application/json body
+func NewCreateCustodyRequest(server string, params *CreateCustodyParams, body CreateCustodyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCustodyRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateCustodyRequestWithBody constructs an http.Request for the CreateCustody method, with any body, and a specified content type
+func NewCreateCustodyRequestWithBody(server string, params *CreateCustodyParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: "uuid"})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListCustodyOperationsRequest constructs an http.Request for the ListCustodyOperations method
+func NewListCustodyOperationsRequest(server string, params *ListCustodyOperationsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/operations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeCustodyOperationRequest calls the generic ResumeCustodyOperation builder with application/json body
+func NewResumeCustodyOperationRequest(server string, id string, body ResumeCustodyOperationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResumeCustodyOperationRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewResumeCustodyOperationRequestWithBody constructs an http.Request for the ResumeCustodyOperation method, with any body, and a specified content type
+func NewResumeCustodyOperationRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/operations/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCustodyPolicyRequest constructs an http.Request for the GetCustodyPolicy method
+func NewGetCustodyPolicyRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/policy")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetOwnCustodyRequestRequest constructs an http.Request for the GetOwnCustodyRequest method
+func NewGetOwnCustodyRequestRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/requests/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReauthorizeCustodyRequest calls the generic ReauthorizeCustody builder with application/json body
+func NewReauthorizeCustodyRequest(server string, id string, params *ReauthorizeCustodyParams, body ReauthorizeCustodyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReauthorizeCustodyRequestWithBody(server, id, params, "application/json", bodyReader)
+}
+
+// NewReauthorizeCustodyRequestWithBody constructs an http.Request for the ReauthorizeCustody method, with any body, and a specified content type
+func NewReauthorizeCustodyRequestWithBody(server string, id string, params *ReauthorizeCustodyParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/%s/reauthorize", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: "uuid"})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewResumeCustodyRequest calls the generic ResumeCustody builder with application/json body
+func NewResumeCustodyRequest(server string, id string, body ResumeCustodyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResumeCustodyRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewResumeCustodyRequestWithBody constructs an http.Request for the ResumeCustody method, with any body, and a specified content type
+func NewResumeCustodyRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -2245,6 +3109,90 @@ type ClientWithResponsesInterface interface {
 	// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
 	ApplyContributionControlWithResponse(ctx context.Context, id string, body ApplyContributionControlJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyContributionControlResponse, error)
 
+	// ListOwnCustodyWithResponse performs a GET /api/v1/storage/custody (the `ListOwnCustody` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListOwnCustodyWithResponse(ctx context.Context, params *ListOwnCustodyParams, reqEditors ...RequestEditorFn) (*ListOwnCustodyResponse, error)
+
+	// CreateCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateCustodyWithBodyWithResponse(ctx context.Context, params *CreateCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustodyResponse, error)
+
+	// CreateCustodyWithResponse performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	CreateCustodyWithResponse(ctx context.Context, params *CreateCustodyParams, body CreateCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustodyResponse, error)
+
+	// ListCustodyOperationsWithResponse performs a GET /api/v1/storage/custody/operations (the `ListCustodyOperations` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListCustodyOperationsWithResponse(ctx context.Context, params *ListCustodyOperationsParams, reqEditors ...RequestEditorFn) (*ListCustodyOperationsResponse, error)
+
+	// ResumeCustodyOperationWithBodyWithResponse performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ResumeCustodyOperationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeCustodyOperationResponse, error)
+
+	// ResumeCustodyOperationWithResponse performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ResumeCustodyOperationWithResponse(ctx context.Context, id string, body ResumeCustodyOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeCustodyOperationResponse, error)
+
+	// GetCustodyPolicyWithResponse performs a GET /api/v1/storage/custody/policy (the `GetCustodyPolicy` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetCustodyPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCustodyPolicyResponse, error)
+
+	// GetOwnCustodyRequestWithResponse performs a GET /api/v1/storage/custody/requests/{id} (the `GetOwnCustodyRequest` operationId) request.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetOwnCustodyRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOwnCustodyRequestResponse, error)
+
+	// ReauthorizeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReauthorizeCustodyWithBodyWithResponse(ctx context.Context, id string, params *ReauthorizeCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReauthorizeCustodyResponse, error)
+
+	// ReauthorizeCustodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ReauthorizeCustodyWithResponse(ctx context.Context, id string, params *ReauthorizeCustodyParams, body ReauthorizeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReauthorizeCustodyResponse, error)
+
+	// ResumeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ResumeCustodyWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeCustodyResponse, error)
+
+	// ResumeCustodyWithResponse performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+	ResumeCustodyWithResponse(ctx context.Context, id string, body ResumeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeCustodyResponse, error)
+
 	// ListInstancesWithResponse performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2646,6 +3594,334 @@ func (r ApplyContributionControlResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ApplyContributionControlResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListOwnCustodyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustodyPage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON200() *CustodyPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListOwnCustodyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOwnCustodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOwnCustodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListOwnCustodyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCustodyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *CustodyBinding
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CreateCustodyResponse) GetJSON202() *CustodyBinding {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCustodyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCustodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCustodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCustodyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCustodyOperationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustodyPage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON200() *CustodyPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCustodyOperationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCustodyOperationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCustodyOperationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCustodyOperationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeCustodyOperationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *CustodyBinding
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON202() *CustodyBinding {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeCustodyOperationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeCustodyOperationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeCustodyOperationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeCustodyOperationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCustodyPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustodyPolicy
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON200() *CustodyPolicy {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCustodyPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCustodyPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCustodyPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCustodyPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetOwnCustodyRequestResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustodyBinding
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON200() *CustodyBinding {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOwnCustodyRequestResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOwnCustodyRequestResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOwnCustodyRequestResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOwnCustodyRequestResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReauthorizeCustodyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *CustodyBinding
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON202() *CustodyBinding {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r ReauthorizeCustodyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReauthorizeCustodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReauthorizeCustodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReauthorizeCustodyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeCustodyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *CustodyBinding
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ResumeCustodyResponse) GetJSON202() *CustodyBinding {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeCustodyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeCustodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeCustodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeCustodyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4047,6 +5323,162 @@ func (c *ClientWithResponses) ApplyContributionControlWithResponse(ctx context.C
 	return ParseApplyContributionControlResponse(rsp)
 }
 
+// ListOwnCustodyWithResponse performs a GET /api/v1/storage/custody (the `ListOwnCustody` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListOwnCustodyWithResponse(ctx context.Context, params *ListOwnCustodyParams, reqEditors ...RequestEditorFn) (*ListOwnCustodyResponse, error) {
+	rsp, err := c.ListOwnCustody(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOwnCustodyResponse(rsp)
+}
+
+// CreateCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateCustodyWithBodyWithResponse(ctx context.Context, params *CreateCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustodyResponse, error) {
+	rsp, err := c.CreateCustodyWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustodyResponse(rsp)
+}
+
+// CreateCustodyWithResponse performs a POST /api/v1/storage/custody (the `CreateCustody` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *ClientWithResponses) CreateCustodyWithResponse(ctx context.Context, params *CreateCustodyParams, body CreateCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustodyResponse, error) {
+	rsp, err := c.CreateCustody(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustodyResponse(rsp)
+}
+
+// ListCustodyOperationsWithResponse performs a GET /api/v1/storage/custody/operations (the `ListCustodyOperations` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListCustodyOperationsWithResponse(ctx context.Context, params *ListCustodyOperationsParams, reqEditors ...RequestEditorFn) (*ListCustodyOperationsResponse, error) {
+	rsp, err := c.ListCustodyOperations(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCustodyOperationsResponse(rsp)
+}
+
+// ResumeCustodyOperationWithBodyWithResponse performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResumeCustodyOperationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeCustodyOperationResponse, error) {
+	rsp, err := c.ResumeCustodyOperationWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeCustodyOperationResponse(rsp)
+}
+
+// ResumeCustodyOperationWithResponse performs a POST /api/v1/storage/custody/operations/{id}/resume (the `ResumeCustodyOperation` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *ClientWithResponses) ResumeCustodyOperationWithResponse(ctx context.Context, id string, body ResumeCustodyOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeCustodyOperationResponse, error) {
+	rsp, err := c.ResumeCustodyOperation(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeCustodyOperationResponse(rsp)
+}
+
+// GetCustodyPolicyWithResponse performs a GET /api/v1/storage/custody/policy (the `GetCustodyPolicy` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetCustodyPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCustodyPolicyResponse, error) {
+	rsp, err := c.GetCustodyPolicy(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCustodyPolicyResponse(rsp)
+}
+
+// GetOwnCustodyRequestWithResponse performs a GET /api/v1/storage/custody/requests/{id} (the `GetOwnCustodyRequest` operationId) request.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetOwnCustodyRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOwnCustodyRequestResponse, error) {
+	rsp, err := c.GetOwnCustodyRequest(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOwnCustodyRequestResponse(rsp)
+}
+
+// ReauthorizeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReauthorizeCustodyWithBodyWithResponse(ctx context.Context, id string, params *ReauthorizeCustodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReauthorizeCustodyResponse, error) {
+	rsp, err := c.ReauthorizeCustodyWithBody(ctx, id, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReauthorizeCustodyResponse(rsp)
+}
+
+// ReauthorizeCustodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *ClientWithResponses) ReauthorizeCustodyWithResponse(ctx context.Context, id string, params *ReauthorizeCustodyParams, body ReauthorizeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReauthorizeCustodyResponse, error) {
+	rsp, err := c.ReauthorizeCustody(ctx, id, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReauthorizeCustodyResponse(rsp)
+}
+
+// ResumeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request,
+// with any type of body and a specified content type.
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResumeCustodyWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeCustodyResponse, error) {
+	rsp, err := c.ResumeCustodyWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeCustodyResponse(rsp)
+}
+
+// ResumeCustodyWithResponse performs a POST /api/v1/storage/custody/{id}/resume (the `ResumeCustody` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
+func (c *ClientWithResponses) ResumeCustodyWithResponse(ctx context.Context, id string, body ResumeCustodyJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeCustodyResponse, error) {
+	rsp, err := c.ResumeCustody(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeCustodyResponse(rsp)
+}
+
 // ListInstancesWithResponse performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -4552,6 +5984,334 @@ func ParseApplyContributionControlResponse(rsp *http.Response) (*ApplyContributi
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListOwnCustodyResponse parses an HTTP response from a ListOwnCustodyWithResponse call
+func ParseListOwnCustodyResponse(rsp *http.Response) (*ListOwnCustodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOwnCustodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustodyPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCustodyResponse parses an HTTP response from a CreateCustodyWithResponse call
+func ParseCreateCustodyResponse(rsp *http.Response) (*CreateCustodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCustodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest CustodyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseListCustodyOperationsResponse parses an HTTP response from a ListCustodyOperationsWithResponse call
+func ParseListCustodyOperationsResponse(rsp *http.Response) (*ListCustodyOperationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCustodyOperationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustodyPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeCustodyOperationResponse parses an HTTP response from a ResumeCustodyOperationWithResponse call
+func ParseResumeCustodyOperationResponse(rsp *http.Response) (*ResumeCustodyOperationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeCustodyOperationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest CustodyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCustodyPolicyResponse parses an HTTP response from a GetCustodyPolicyWithResponse call
+func ParseGetCustodyPolicyResponse(rsp *http.Response) (*GetCustodyPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCustodyPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustodyPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOwnCustodyRequestResponse parses an HTTP response from a GetOwnCustodyRequestWithResponse call
+func ParseGetOwnCustodyRequestResponse(rsp *http.Response) (*GetOwnCustodyRequestResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOwnCustodyRequestResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustodyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseReauthorizeCustodyResponse parses an HTTP response from a ReauthorizeCustodyWithResponse call
+func ParseReauthorizeCustodyResponse(rsp *http.Response) (*ReauthorizeCustodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReauthorizeCustodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest CustodyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeCustodyResponse parses an HTTP response from a ResumeCustodyWithResponse call
+func ParseResumeCustodyResponse(rsp *http.Response) (*ResumeCustodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeCustodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest CustodyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	case rsp.StatusCode == 409:
+		break // No content-type
+
+	case rsp.StatusCode == 503:
+		break // No content-type
 
 	}
 

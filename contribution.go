@@ -38,6 +38,9 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 				continue
 			}
 			i.State = "active" // Compute potential capacity without enabling the instance.
+			if i.Limit == 0 {
+				i.Limit = 1 << 60
+			} // Initial custody has no contribution allocation yet.
 			out.Items = append(out.Items, ContributionCandidate{i.ID, i.Adapter, instanceHealth(i, s.now()).AvailableBytes, i.ExpiresAt})
 		}
 		return s.authorize(ctx, p, "storage.contributions.read", "", Protection{})

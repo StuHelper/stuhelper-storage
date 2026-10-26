@@ -1,5 +1,18 @@
 CREATE SCHEMA IF NOT EXISTS storage;
 
+CREATE TABLE IF NOT EXISTS storage.custody_bindings (
+    id text PRIMARY KEY,
+    owner_issuer text NOT NULL,
+    owner_subject text NOT NULL,
+    account_domain text UNIQUE,
+    data jsonb NOT NULL
+);
+CREATE INDEX IF NOT EXISTS custody_owner ON storage.custody_bindings(owner_issuer,owner_subject,id);
+CREATE TABLE IF NOT EXISTS storage.custody_operations (
+    id text PRIMARY KEY,
+    data jsonb NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS storage.instances (
     id text PRIMARY KEY,
     account_domain text NOT NULL UNIQUE,

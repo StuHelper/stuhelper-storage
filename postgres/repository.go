@@ -164,6 +164,9 @@ func (t *transaction) Event(v storage.Event) error {
 	v.SpecVersion = "1.0"
 	v.Source = "stuhelper://storage"
 	v.Subject = "object/" + v.ObjectID
+	if strings.HasPrefix(v.Type, "storage.custody.") {
+		v.Subject = "custody/" + v.ObjectID
+	}
 	if strings.HasPrefix(v.Type, "storage.instance.") {
 		v.Subject = "instance/" + v.ObjectID
 	}

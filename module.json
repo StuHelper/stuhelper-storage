@@ -107,6 +107,15 @@
     ],
     "STORAGE-26": [
       "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe"
+    ],
+    "STORAGE-27": [
+      "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation"
+    ],
+    "STORAGE-28": [
+      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance"
+    ],
+    "STORAGE-29": [
+      "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination"
     ]
   }
 }
