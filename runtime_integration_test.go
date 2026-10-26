@@ -58,6 +58,7 @@ func TestDisabledReplicaDoesNotSchedulePeriodicVerification(t *testing.T) {
 			h.ingest(t, o.ID, data)
 			h.reconcile(t)
 			h.run(t)
+			h.run(t)
 			switch mode {
 			case "revoked":
 				first.State = "revoked"
@@ -80,6 +81,7 @@ func TestDisabledReplicaDoesNotSchedulePeriodicVerification(t *testing.T) {
 			if err = h.db.QueryRow(`SELECT count(*) FROM storage.jobs j JOIN storage.replicas r ON r.id=j.data->>'replica_id' WHERE r.instance_id='a' AND j.data->>'kind'='verify' AND j.state IN ('pending','running','blocked')`).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("disabled verification queued: %d %v", count, err)
 			}
+			h.run(t)
 			h.run(t)
 			out, err := h.s.Operations(h.ctx, h.actor, 100, "", "")
 			if err != nil || out.Jobs.Blocked != 0 {
