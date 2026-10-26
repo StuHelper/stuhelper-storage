@@ -90,6 +90,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func problem(w http.ResponseWriter, status int, code string) {
+	w.Header().Del("Content-Disposition")
 	writeJSON(w, status, map[string]string{"code": code})
 }
 func respondError(w http.ResponseWriter, err error) {
