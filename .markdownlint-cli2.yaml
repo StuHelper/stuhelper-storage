@@ -1,0 +1,8 @@
+globs:
+  - '**/*.md'
+ignores:
+  - '**/.git/**'
+  - '**/node_modules/**'
+  - '**/site/**'
+config:
+  MD013: false

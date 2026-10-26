@@ -1,0 +1,22 @@
+{
+  "id": "storage",
+  "implementation": "library",
+  "interface_version": 1,
+  "required": [],
+  "optional": ["storage-bhpan"],
+  "specifications": ["docs/spec/storage.md"],
+  "scenario_tests": {
+    "STORAGE-01": ["integration_test.go#TestPublicationThresholdAndThreeIndependentReplicas"],
+    "STORAGE-02": ["integration_test.go#TestConcurrentCapacityReservationsAndIdempotency"],
+    "STORAGE-03": ["integration_test.go#TestAccountDeduplicationAndContributorIsolation"],
+    "STORAGE-04": ["integration_test.go#TestUnknownWriteReconcilesWithoutDuplicatingOrReleasingCapacity", "integration_test.go#TestUnknownBeginNeverRetriesOrReleasesReservation"],
+    "STORAGE-05": ["integration_test.go#TestChecksumMismatchNeverPublishesOrLeaksPartialDownload"],
+    "STORAGE-06": ["integration_test.go#TestRevocationDuringWriteAndDeleteCannotResurrectObject", "integration_test.go#TestOldLeaseCannotCommitAfterAnotherWorkerClaims"],
+    "STORAGE-07": ["integration_test.go#TestRuntimeDatabaseIdentityAndAtomicAuditOutbox"],
+    "STORAGE-08": ["integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary"],
+    "STORAGE-09": ["integration_test.go#TestDrainWaitsForVerifiedReplacement"],
+    "STORAGE-10": ["integration_test.go#TestRestrictedPlacementAndCredentialRotation", "integration_test.go#TestExpiredEmptyObjectIsTombstoned"],
+    "STORAGE-11": ["drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion", "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed"],
+    "STORAGE-12": ["drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload"]
+  }
+}
