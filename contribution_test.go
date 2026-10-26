@@ -64,6 +64,10 @@ func TestContributionControlFencesOwnershipReplayAndConsentExpiry(t *testing.T) 
 	if err != nil || admin.Limit != 1024 || admin.PersonalReserve != 100 || admin.ContributionControl == nil {
 		t.Fatal("generic update changed consent", admin, err)
 	}
+	tooLarge := int64(2048)
+	if _, err = h.s.CommandInstance(h.ctx, h.actor, i.ID, "excess-quota", storage.InstanceCommand{Action: "quota", Revision: admin.Revision, LimitBytes: &tooLarge}); !errors.Is(err, storage.ErrDenied) {
+		t.Fatal("operator quota exceeded user consent", err)
+	}
 	h.clock.Add(time.Hour + time.Second)
 	items, err := h.s.Instances(h.ctx, h.actor, 100, "")
 	if err != nil {

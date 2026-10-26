@@ -62,6 +62,9 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 			}
 			i.State, i.Authorized = "revoked", false
 		case "quota":
+			if i.ContributionControl != nil && *command.LimitBytes > i.ContributionControl.LimitBytes {
+				return nil, ErrDenied
+			}
 			if *command.LimitBytes < i.Used+i.Reserved {
 				return nil, ErrConflict
 			}
