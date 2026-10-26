@@ -308,6 +308,9 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 		if err != nil {
 			return err
 		}
+		if !snapshot.Authorized || snapshot.State == "revoked" || !snapshot.ExpiresAt.After(s.now()) {
+			return ErrDenied
+		}
 		if snapshot.Reserved != 0 {
 			return ErrConflict
 		}
@@ -329,6 +332,9 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 		i, err := tx.Instance(id)
 		if err != nil {
 			return err
+		}
+		if !i.Authorized || i.State == "revoked" || !i.ExpiresAt.After(s.now()) {
+			return ErrDenied
 		}
 		if i.Revision != snapshot.Revision || i.Reserved != 0 || i.QuotaRevision != snapshot.QuotaRevision {
 			return ErrConflict

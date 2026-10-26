@@ -47,6 +47,7 @@ type provider struct {
 	files           map[string]map[string][]byte
 	accounts        map[string]string
 	writes          int
+	verifyCalls     int
 	lostReply       bool
 	lostBegin       bool
 	corruptWrite    bool
@@ -59,6 +60,7 @@ type provider struct {
 func (p *provider) Verify(_ context.Context, i storage.Instance) (storage.InstanceEvidence, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.verifyCalls++
 	domain := p.accounts[i.CredentialRef]
 	if domain == "" {
 		domain = "account:" + i.CredentialRef

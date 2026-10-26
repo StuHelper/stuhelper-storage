@@ -23,6 +23,7 @@
     "STORAGE-15": ["executor/executor_test.go#TestBoundedWorkersAndGracefulStop", "executor/executor_test.go#TestStopDeadlineCancelsAndWaitsForCleanup", "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas"],
     "STORAGE-16": ["runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"],
     "STORAGE-17": ["runtime_integration_test.go#TestBlockedJobsKeepRetryLimit", "runtime_integration_test.go#TestBlockedPeriodicVerificationDoesNotRestart"],
-    "STORAGE-18": ["drivers/bhpan/restore_test.go#TestRestoreExistingBindingAndReplaceSession", "drivers/bhpan/restore_test.go#TestRestoreRejectsForeignRootAndRevokedLateResult"]
+    "STORAGE-18": ["drivers/bhpan/restore_test.go#TestRestoreExistingBindingAndReplaceSession", "drivers/bhpan/restore_test.go#TestRestoreRejectsForeignRootAndRevokedLateResult"],
+    "STORAGE-19": ["runtime_integration_test.go#TestDisabledInstanceCannotTriggerProviderRefresh"]
   }
 }

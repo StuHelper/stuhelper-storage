@@ -12,6 +12,38 @@ import (
 	"github.com/StuHelper/stuhelper-storage/executor"
 )
 
+func TestDisabledInstanceCannotTriggerProviderRefresh(t *testing.T) {
+	for _, mode := range []string{"revoked", "unauthorized", "expired"} {
+		t.Run(mode, func(t *testing.T) {
+			h := harnessFor(t)
+			i := h.instance(t, "account", "owner", "platform", 1024)
+			if mode == "expired" {
+				h.clock.Add(365 * 24 * time.Hour)
+			} else {
+				if mode == "revoked" {
+					i.State = "revoked"
+				} else {
+					i.Authorized = false
+				}
+				if _, err := h.s.UpdateInstance(h.ctx, h.actor, "stop", i); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h.provider.mu.Lock()
+			before := h.provider.verifyCalls
+			h.provider.mu.Unlock()
+			if err := h.s.RefreshInstance(h.ctx, h.actor, i.ID); !errors.Is(err, storage.ErrDenied) {
+				t.Fatalf("disabled refresh allowed: %v", err)
+			}
+			h.provider.mu.Lock()
+			defer h.provider.mu.Unlock()
+			if h.provider.verifyCalls != before {
+				t.Fatal("used supplier after instance authorization ended")
+			}
+		})
+	}
+}
+
 func TestTransferAdmissionAndShutdownCancellation(t *testing.T) {
 	h := harnessFor(t, func(c *storage.Config) { c.ParallelTransfers = 1 })
 	for _, id := range []string{"a", "b", "c"} {
