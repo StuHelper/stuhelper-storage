@@ -183,3 +183,40 @@ type operatorAuth struct{}
 func (operatorAuth) Authenticate(*http.Request) (storage.Principal, error) {
 	return storage.Principal{Issuer: "test", Subject: "operator"}, nil
 }
+
+func TestSupersededVerificationIsNotAnActionableBlockage(t *testing.T) {
+	h := harnessFor(t, func(c *storage.Config) { c.VerificationAge = time.Minute })
+	var first storage.Instance
+	for n := 1; n <= 3; n++ {
+		i := h.instance(t, fmt.Sprintf("i%d", n), "platform", "platform", 1024)
+		if n == 1 {
+			first = i
+		}
+	}
+	o := h.object(t, "create", []byte("revision"))
+	h.ingest(t, o.ID, []byte("revision"))
+	h.reconcile(t)
+	h.run(t)
+	h.run(t)
+	h.clock.Add(31 * time.Second)
+	h.reconcile(t)
+	if _, err := h.s.UpdateInstance(h.ctx, h.actor, "renew-policy", first); err != nil {
+		t.Fatal(err)
+	}
+	stale := false
+	for range 3 {
+		_, err := h.s.RunOne(h.ctx, "worker")
+		if errors.Is(err, storage.ErrStale) {
+			stale = true
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !stale {
+		t.Fatal("expected superseded verification")
+	}
+	out, err := h.s.Operations(h.ctx, h.actor, 100, "", "")
+	if err != nil || out.Jobs.Blocked != 0 || len(out.Failures) != 0 {
+		t.Fatal("obsolete job was reported as actionable")
+	}
+}

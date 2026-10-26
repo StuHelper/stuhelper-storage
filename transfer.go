@@ -532,8 +532,13 @@ func (s *Service) failJob(ctx context.Context, expected Job, cause error) error 
 		j.ErrorCode = errorCode(cause)
 		j.State = "pending"
 		j.AvailableAt = s.now().Add(time.Duration(min(j.Attempts, 60)) * 5 * time.Second)
-		if j.Attempts >= s.cfg.MaxAttempts || errors.Is(cause, ErrStale) || errors.Is(cause, ErrDenied) {
+		if j.Attempts >= s.cfg.MaxAttempts || errors.Is(cause, ErrDenied) {
 			j.State = "blocked"
+		}
+		// A newer object/instance/intent already superseded this operation. It
+		// cannot succeed by retrying and must not remain an actionable blockage.
+		if errors.Is(cause, ErrStale) {
+			j.State = "done"
 		}
 		return tx.SaveJob(j)
 	})
