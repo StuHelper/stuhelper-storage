@@ -28,6 +28,12 @@ func (t *transaction) JobSnapshot(id string) (storage.Job, error) {
 	return read[storage.Job](t, `SELECT data FROM storage.jobs WHERE id=$1`, id)
 }
 
+func (t *transaction) InstanceReplicas(id string) (int64, error) {
+	var count int64
+	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM storage.replicas WHERE instance_id=$1 AND data->>'state'<>'deleted'`, id).Scan(&count)
+	return count, safe(err)
+}
+
 func (t *transaction) ActiveWrites(replicaID string, now time.Time) (bool, error) {
 	var active bool
 	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.jobs WHERE data->>'replica_id'=$1 AND data->>'kind' IN ('ingest','replicate') AND state='running' AND lease_until>$2)`, replicaID, now).Scan(&active)

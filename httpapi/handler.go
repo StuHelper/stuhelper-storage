@@ -33,6 +33,20 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h := &handler{s, auth, maxUpload}
 	mux := http.NewServeMux()
 	h.mount(mux, "GET /api/v1/storage/operations", false, h.operations)
+	h.mount(mux, "GET /api/v1/storage/contributions/{id}", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+		return h.s.InspectContribution(r.Context(), p, r.PathValue("id"), r.URL.Query().Get("owner_domain"))
+	})
+	h.mount(mux, "PUT /api/v1/storage/contributions/{id}", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+		input, err := decode[sdk.ContributionControl](r)
+		if err != nil {
+			return nil, err
+		}
+		control, err := convert[sdk.ContributionControl, storage.ContributionControl](input)
+		if err != nil {
+			return nil, err
+		}
+		return h.s.ApplyContribution(r.Context(), p, r.PathValue("id"), control)
+	})
 	h.mount(mux, "POST /api/v1/storage/operations/instances/{id}/commands", false, h.commandInstance)
 	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry", false, h.retryJob)
 	h.mount(mux, "GET /api/v1/storage/instances", false, h.instances)

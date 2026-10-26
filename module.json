@@ -100,6 +100,10 @@
       "operations_commands_test.go#TestOperatorRetryPreservesUnknownWriteAndIsIdempotent",
       "operations_commands_test.go#TestOperatorRetryRejectsRevocationSupersessionAndQueueOverflow",
       "operations_commands_test.go#TestOperatorRetryRecoversTransientVerificationFailure"
+    ],
+    "STORAGE-25": [
+      "contribution_test.go#TestContributionControlFencesOwnershipReplayAndConsentExpiry",
+      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup"
     ]
   }
 }

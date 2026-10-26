@@ -183,7 +183,7 @@ func validateInstance(v Instance, now time.Time) bool {
 // claims. An alias or a second directory under the same account cannot add capacity.
 func (s *Service) Register(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
-	if !validateInstance(v, s.now()) || v.Revision != 0 {
+	if !validateInstance(v, s.now()) || v.Revision != 0 || v.ContributionControl != nil {
 		return result, ErrInput
 	}
 	if err := s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}); err != nil {
@@ -264,6 +264,11 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 			return nil, ErrInput
 		}
 		v.ProviderFree = old.ProviderFree
+		v.ContributionControl = old.ContributionControl
+		if old.ContributionControl != nil {
+			v.Limit = old.Limit
+			v.PersonalReserve = old.PersonalReserve
+		}
 		v.QuotaRevision = old.QuotaRevision
 		v.Used = old.Used
 		v.Reserved = old.Reserved

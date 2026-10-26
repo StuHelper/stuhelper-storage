@@ -1764,6 +1764,232 @@
         },
         "description": "Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization."
       }
+    },
+    "/api/v1/storage/contributions/{id}": {
+      "get": {
+        "operationId": "inspectContributionInstance",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner_domain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "description": "Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls."
+      },
+      "put": {
+        "operationId": "applyContributionControl",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionControl"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization."
+      }
     }
   },
   "components": {
@@ -2101,6 +2327,9 @@
             "minimum": 0,
             "maximum": 1152921504606847000,
             "default": 0
+          },
+          "contribution_control": {
+            "$ref": "#/components/schemas/ContributionControl"
           }
         }
       },
@@ -2557,6 +2786,133 @@
           }
         },
         "description": "Only blocked jobs with unchanged object, instance, credentials and intent can be retried. Reuses the original remote write identity; unknown writes remain subject to reconciliation."
+      },
+      "ContributionControl": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "owner_domain",
+          "revision",
+          "expected_revision",
+          "state",
+          "limit_bytes",
+          "personal_reserve",
+          "until"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "owner_domain": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "draining",
+              "revoked"
+            ]
+          },
+          "limit_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "personal_reserve": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ContributionSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instance_id",
+          "adapter",
+          "revision",
+          "state",
+          "authorized",
+          "authorization_expires_at",
+          "quota_expires_at",
+          "used_bytes",
+          "reserved_bytes",
+          "available_bytes",
+          "remaining_replicas",
+          "observed_at"
+        ],
+        "properties": {
+          "instance_id": {
+            "type": "string"
+          },
+          "adapter": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "control": {
+            "$ref": "#/components/schemas/ContributionControl"
+          },
+          "state": {
+            "type": "string"
+          },
+          "authorized": {
+            "type": "boolean"
+          },
+          "authorization_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "quota_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reserved_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "available_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "remaining_replicas": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       }
     }
   }

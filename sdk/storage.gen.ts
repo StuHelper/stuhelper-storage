@@ -183,6 +183,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/contributions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls. */
+        get: operations["inspectContributionInstance"];
+        /** @description Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization. */
+        put: operations["applyContributionControl"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -289,6 +307,7 @@ export interface components {
              * @default 0
              */
             safety_margin: number;
+            contribution_control?: components["schemas"]["ContributionControl"];
         };
         CreateObject: {
             /** Format: int64 */
@@ -415,6 +434,45 @@ export interface components {
         RetryJob: {
             /** Format: int64 */
             generation: number;
+        };
+        ContributionControl: {
+            id: string;
+            owner_domain: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            expected_revision: number;
+            /** @enum {string} */
+            state: "active" | "paused" | "draining" | "revoked";
+            /** Format: int64 */
+            limit_bytes: number;
+            /** Format: int64 */
+            personal_reserve: number;
+            /** Format: date-time */
+            until: string;
+        };
+        ContributionSnapshot: {
+            instance_id: string;
+            adapter: string;
+            /** Format: int64 */
+            revision: number;
+            control?: components["schemas"]["ContributionControl"];
+            state: string;
+            authorized: boolean;
+            /** Format: date-time */
+            authorization_expires_at: string;
+            /** Format: date-time */
+            quota_expires_at: string;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int64 */
+            reserved_bytes: number;
+            /** Format: int64 */
+            available_bytes: number;
+            /** Format: int64 */
+            remaining_replicas: number;
+            /** Format: date-time */
+            observed_at: string;
         };
     };
     responses: never;
@@ -1695,6 +1753,182 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobFailure"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    inspectContributionInstance: {
+        parameters: {
+            query: {
+                owner_domain: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionSnapshot"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    applyContributionControl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionControl"];
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionSnapshot"];
                 };
             };
             /** @description Stable sanitized error */

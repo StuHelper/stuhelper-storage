@@ -17,6 +17,30 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for ContributionControlState.
+const (
+	ContributionControlStateActive   ContributionControlState = "active"
+	ContributionControlStateDraining ContributionControlState = "draining"
+	ContributionControlStatePaused   ContributionControlState = "paused"
+	ContributionControlStateRevoked  ContributionControlState = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the ContributionControlState enum.
+func (e ContributionControlState) Valid() bool {
+	switch e {
+	case ContributionControlStateActive:
+		return true
+	case ContributionControlStateDraining:
+		return true
+	case ContributionControlStatePaused:
+		return true
+	case ContributionControlStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InstanceOwnership.
 const (
 	InstanceOwnershipContributor InstanceOwnership = "contributor"
@@ -151,6 +175,38 @@ type Admission struct {
 	Scope     string    `json:"scope"`
 }
 
+// ContributionControl defines model for ContributionControl.
+type ContributionControl struct {
+	ExpectedRevision int64                    `json:"expected_revision"`
+	Id               string                   `json:"id"`
+	LimitBytes       int64                    `json:"limit_bytes"`
+	OwnerDomain      string                   `json:"owner_domain"`
+	PersonalReserve  int64                    `json:"personal_reserve"`
+	Revision         int64                    `json:"revision"`
+	State            ContributionControlState `json:"state"`
+	Until            time.Time                `json:"until"`
+}
+
+// ContributionControlState defines model for ContributionControl.State.
+type ContributionControlState string
+
+// ContributionSnapshot defines model for ContributionSnapshot.
+type ContributionSnapshot struct {
+	Adapter                string               `json:"adapter"`
+	AuthorizationExpiresAt time.Time            `json:"authorization_expires_at"`
+	Authorized             bool                 `json:"authorized"`
+	AvailableBytes         int64                `json:"available_bytes"`
+	Control                *ContributionControl `json:"control,omitempty"`
+	InstanceId             string               `json:"instance_id"`
+	ObservedAt             time.Time            `json:"observed_at"`
+	QuotaExpiresAt         time.Time            `json:"quota_expires_at"`
+	RemainingReplicas      int64                `json:"remaining_replicas"`
+	ReservedBytes          int64                `json:"reserved_bytes"`
+	Revision               int64                `json:"revision"`
+	State                  string               `json:"state"`
+	UsedBytes              int64                `json:"used_bytes"`
+}
+
 // CreateObject defines model for CreateObject.
 type CreateObject struct {
 	// ClientKey Optional stable key scoped to the service principal. Its object identity survives the 24-hour request replay window; changed creation parameters conflict and deleted objects are not recreated.
@@ -163,27 +219,28 @@ type CreateObject struct {
 
 // Instance defines model for Instance.
 type Instance struct {
-	AccountDomain      string            `json:"account_domain"`
-	Adapter            string            `json:"adapter"`
-	Admissions         []Admission       `json:"admissions"`
-	Authorized         bool              `json:"authorized"`
-	CredentialRef      string            `json:"credential_ref"`
-	CredentialRevision int64             `json:"credential_revision"`
-	ExpiresAt          time.Time         `json:"expires_at"`
-	Id                 string            `json:"id"`
-	Limit              int64             `json:"limit"`
-	OwnerDomain        string            `json:"owner_domain"`
-	Ownership          InstanceOwnership `json:"ownership"`
-	PersonalReserve    *int64            `json:"personal_reserve,omitempty"`
-	ProviderFree       int64             `json:"provider_free"`
-	QuotaExpiresAt     time.Time         `json:"quota_expires_at"`
-	QuotaRevision      int64             `json:"quota_revision"`
-	Reserved           int64             `json:"reserved"`
-	Revision           int64             `json:"revision"`
-	Root               string            `json:"root"`
-	SafetyMargin       *int64            `json:"safety_margin,omitempty"`
-	State              InstanceState     `json:"state"`
-	Used               int64             `json:"used"`
+	AccountDomain       string               `json:"account_domain"`
+	Adapter             string               `json:"adapter"`
+	Admissions          []Admission          `json:"admissions"`
+	Authorized          bool                 `json:"authorized"`
+	ContributionControl *ContributionControl `json:"contribution_control,omitempty"`
+	CredentialRef       string               `json:"credential_ref"`
+	CredentialRevision  int64                `json:"credential_revision"`
+	ExpiresAt           time.Time            `json:"expires_at"`
+	Id                  string               `json:"id"`
+	Limit               int64                `json:"limit"`
+	OwnerDomain         string               `json:"owner_domain"`
+	Ownership           InstanceOwnership    `json:"ownership"`
+	PersonalReserve     *int64               `json:"personal_reserve,omitempty"`
+	ProviderFree        int64                `json:"provider_free"`
+	QuotaExpiresAt      time.Time            `json:"quota_expires_at"`
+	QuotaRevision       int64                `json:"quota_revision"`
+	Reserved            int64                `json:"reserved"`
+	Revision            int64                `json:"revision"`
+	Root                string               `json:"root"`
+	SafetyMargin        *int64               `json:"safety_margin,omitempty"`
+	State               InstanceState        `json:"state"`
+	Used                int64                `json:"used"`
 }
 
 // InstanceOwnership defines model for Instance.Ownership.
@@ -361,6 +418,11 @@ type Revision struct {
 	Revision int64 `json:"revision"`
 }
 
+// InspectContributionInstanceParams defines parameters for InspectContributionInstance.
+type InspectContributionInstanceParams struct {
+	OwnerDomain string `form:"owner_domain" json:"owner_domain"`
+}
+
 // ListInstancesParams defines parameters for ListInstances.
 type ListInstancesParams struct {
 	After *string `form:"after,omitempty" json:"after,omitempty"`
@@ -423,6 +485,9 @@ type CommandStorageInstanceParams struct {
 type RetryStorageJobParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
+
+// ApplyContributionControlJSONRequestBody defines body for ApplyContributionControl for application/json ContentType.
+type ApplyContributionControlJSONRequestBody = ContributionControl
 
 // RegisterInstanceJSONRequestBody defines body for RegisterInstance for application/json ContentType.
 type RegisterInstanceJSONRequestBody = InstanceInput
@@ -527,6 +592,23 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+
+	// InspectContributionInstance performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
+	//
+	// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
+	InspectContributionInstance(ctx context.Context, id string, params *InspectContributionInstanceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyContributionControlWithBody performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+	ApplyContributionControlWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyContributionControl performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+	ApplyContributionControl(ctx context.Context, id string, body ApplyContributionControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListInstances performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 	ListInstances(ctx context.Context, params *ListInstancesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -633,6 +715,53 @@ type ClientInterface interface {
 	//
 	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
 	RetryStorageJob(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// InspectContributionInstance performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
+//
+// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
+func (c *Client) InspectContributionInstance(ctx context.Context, id string, params *InspectContributionInstanceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInspectContributionInstanceRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyContributionControlWithBody performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+func (c *Client) ApplyContributionControlWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyContributionControlRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyContributionControl performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+func (c *Client) ApplyContributionControl(ctx context.Context, id string, body ApplyContributionControlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyContributionControlRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ListInstances performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
@@ -989,6 +1118,110 @@ func (c *Client) RetryStorageJob(ctx context.Context, objectId string, jobId str
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewInspectContributionInstanceRequest constructs an http.Request for the InspectContributionInstance method
+func NewInspectContributionInstanceRequest(server string, id string, params *InspectContributionInstanceParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/contributions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "owner_domain", params.OwnerDomain, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewApplyContributionControlRequest calls the generic ApplyContributionControl builder with application/json body
+func NewApplyContributionControlRequest(server string, id string, body ApplyContributionControlJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyContributionControlRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewApplyContributionControlRequestWithBody constructs an http.Request for the ApplyContributionControl method, with any body, and a specified content type
+func NewApplyContributionControlRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/contributions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewListInstancesRequest constructs an http.Request for the ListInstances method
@@ -1869,6 +2102,27 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// InspectContributionInstanceWithResponse performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
+	//
+	// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	InspectContributionInstanceWithResponse(ctx context.Context, id string, params *InspectContributionInstanceParams, reqEditors ...RequestEditorFn) (*InspectContributionInstanceResponse, error)
+
+	// ApplyContributionControlWithBodyWithResponse performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ApplyContributionControlWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyContributionControlResponse, error)
+
+	// ApplyContributionControlWithResponse performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+	ApplyContributionControlWithResponse(ctx context.Context, id string, body ApplyContributionControlJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyContributionControlResponse, error)
+
 	// ListInstancesWithResponse performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2004,6 +2258,186 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
 	RetryStorageJobWithResponse(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*RetryStorageJobResponse, error)
+}
+
+type InspectContributionInstanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributionSnapshot
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON200() *ContributionSnapshot {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r InspectContributionInstanceResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r InspectContributionInstanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r InspectContributionInstanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InspectContributionInstanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r InspectContributionInstanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApplyContributionControlResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributionSnapshot
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON200() *ContributionSnapshot {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ApplyContributionControlResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ApplyContributionControlResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyContributionControlResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyContributionControlResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApplyContributionControlResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListInstancesResponse struct {
@@ -3349,6 +3783,45 @@ func (r RetryStorageJobResponse) ContentType() string {
 	return ""
 }
 
+// InspectContributionInstanceWithResponse performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
+//
+// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) InspectContributionInstanceWithResponse(ctx context.Context, id string, params *InspectContributionInstanceParams, reqEditors ...RequestEditorFn) (*InspectContributionInstanceResponse, error) {
+	rsp, err := c.InspectContributionInstance(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInspectContributionInstanceResponse(rsp)
+}
+
+// ApplyContributionControlWithBodyWithResponse performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ApplyContributionControlWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyContributionControlResponse, error) {
+	rsp, err := c.ApplyContributionControlWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyContributionControlResponse(rsp)
+}
+
+// ApplyContributionControlWithResponse performs a PUT /api/v1/storage/contributions/{id} (the `ApplyContributionControl` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Requires storage.contributions.manage. Monotonic permanent control revision prevents old workers reviving a paused/exiting contribution. First binding requires a verified paused empty contributor instance. Does not extend provider authorization.
+func (c *ClientWithResponses) ApplyContributionControlWithResponse(ctx context.Context, id string, body ApplyContributionControlJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyContributionControlResponse, error) {
+	rsp, err := c.ApplyContributionControl(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyContributionControlResponse(rsp)
+}
+
 // ListInstancesWithResponse performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3633,6 +4106,156 @@ func (c *ClientWithResponses) RetryStorageJobWithResponse(ctx context.Context, o
 		return nil, err
 	}
 	return ParseRetryStorageJobResponse(rsp)
+}
+
+// ParseInspectContributionInstanceResponse parses an HTTP response from a InspectContributionInstanceWithResponse call
+func ParseInspectContributionInstanceResponse(rsp *http.Response) (*InspectContributionInstanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InspectContributionInstanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributionSnapshot
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApplyContributionControlResponse parses an HTTP response from a ApplyContributionControlWithResponse call
+func ParseApplyContributionControlResponse(rsp *http.Response) (*ApplyContributionControlResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyContributionControlResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributionSnapshot
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListInstancesResponse parses an HTTP response from a ListInstancesWithResponse call

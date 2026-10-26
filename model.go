@@ -72,30 +72,34 @@ type Admission struct {
 }
 
 type Instance struct {
-	ID                 string      `json:"id"`
-	Adapter            string      `json:"adapter"`
-	AccountDomain      string      `json:"account_domain"`
-	OwnerDomain        string      `json:"owner_domain"`
-	Ownership          string      `json:"ownership"`
-	CredentialRef      string      `json:"credential_ref"`
-	CredentialRevision int64       `json:"credential_revision"`
-	Root               string      `json:"root"`
-	Revision           int64       `json:"revision"`
-	State              string      `json:"state"`
-	Authorized         bool        `json:"authorized"`
-	Limit              int64       `json:"limit"`
-	Used               int64       `json:"used"`
-	Reserved           int64       `json:"reserved"`
-	ProviderFree       int64       `json:"provider_free"`
-	PersonalReserve    int64       `json:"personal_reserve"`
-	SafetyMargin       int64       `json:"safety_margin"`
-	QuotaRevision      int64       `json:"quota_revision"`
-	QuotaExpiresAt     time.Time   `json:"quota_expires_at"`
-	ExpiresAt          time.Time   `json:"expires_at"`
-	Admissions         []Admission `json:"admissions"`
+	ContributionControl *ContributionControl `json:"contribution_control,omitempty"`
+	ID                  string               `json:"id"`
+	Adapter             string               `json:"adapter"`
+	AccountDomain       string               `json:"account_domain"`
+	OwnerDomain         string               `json:"owner_domain"`
+	Ownership           string               `json:"ownership"`
+	CredentialRef       string               `json:"credential_ref"`
+	CredentialRevision  int64                `json:"credential_revision"`
+	Root                string               `json:"root"`
+	Revision            int64                `json:"revision"`
+	State               string               `json:"state"`
+	Authorized          bool                 `json:"authorized"`
+	Limit               int64                `json:"limit"`
+	Used                int64                `json:"used"`
+	Reserved            int64                `json:"reserved"`
+	ProviderFree        int64                `json:"provider_free"`
+	PersonalReserve     int64                `json:"personal_reserve"`
+	SafetyMargin        int64                `json:"safety_margin"`
+	QuotaRevision       int64                `json:"quota_revision"`
+	QuotaExpiresAt      time.Time            `json:"quota_expires_at"`
+	ExpiresAt           time.Time            `json:"expires_at"`
+	Admissions          []Admission          `json:"admissions"`
 }
 
 func (i Instance) Allows(p Protection, now time.Time) bool {
+	if i.ContributionControl != nil && i.ContributionControl.State == "revoked" {
+		return false
+	}
 	if !i.Authorized || !i.ExpiresAt.After(now) || i.State == "revoked" || p.Encrypted {
 		return false
 	}
@@ -111,10 +115,17 @@ func (i Instance) Allows(p Protection, now time.Time) bool {
 	return false
 }
 func (i Instance) CanWrite(p Protection, size int64, now time.Time) bool {
+	if i.ContributionControl != nil && (i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(now)) {
+		return false
+	}
 	providerBudget := i.ProviderFree - i.PersonalReserve - i.SafetyMargin
 	return i.Allows(p, now) && i.State == "active" && i.QuotaExpiresAt.After(now) && size >= 0 &&
 		i.Used <= i.Limit && i.Reserved <= i.Limit-i.Used && size <= i.Limit-i.Used-i.Reserved &&
 		i.Reserved <= providerBudget && size <= providerBudget-i.Reserved
+}
+
+func (i Instance) Draining(now time.Time) bool {
+	return i.State == "draining" || (i.ContributionControl != nil && (i.ContributionControl.State == "draining" || !i.ContributionControl.Until.After(now)) && i.State != "revoked")
 }
 
 type Policy struct {
@@ -251,6 +262,7 @@ type Transaction interface {
 	Instance(string) (Instance, error)
 	Instances(int, string) ([]Instance, error)
 	SaveInstance(Instance) error
+	InstanceReplicas(string) (int64, error)
 	Object(string) (Object, error)
 	Objects(int, string) ([]Object, error)
 	SaveObject(Object) error

@@ -55,7 +55,7 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 		if i.Ownership == "contributor" {
 			owners[i.OwnerDomain] = true
 		}
-		if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && i.State != "draining" && r.ObjectRevision == o.Revision && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision {
+		if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(s.now()) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision {
 			count++
 		}
 	}
@@ -259,7 +259,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				if err != nil {
 					return err
 				}
-				if r.State == "healthy" && i.State != "draining" && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision && r.ObjectRevision == o.Revision && !r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) {
+				if r.State == "healthy" && !i.Draining(s.now()) && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision && r.ObjectRevision == o.Revision && !r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) {
 					replacements++
 				}
 			}
@@ -269,7 +269,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					if err != nil {
 						return err
 					}
-					if i.State == "draining" && r.State == "healthy" {
+					if i.Draining(s.now()) && r.State == "healthy" {
 						r.State = "cleanup"
 						if err := tx.SaveReplica(r); err != nil {
 							return err

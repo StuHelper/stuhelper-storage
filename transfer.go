@@ -324,6 +324,9 @@ func (s *Service) jobState(ctx context.Context, tx Transaction, expected Job, al
 	if !allowCleanup && (o.State == "deleting" || o.State == "deleted" || r.ObjectRevision != o.Revision || r.State == "cleanup" || r.State == "deleted" || !i.Allows(o.Protection, s.now()) || i.Revision != r.InstanceRevision) {
 		return o, r, i, j, ErrStale
 	}
+	if !allowCleanup && (j.Kind == "ingest" || j.Kind == "replicate") && i.ContributionControl != nil && (i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(s.now())) {
+		return o, r, i, j, ErrStale
+	}
 	if allowCleanup {
 		active, err := tx.ActiveWrites(r.ID, s.now())
 		if err != nil {

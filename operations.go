@@ -59,6 +59,8 @@ func instanceHealth(i Instance, now time.Time) InstanceHealth {
 		out.Reason = "authorization_expired"
 	case i.State != "active":
 		out.Reason = "writes_disabled"
+	case i.ContributionControl != nil && (i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(now)):
+		out.Reason = "writes_disabled"
 	case !i.QuotaExpiresAt.After(now):
 		out.Reason = "capacity_unknown"
 	default:
