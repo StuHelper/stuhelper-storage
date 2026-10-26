@@ -33,6 +33,8 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h := &handler{s, auth, maxUpload}
 	mux := http.NewServeMux()
 	h.mount(mux, "GET /api/v1/storage/operations", false, h.operations)
+	h.mount(mux, "POST /api/v1/storage/operations/instances/{id}/commands", false, h.commandInstance)
+	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry", false, h.retryJob)
 	h.mount(mux, "GET /api/v1/storage/instances", false, h.instances)
 	h.mount(mux, "POST /api/v1/storage/instances", false, h.register)
 	h.mount(mux, "PUT /api/v1/storage/instances/{id}", false, h.update)
@@ -48,6 +50,24 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h.mount(mux, "PUT /api/v1/storage/objects/{id}/protection", false, h.protection)
 	h.mount(mux, "POST /api/v1/storage/maintenance", false, h.maintenance)
 	return mux, nil
+}
+func (h *handler) commandInstance(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	input, err := decode[sdk.InstanceCommand](r)
+	if err != nil {
+		return nil, err
+	}
+	command, err := convert[sdk.InstanceCommand, storage.InstanceCommand](input)
+	if err != nil {
+		return nil, err
+	}
+	return h.s.CommandInstance(r.Context(), p, r.PathValue("id"), r.Header.Get("Idempotency-Key"), command)
+}
+func (h *handler) retryJob(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	input, err := decode[sdk.RetryJob](r)
+	if err != nil {
+		return nil, err
+	}
+	return h.s.RetryJob(r.Context(), p, r.PathValue("object_id"), r.PathValue("job_id"), r.Header.Get("Idempotency-Key"), input.Generation)
 }
 func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	limit := 50

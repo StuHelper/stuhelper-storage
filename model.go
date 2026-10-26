@@ -195,9 +195,11 @@ type Event struct {
 	Revision        int64     `json:"-"`
 	Time            time.Time `json:"time"`
 	Actor           Principal `json:"-"`
+	JobID           string    `json:"-"`
 }
 
 type EventData struct {
+	JobID          string `json:"job_id,omitempty"`
 	Revision       int64  `json:"revision"`
 	PolicyRevision int64  `json:"policy_revision"`
 	ObjectID       string `json:"object_id"`
@@ -255,6 +257,8 @@ type Transaction interface {
 	Replicas(string) ([]Replica, error)
 	SaveReplica(Replica) error
 	Job(string) (Job, error)
+	// JobSnapshot reads a binding without a row lock, for instance-before-job locking.
+	JobSnapshot(string) (Job, error)
 	SaveJob(Job) error
 	OutstandingJobs(string, int) (int, error)
 	ActiveWrites(string, time.Time) (bool, error)

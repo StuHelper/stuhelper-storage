@@ -6,6 +6,10 @@ import (
 )
 
 type InstanceHealth struct {
+	Revision               int64     `json:"revision"`
+	LimitBytes             int64     `json:"limit_bytes"`
+	UsedBytes              int64     `json:"used_bytes"`
+	ReservedBytes          int64     `json:"reserved_bytes"`
 	ID                     string    `json:"id"`
 	State                  string    `json:"state"`
 	Reason                 string    `json:"reason"`
@@ -27,6 +31,7 @@ type JobTotals struct {
 	Blocked int64 `json:"blocked"`
 }
 type JobFailure struct {
+	Generation  int64     `json:"generation"`
 	ID          string    `json:"id"`
 	ObjectID    string    `json:"object_id"`
 	Kind        string    `json:"kind"`
@@ -46,7 +51,7 @@ type Operations struct {
 }
 
 func instanceHealth(i Instance, now time.Time) InstanceHealth {
-	out := InstanceHealth{ID: i.ID, State: i.State, AuthorizationExpiresAt: i.ExpiresAt, QuotaExpiresAt: i.QuotaExpiresAt}
+	out := InstanceHealth{ID: i.ID, State: i.State, Revision: i.Revision, LimitBytes: i.Limit, UsedBytes: i.Used, ReservedBytes: i.Reserved, AuthorizationExpiresAt: i.ExpiresAt, QuotaExpiresAt: i.QuotaExpiresAt}
 	switch {
 	case !i.Authorized || i.State == "revoked":
 		out.Reason = "authorization_revoked"
@@ -145,7 +150,7 @@ func (s *Service) Operations(ctx context.Context, p Principal, limit int, after,
 			return err
 		}
 		for _, j := range jobs {
-			out.Failures = append(out.Failures, JobFailure{j.ID, j.ObjectID, j.Kind, j.State, j.Attempts, j.ErrorCode, j.AvailableAt})
+			out.Failures = append(out.Failures, jobFailure(j))
 		}
 		if len(jobs) == limit {
 			out.FailuresNextCursor = jobs[len(jobs)-1].ID
@@ -153,4 +158,8 @@ func (s *Service) Operations(ctx context.Context, p Principal, limit int, after,
 		return s.authorize(ctx, p, "storage.operations.read", "", Protection{})
 	})
 	return out, err
+}
+
+func jobFailure(j Job) JobFailure {
+	return JobFailure{ID: j.ID, ObjectID: j.ObjectID, Kind: j.Kind, State: j.State, Generation: j.Generation, Attempts: j.Attempts, ErrorCode: j.ErrorCode, NextAttempt: j.AvailableAt}
 }

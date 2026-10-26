@@ -59,6 +59,33 @@ func (e InstanceState) Valid() bool {
 	}
 }
 
+// Defines values for InstanceCommandAction.
+const (
+	Drain  InstanceCommandAction = "drain"
+	Pause  InstanceCommandAction = "pause"
+	Quota  InstanceCommandAction = "quota"
+	Resume InstanceCommandAction = "resume"
+	Revoke InstanceCommandAction = "revoke"
+)
+
+// Valid indicates whether the value is a known member of the InstanceCommandAction enum.
+func (e InstanceCommandAction) Valid() bool {
+	switch e {
+	case Drain:
+		return true
+	case Pause:
+		return true
+	case Quota:
+		return true
+	case Resume:
+		return true
+	case Revoke:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InstanceInputOwnership.
 const (
 	InstanceInputOwnershipContributor InstanceInputOwnership = "contributor"
@@ -165,14 +192,28 @@ type InstanceOwnership string
 // InstanceState defines model for Instance.State.
 type InstanceState string
 
+// InstanceCommand Current instance revision required. limit_bytes is required only for quota. Resume applies only to paused, still-authorized instances; it does not renew authorization. Quota cannot fall below used plus reserved bytes.
+type InstanceCommand struct {
+	Action     InstanceCommandAction `json:"action"`
+	LimitBytes *int64                `json:"limit_bytes,omitempty"`
+	Revision   int64                 `json:"revision"`
+}
+
+// InstanceCommandAction defines model for InstanceCommand.Action.
+type InstanceCommandAction string
+
 // InstanceHealth defines model for InstanceHealth.
 type InstanceHealth struct {
 	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
 	AvailableBytes         int64     `json:"available_bytes"`
 	Id                     string    `json:"id"`
+	LimitBytes             int64     `json:"limit_bytes"`
 	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
 	Reason                 string    `json:"reason"`
+	ReservedBytes          int64     `json:"reserved_bytes"`
+	Revision               int64     `json:"revision"`
 	State                  string    `json:"state"`
+	UsedBytes              int64     `json:"used_bytes"`
 }
 
 // InstanceInput defines model for InstanceInput.
@@ -208,6 +249,7 @@ type InstanceInputState string
 type JobFailure struct {
 	Attempts    int64     `json:"attempts"`
 	ErrorCode   string    `json:"error_code"`
+	Generation  int64     `json:"generation"`
 	Id          string    `json:"id"`
 	Kind        string    `json:"kind"`
 	NextAttempt time.Time `json:"next_attempt"`
@@ -309,6 +351,11 @@ type Reference struct {
 	Module string `json:"module"`
 }
 
+// RetryJob Only blocked jobs with unchanged object, instance, credentials and intent can be retried. Reuses the original remote write identity; unknown writes remain subject to reconciliation.
+type RetryJob struct {
+	Generation int64 `json:"generation"`
+}
+
 // Revision defines model for Revision.
 type Revision struct {
 	Revision int64 `json:"revision"`
@@ -367,6 +414,16 @@ type StorageOperationsParams struct {
 	FailuresAfter *string `form:"failures_after,omitempty" json:"failures_after,omitempty"`
 }
 
+// CommandStorageInstanceParams defines parameters for CommandStorageInstance.
+type CommandStorageInstanceParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
+// RetryStorageJobParams defines parameters for RetryStorageJob.
+type RetryStorageJobParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
 // RegisterInstanceJSONRequestBody defines body for RegisterInstance for application/json ContentType.
 type RegisterInstanceJSONRequestBody = InstanceInput
 
@@ -390,6 +447,12 @@ type ReleaseReferenceJSONRequestBody = Reference
 
 // AttachReferenceJSONRequestBody defines body for AttachReference for application/json ContentType.
 type AttachReferenceJSONRequestBody = Reference
+
+// CommandStorageInstanceJSONRequestBody defines body for CommandStorageInstance for application/json ContentType.
+type CommandStorageInstanceJSONRequestBody = InstanceCommand
+
+// RetryStorageJobJSONRequestBody defines body for RetryStorageJob for application/json ContentType.
+type RetryStorageJobJSONRequestBody = RetryJob
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -546,6 +609,30 @@ type ClientInterface interface {
 	//
 	// Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
 	StorageOperations(ctx context.Context, params *StorageOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CommandStorageInstanceWithBody performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+	CommandStorageInstanceWithBody(ctx context.Context, id string, params *CommandStorageInstanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CommandStorageInstance performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+	CommandStorageInstance(ctx context.Context, id string, params *CommandStorageInstanceParams, body CommandStorageInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetryStorageJobWithBody performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+	RetryStorageJobWithBody(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetryStorageJob performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+	RetryStorageJob(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListInstances performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
@@ -830,6 +917,70 @@ func (c *Client) AttachReference(ctx context.Context, id string, params *AttachR
 // Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
 func (c *Client) StorageOperations(ctx context.Context, params *StorageOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStorageOperationsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CommandStorageInstanceWithBody performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+func (c *Client) CommandStorageInstanceWithBody(ctx context.Context, id string, params *CommandStorageInstanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCommandStorageInstanceRequestWithBody(c.Server, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CommandStorageInstance performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+func (c *Client) CommandStorageInstance(ctx context.Context, id string, params *CommandStorageInstanceParams, body CommandStorageInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCommandStorageInstanceRequest(c.Server, id, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetryStorageJobWithBody performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+func (c *Client) RetryStorageJobWithBody(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetryStorageJobRequestWithBody(c.Server, objectId, jobId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetryStorageJob performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+func (c *Client) RetryStorageJob(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetryStorageJobRequest(c.Server, objectId, jobId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1547,6 +1698,133 @@ func NewStorageOperationsRequest(server string, params *StorageOperationsParams)
 	return req, nil
 }
 
+// NewCommandStorageInstanceRequest calls the generic CommandStorageInstance builder with application/json body
+func NewCommandStorageInstanceRequest(server string, id string, params *CommandStorageInstanceParams, body CommandStorageInstanceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCommandStorageInstanceRequestWithBody(server, id, params, "application/json", bodyReader)
+}
+
+// NewCommandStorageInstanceRequestWithBody constructs an http.Request for the CommandStorageInstance method, with any body, and a specified content type
+func NewCommandStorageInstanceRequestWithBody(server string, id string, params *CommandStorageInstanceParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/operations/instances/%s/commands", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRetryStorageJobRequest calls the generic RetryStorageJob builder with application/json body
+func NewRetryStorageJobRequest(server string, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRetryStorageJobRequestWithBody(server, objectId, jobId, params, "application/json", bodyReader)
+}
+
+// NewRetryStorageJobRequestWithBody constructs an http.Request for the RetryStorageJob method, with any body, and a specified content type
+func NewRetryStorageJobRequestWithBody(server string, objectId string, jobId string, params *RetryStorageJobParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "object_id", objectId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "job_id", jobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/operations/objects/%s/jobs/%s/retry", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -1698,6 +1976,34 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	StorageOperationsWithResponse(ctx context.Context, params *StorageOperationsParams, reqEditors ...RequestEditorFn) (*StorageOperationsResponse, error)
+
+	// CommandStorageInstanceWithBodyWithResponse performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CommandStorageInstanceWithBodyWithResponse(ctx context.Context, id string, params *CommandStorageInstanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CommandStorageInstanceResponse, error)
+
+	// CommandStorageInstanceWithResponse performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+	CommandStorageInstanceWithResponse(ctx context.Context, id string, params *CommandStorageInstanceParams, body CommandStorageInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CommandStorageInstanceResponse, error)
+
+	// RetryStorageJobWithBodyWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RetryStorageJobWithBodyWithResponse(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetryStorageJobResponse, error)
+
+	// RetryStorageJobWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+	RetryStorageJobWithResponse(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*RetryStorageJobResponse, error)
 }
 
 type ListInstancesResponse struct {
@@ -2863,6 +3169,186 @@ func (r StorageOperationsResponse) ContentType() string {
 	return ""
 }
 
+type CommandStorageInstanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *InstanceHealth
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON200() *InstanceHealth {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CommandStorageInstanceResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CommandStorageInstanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CommandStorageInstanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CommandStorageInstanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CommandStorageInstanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RetryStorageJobResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *JobFailure
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RetryStorageJobResponse) GetJSON200() *JobFailure {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RetryStorageJobResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RetryStorageJobResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RetryStorageJobResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RetryStorageJobResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r RetryStorageJobResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r RetryStorageJobResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RetryStorageJobResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RetryStorageJobResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RetryStorageJobResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RetryStorageJobResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RetryStorageJobResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListInstancesWithResponse performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3095,6 +3581,58 @@ func (c *ClientWithResponses) StorageOperationsWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseStorageOperationsResponse(rsp)
+}
+
+// CommandStorageInstanceWithBodyWithResponse performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CommandStorageInstanceWithBodyWithResponse(ctx context.Context, id string, params *CommandStorageInstanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CommandStorageInstanceResponse, error) {
+	rsp, err := c.CommandStorageInstanceWithBody(ctx, id, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCommandStorageInstanceResponse(rsp)
+}
+
+// CommandStorageInstanceWithResponse performs a POST /api/v1/storage/operations/instances/{id}/commands (the `CommandStorageInstance` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Requires storage.operations.manage on the instance. Changes only the ledger; never logs in, probes or changes provider quotas. Atomic audit and idempotent response, current permission on replay.
+func (c *ClientWithResponses) CommandStorageInstanceWithResponse(ctx context.Context, id string, params *CommandStorageInstanceParams, body CommandStorageInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CommandStorageInstanceResponse, error) {
+	rsp, err := c.CommandStorageInstance(ctx, id, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCommandStorageInstanceResponse(rsp)
+}
+
+// RetryStorageJobWithBodyWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RetryStorageJobWithBodyWithResponse(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetryStorageJobResponse, error) {
+	rsp, err := c.RetryStorageJobWithBody(ctx, objectId, jobId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetryStorageJobResponse(rsp)
+}
+
+// RetryStorageJobWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry (the `RetryStorageJob` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
+func (c *ClientWithResponses) RetryStorageJobWithResponse(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*RetryStorageJobResponse, error) {
+	rsp, err := c.RetryStorageJob(ctx, objectId, jobId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetryStorageJobResponse(rsp)
 }
 
 // ParseListInstancesResponse parses an HTTP response from a ListInstancesWithResponse call
@@ -4006,6 +4544,156 @@ func ParseStorageOperationsResponse(rsp *http.Response) (*StorageOperationsRespo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Operations
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCommandStorageInstanceResponse parses an HTTP response from a CommandStorageInstanceWithResponse call
+func ParseCommandStorageInstanceResponse(rsp *http.Response) (*CommandStorageInstanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CommandStorageInstanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InstanceHealth
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRetryStorageJobResponse parses an HTTP response from a RetryStorageJobWithResponse call
+func ParseRetryStorageJobResponse(rsp *http.Response) (*RetryStorageJobResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RetryStorageJobResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JobFailure
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

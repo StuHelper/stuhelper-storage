@@ -24,6 +24,10 @@ type transaction struct {
 	ctx context.Context
 }
 
+func (t *transaction) JobSnapshot(id string) (storage.Job, error) {
+	return read[storage.Job](t, `SELECT data FROM storage.jobs WHERE id=$1`, id)
+}
+
 func (t *transaction) ActiveWrites(replicaID string, now time.Time) (bool, error) {
 	var active bool
 	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.jobs WHERE data->>'replica_id'=$1 AND data->>'kind' IN ('ingest','replicate') AND state='running' AND lease_until>$2)`, replicaID, now).Scan(&active)
@@ -159,7 +163,7 @@ func (t *transaction) Event(v storage.Event) error {
 	if err := t.tx.QueryRowContext(t.ctx, `INSERT INTO storage.event_streams(subject,revision) VALUES($1,1) ON CONFLICT(subject) DO UPDATE SET revision=storage.event_streams.revision+1 RETURNING revision`, v.Subject).Scan(&revision); err != nil {
 		return safe(err)
 	}
-	v.Data = storage.EventData{Revision: revision, PolicyRevision: v.Revision, ObjectID: v.ObjectID}
+	v.Data = storage.EventData{Revision: revision, PolicyRevision: v.Revision, ObjectID: v.ObjectID, JobID: v.JobID}
 	v.Type += ".v1"
 	if err := t.save(`INSERT INTO storage.outbox(id,data) VALUES($1,$2)`, v, v.ID); err != nil {
 		return err
