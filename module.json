@@ -18,7 +18,7 @@
     "STORAGE-10": ["integration_test.go#TestRestrictedPlacementAndCredentialRotation", "integration_test.go#TestExpiredEmptyObjectIsTombstoned"],
     "STORAGE-11": ["drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion", "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed"],
     "STORAGE-12": ["drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload", "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline"],
-    "STORAGE-13": ["staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup", "staging_test.go#TestStagingRejectsSymlinkAndForeignContent"],
+    "STORAGE-13": ["staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup", "staging_test.go#TestStagingRejectsSymlinkAndForeignContent", "staging_test.go#TestStagingProcessCrashRecovery"],
     "STORAGE-14": ["staging_test.go#TestPacerCancellationAndSharedBudget", "runtime_integration_test.go#TestTransferAdmissionAndShutdownCancellation"],
     "STORAGE-15": ["executor/executor_test.go#TestBoundedWorkersAndGracefulStop", "executor/executor_test.go#TestStopDeadlineCancelsAndWaitsForCleanup", "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas"],
     "STORAGE-16": ["runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"],

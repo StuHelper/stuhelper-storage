@@ -4,11 +4,75 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestStagingProcessCrashRecovery(t *testing.T) {
+	dir := t.TempDir()
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := func() *exec.Cmd {
+		c := exec.Command(binary, "-test.run=^TestStagingProcessHelper$")
+		c.Env = append(os.Environ(), "STUHELPER_STAGING_HELPER="+dir)
+		return c
+	}
+	active, err := openStaging(dir, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exit *exec.ExitError
+	if err = command().Run(); !errors.As(err, &exit) || exit.ExitCode() != 17 {
+		t.Fatalf("child ignored live directory lock: %v", err)
+	}
+	if err = active.close(); err != nil {
+		t.Fatal(err)
+	}
+	// The child exits without releasing its temporary file or calling Close.
+	if output, err := command().CombinedOutput(); err != nil {
+		t.Fatalf("child: %v %s", err, output)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "storage-staging-v1"))
+	if err != nil || len(entries) != 2 {
+		t.Fatal("no process-exit residue", err)
+	}
+	recovered, err := openStaging(dir, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.close()
+	entries, err = os.ReadDir(filepath.Join(dir, "storage-staging-v1"))
+	if err != nil || len(entries) != 1 || entries[0].Name() != ".lock" {
+		t.Fatal("process-exit residue not recovered", err)
+	}
+}
+
+func TestStagingProcessHelper(t *testing.T) {
+	dir := os.Getenv("STUHELPER_STAGING_HELPER")
+	if dir == "" {
+		return
+	}
+	s, err := openStaging(dir, 64)
+	if errors.Is(err, ErrConflict) {
+		os.Exit(17)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.create(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.Write([]byte("unfinished transfer")); err != nil {
+		t.Fatal(err)
+	}
+	os.Exit(0)
+}
 
 func TestStagingBudgetOwnershipAndRestartCleanup(t *testing.T) {
 	dir := t.TempDir()
