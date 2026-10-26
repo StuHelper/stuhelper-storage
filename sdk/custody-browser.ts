@@ -56,8 +56,8 @@ export function custodyAPI(fetcher: typeof fetch = fetch) {
   return {
     policy: async (signal: AbortSignal) => parseCustodyPolicy(await request('/policy', signal)),
     list: async (signal: AbortSignal, after = '', admin = false) => parseCustodyPage(await request(`${admin ? '/operations' : ''}?limit=20&after=${encodeURIComponent(after)}`, signal)),
-    find: async (key: string, signal: AbortSignal) => parseCustodyBinding(await request(`/requests/${encodeURIComponent(key)}`, signal)),
-    submit: (key: string, body: CustodyRequest, signal: AbortSignal, id?: string) => binding(id ? `/${encodeURIComponent(id)}/reauthorize` : '', signal, body, { id, request: key }, key),
+    requestStatus: async (key: string, signal: AbortSignal) => parseCustodyBinding(await request(`/requests/${encodeURIComponent(key)}`, signal)),
+    submit: (key: string, body: CustodyRequest, signal: AbortSignal, id?: string) => binding(id ? `/${encodeURIComponent(id)}/reauthorize` : '', signal, body, { id: id ?? key, request: key }, key),
     resume: (item: CustodyBinding, signal: AbortSignal, admin = false) => binding(`${admin ? '/operations' : ''}/${encodeURIComponent(item.id)}/resume`, signal, { request_id: item.request_id, revision: item.revision }, { id: item.id, request: item.request_id }),
   };
 }

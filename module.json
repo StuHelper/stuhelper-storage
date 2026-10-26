@@ -109,7 +109,8 @@
       "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe"
     ],
     "STORAGE-27": [
-      "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation"
+      "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation",
+      "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses"
     ],
     "STORAGE-28": [
       "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance"

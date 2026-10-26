@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
@@ -17,8 +19,68 @@ import (
 
 	storage "github.com/StuHelper/stuhelper-storage"
 	"github.com/StuHelper/stuhelper-storage/custody"
+	"github.com/StuHelper/stuhelper-storage/httpapi"
 	"github.com/StuHelper/stuhelper-storage/postgres"
 )
+
+type custodyAuthentication struct{ principal storage.Principal }
+
+func (a custodyAuthentication) Authenticate(r *http.Request) (storage.Principal, error) {
+	if r.Header.Get("Authorization") != "Bearer fixture" {
+		return storage.Principal{}, storage.ErrDenied
+	}
+	return a.principal, nil
+}
+func TestCustodyHTTPBoundaryAndSecretFreeResponses(t *testing.T) {
+	h, s, _, a, user, q := custodyFixture(t)
+	handler, e := httpapi.NewCustody(s, custodyAuthentication{user})
+	if e != nil {
+		t.Fatal(e)
+	}
+	key := "30000000-0000-4000-8000-000000000001"
+	body, _ := json.Marshal(q)
+	send := func(method, path, content, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(content))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", key)
+		if token != "" {
+			r.Header.Set("Authorization", token)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	base := "/api/v1/storage/custody"
+	if w := send("GET", base+"/policy", "", ""); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	if w := send("POST", base, string(body), ""); w.Code != 401 {
+		t.Fatal(w.Code)
+	}
+	w := send("POST", base, string(body), "Bearer fixture")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, secret := range []string{"test-only-value", "username", "credential_ref", "root", "AccountDomain"} {
+		if strings.Contains(w.Body.String(), secret) {
+			t.Fatal("HTTP exposed private custody data")
+		}
+	}
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("response could be cached")
+	}
+	if w = send("GET", base+"/operations", "", "Bearer fixture"); w.Code != 403 {
+		t.Fatal("owner gained operations access", w.Code)
+	}
+	a.denied.Store(true)
+	if w = send("GET", base+"/requests/"+key, "", "Bearer fixture"); w.Code != 403 {
+		t.Fatal(w.Code)
+	}
+	var count int
+	if e = h.db.QueryRow(`SELECT count(*) FROM storage.instances`).Scan(&count); e != nil || count != 1 {
+		t.Fatal(count, e)
+	}
+}
 
 type custodyAuth struct{ denied atomic.Bool }
 

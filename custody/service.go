@@ -239,6 +239,13 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			}
 		}
 		return s.repo.Transaction(work, func(tx Tx) error {
+			latest, e := tx.Operation(op.ID)
+			if e != nil {
+				return e
+			}
+			if latest.Attempts != op.Attempts || !latest.LeaseUntil.After(s.cfg.Clock()) {
+				return storage.ErrStale
+			}
 			current, e := tx.Binding(target)
 			if e != nil {
 				return e
@@ -291,12 +298,33 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			if current != nil {
 				op.ExpectedRevision = current.Revision
 			}
-			e = s.repo.Transaction(work, func(tx Tx) error { return tx.SaveOperation(op) })
+			e = s.repo.Transaction(work, func(tx Tx) error {
+				latest, e := tx.Operation(op.ID)
+				if e != nil {
+					return e
+				}
+				if latest.Attempts != op.Attempts || !latest.LeaseUntil.After(s.cfg.Clock()) {
+					return storage.ErrStale
+				}
+				return tx.SaveOperation(op)
+			})
 		}
 	}
 	var applied storage.Instance
 	if e == nil {
 		e = s.authorize(work, p, action, target)
+	}
+	if e == nil {
+		e = s.repo.Transaction(work, func(tx Tx) error {
+			latest, e := tx.Operation(op.ID)
+			if e != nil {
+				return e
+			}
+			if latest.Attempts != op.Attempts || !latest.LeaseUntil.After(s.cfg.Clock()) {
+				return storage.ErrStale
+			}
+			return nil
+		})
 	}
 	if e == nil {
 		if op.ExpectedRevision == 0 {
