@@ -132,6 +132,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists. */
+        get: operations["storageOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -287,6 +304,57 @@ export interface components {
             /** Format: int64 */
             processed: number;
             next_cursor: string;
+        };
+        InstanceHealth: {
+            id: string;
+            state: string;
+            reason: string;
+            /** Format: int64 */
+            available_bytes: number;
+            /** Format: date-time */
+            authorization_expires_at: string;
+            /** Format: date-time */
+            quota_expires_at: string;
+        };
+        ObjectHealth: {
+            id: string;
+            state: string;
+            /** Format: int64 */
+            healthy: number;
+            /** Format: int64 */
+            desired: number;
+            /** Format: int64 */
+            missing: number;
+            reason: string;
+        };
+        JobTotals: {
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            running: number;
+            /** Format: int64 */
+            blocked: number;
+        };
+        JobFailure: {
+            id: string;
+            object_id: string;
+            kind: string;
+            state: string;
+            /** Format: int64 */
+            attempts: number;
+            error_code: string;
+            /** Format: date-time */
+            next_attempt: string;
+        };
+        Operations: {
+            /** Format: date-time */
+            generated_at: string;
+            instances: components["schemas"]["InstanceHealth"][];
+            objects: components["schemas"]["ObjectHealth"][];
+            jobs: components["schemas"]["JobTotals"];
+            failures: components["schemas"]["JobFailure"][];
+            next_cursor: string;
+            failures_next_cursor: string;
         };
     };
     responses: never;
@@ -1297,6 +1365,93 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MaintenanceResult"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    storageOperations: {
+        parameters: {
+            query?: {
+                after?: string;
+                limit?: number;
+                failures_after?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Operations"];
                 };
             };
             /** @description Stable sanitized error */

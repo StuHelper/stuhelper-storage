@@ -1385,6 +1385,125 @@
           }
         }
       }
+    },
+    "/api/v1/storage/operations": {
+      "get": {
+        "operationId": "storageOperations",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "failures_after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Operations"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "description": "Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists."
+      }
     }
   },
   "components": {
@@ -1906,6 +2025,191 @@
             "minimum": 0
           },
           "next_cursor": {
+            "type": "string"
+          }
+        }
+      },
+      "InstanceHealth": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "state",
+          "reason",
+          "available_bytes",
+          "authorization_expires_at",
+          "quota_expires_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "available_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "authorization_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "quota_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ObjectHealth": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "state",
+          "healthy",
+          "desired",
+          "missing",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "healthy": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "desired": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "missing": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "JobTotals": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pending",
+          "running",
+          "blocked"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "blocked": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "JobFailure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "object_id",
+          "kind",
+          "state",
+          "attempts",
+          "error_code",
+          "next_attempt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "error_code": {
+            "type": "string"
+          },
+          "next_attempt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Operations": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generated_at",
+          "instances",
+          "objects",
+          "jobs",
+          "failures",
+          "next_cursor",
+          "failures_next_cursor"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstanceHealth"
+            }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectHealth"
+            }
+          },
+          "jobs": {
+            "$ref": "#/components/schemas/JobTotals"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobFailure"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "failures_next_cursor": {
             "type": "string"
           }
         }

@@ -133,6 +133,14 @@ func (t *transaction) OutstandingJobs(exclude string, limit int) (int, error) {
 	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM (SELECT 1 FROM storage.jobs WHERE id<>$1 AND state IN ('pending','running') LIMIT $2) bounded`, exclude, limit).Scan(&count)
 	return count, safe(err)
 }
+func (t *transaction) JobTotals() (storage.JobTotals, error) {
+	var out storage.JobTotals
+	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FILTER (WHERE state='pending'),count(*) FILTER (WHERE state='running'),count(*) FILTER (WHERE state='blocked') FROM storage.jobs`).Scan(&out.Pending, &out.Running, &out.Blocked)
+	return out, safe(err)
+}
+func (t *transaction) FailedJobs(limit int, after string) ([]storage.Job, error) {
+	return list[storage.Job](t, `SELECT data FROM storage.jobs WHERE id>$1 AND state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'' ORDER BY id LIMIT $2`, after, limit)
+}
 func (t *transaction) Idempotency(key string) (storage.Idempotency, error) {
 	return read[storage.Idempotency](t, `SELECT data FROM storage.idempotency WHERE key=$1 FOR UPDATE`, key)
 }

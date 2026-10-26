@@ -32,6 +32,7 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	}
 	h := &handler{s, auth, maxUpload}
 	mux := http.NewServeMux()
+	h.mount(mux, "GET /api/v1/storage/operations", false, h.operations)
 	h.mount(mux, "GET /api/v1/storage/instances", false, h.instances)
 	h.mount(mux, "POST /api/v1/storage/instances", false, h.register)
 	h.mount(mux, "PUT /api/v1/storage/instances/{id}", false, h.update)
@@ -47,6 +48,17 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h.mount(mux, "PUT /api/v1/storage/objects/{id}/protection", false, h.protection)
 	h.mount(mux, "POST /api/v1/storage/maintenance", false, h.maintenance)
 	return mux, nil
+}
+func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		var err error
+		limit, err = strconv.Atoi(raw)
+		if err != nil {
+			return nil, storage.ErrInput
+		}
+	}
+	return h.s.Operations(r.Context(), p, limit, r.URL.Query().Get("after"), r.URL.Query().Get("failures_after"))
 }
 func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoint) {
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {

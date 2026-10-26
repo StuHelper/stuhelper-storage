@@ -257,6 +257,8 @@ type Transaction interface {
 	SaveJob(Job) error
 	OutstandingJobs(string, int) (int, error)
 	ActiveWrites(string, time.Time) (bool, error)
+	JobTotals() (JobTotals, error)
+	FailedJobs(int, string) ([]Job, error)
 	Idempotency(string) (Idempotency, error)
 	SaveIdempotency(Idempotency) error
 	Event(Event) error

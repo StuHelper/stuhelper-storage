@@ -163,6 +163,16 @@ type InstanceOwnership string
 // InstanceState defines model for Instance.State.
 type InstanceState string
 
+// InstanceHealth defines model for InstanceHealth.
+type InstanceHealth struct {
+	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
+	AvailableBytes         int64     `json:"available_bytes"`
+	Id                     string    `json:"id"`
+	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
+	Reason                 string    `json:"reason"`
+	State                  string    `json:"state"`
+}
+
 // InstanceInput defines model for InstanceInput.
 type InstanceInput struct {
 	AccountDomain      string                 `json:"account_domain"`
@@ -192,6 +202,24 @@ type InstanceInputOwnership string
 // InstanceInputState defines model for InstanceInput.State.
 type InstanceInputState string
 
+// JobFailure defines model for JobFailure.
+type JobFailure struct {
+	Attempts    int64     `json:"attempts"`
+	ErrorCode   string    `json:"error_code"`
+	Id          string    `json:"id"`
+	Kind        string    `json:"kind"`
+	NextAttempt time.Time `json:"next_attempt"`
+	ObjectId    string    `json:"object_id"`
+	State       string    `json:"state"`
+}
+
+// JobTotals defines model for JobTotals.
+type JobTotals struct {
+	Blocked int64 `json:"blocked"`
+	Pending int64 `json:"pending"`
+	Running int64 `json:"running"`
+}
+
 // Maintenance defines model for Maintenance.
 type Maintenance struct {
 	After string `json:"after"`
@@ -202,6 +230,16 @@ type Maintenance struct {
 type MaintenanceResult struct {
 	NextCursor string `json:"next_cursor"`
 	Processed  int64  `json:"processed"`
+}
+
+// ObjectHealth defines model for ObjectHealth.
+type ObjectHealth struct {
+	Desired int64  `json:"desired"`
+	Healthy int64  `json:"healthy"`
+	Id      string `json:"id"`
+	Missing int64  `json:"missing"`
+	Reason  string `json:"reason"`
+	State   string `json:"state"`
 }
 
 // ObjectStatus defines model for ObjectStatus.
@@ -216,6 +254,17 @@ type ObjectStatus struct {
 	Sha256     string     `json:"sha256"`
 	Size       int64      `json:"size"`
 	State      string     `json:"state"`
+}
+
+// Operations defines model for Operations.
+type Operations struct {
+	Failures           []JobFailure     `json:"failures"`
+	FailuresNextCursor string           `json:"failures_next_cursor"`
+	GeneratedAt        time.Time        `json:"generated_at"`
+	Instances          []InstanceHealth `json:"instances"`
+	Jobs               JobTotals        `json:"jobs"`
+	NextCursor         string           `json:"next_cursor"`
+	Objects            []ObjectHealth   `json:"objects"`
 }
 
 // Page defines model for Page.
@@ -307,6 +356,13 @@ type ReleaseReferenceParams struct {
 // AttachReferenceParams defines parameters for AttachReference.
 type AttachReferenceParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
+// StorageOperationsParams defines parameters for StorageOperations.
+type StorageOperationsParams struct {
+	After         *string `form:"after,omitempty" json:"after,omitempty"`
+	Limit         *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	FailuresAfter *string `form:"failures_after,omitempty" json:"failures_after,omitempty"`
 }
 
 // RegisterInstanceJSONRequestBody defines body for RegisterInstance for application/json ContentType.
@@ -483,6 +539,11 @@ type ClientInterface interface {
 	// AttachReference performs a POST /api/v1/storage/objects/{id}/references (the `AttachReference` operationId) request.
 	// Takes a body of the `application/json` content type.
 	AttachReference(ctx context.Context, id string, params *AttachReferenceParams, body AttachReferenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StorageOperations performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
+	//
+	// Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
+	StorageOperations(ctx context.Context, params *StorageOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListInstances performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
@@ -752,6 +813,21 @@ func (c *Client) AttachReferenceWithBody(ctx context.Context, id string, params 
 // Takes a body of the `application/json` content type.
 func (c *Client) AttachReference(ctx context.Context, id string, params *AttachReferenceParams, body AttachReferenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAttachReferenceRequest(c.Server, id, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StorageOperations performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
+//
+// Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
+func (c *Client) StorageOperations(ctx context.Context, params *StorageOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStorageOperationsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1391,6 +1467,84 @@ func NewAttachReferenceRequestWithBody(server string, id string, params *AttachR
 	return req, nil
 }
 
+// NewStorageOperationsRequest constructs an http.Request for the StorageOperations method
+func NewStorageOperationsRequest(server string, params *StorageOperationsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/operations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.FailuresAfter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "failures_after", *params.FailuresAfter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -1535,6 +1689,13 @@ type ClientWithResponsesInterface interface {
 	// AttachReferenceWithResponse performs a POST /api/v1/storage/objects/{id}/references (the `AttachReference` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	AttachReferenceWithResponse(ctx context.Context, id string, params *AttachReferenceParams, body AttachReferenceJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachReferenceResponse, error)
+
+	// StorageOperationsWithResponse performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
+	//
+	// Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	StorageOperationsWithResponse(ctx context.Context, params *StorageOperationsParams, reqEditors ...RequestEditorFn) (*StorageOperationsResponse, error)
 }
 
 type ListInstancesResponse struct {
@@ -2610,6 +2771,96 @@ func (r AttachReferenceResponse) ContentType() string {
 	return ""
 }
 
+type StorageOperationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Operations
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StorageOperationsResponse) GetJSON200() *Operations {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StorageOperationsResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StorageOperationsResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r StorageOperationsResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StorageOperationsResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r StorageOperationsResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r StorageOperationsResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StorageOperationsResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r StorageOperationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StorageOperationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StorageOperationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StorageOperationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListInstancesWithResponse performs a GET /api/v1/storage/instances (the `ListInstances` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -2829,6 +3080,19 @@ func (c *ClientWithResponses) AttachReferenceWithResponse(ctx context.Context, i
 		return nil, err
 	}
 	return ParseAttachReferenceResponse(rsp)
+}
+
+// StorageOperationsWithResponse performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
+//
+// Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) StorageOperationsWithResponse(ctx context.Context, params *StorageOperationsParams, reqEditors ...RequestEditorFn) (*StorageOperationsResponse, error) {
+	rsp, err := c.StorageOperations(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStorageOperationsResponse(rsp)
 }
 
 // ParseListInstancesResponse parses an HTTP response from a ListInstancesWithResponse call
@@ -3665,6 +3929,81 @@ func ParseAttachReferenceResponse(rsp *http.Response) (*AttachReferenceResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ObjectStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStorageOperationsResponse parses an HTTP response from a StorageOperationsWithResponse call
+func ParseStorageOperationsResponse(rsp *http.Response) (*StorageOperationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StorageOperationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Operations
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
