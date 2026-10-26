@@ -73,7 +73,11 @@ func accountDomain(id string) string {
 	h := sha256.Sum256([]byte("bhpan.buaa.edu.cn\x00" + id))
 	return "bhpan:" + hex.EncodeToString(h[:])
 }
-func leaf(id string) string { return id[strings.LastIndex(id, "/")+1:] }
+
+// AccountDomain derives the ledger's provider-scoped identifier. Its input must
+// come from a verified Identity response, never a caller's claimed login name.
+func AccountDomain(id string) string { return accountDomain(id) }
+func leaf(id string) string          { return id[strings.LastIndex(id, "/")+1:] }
 func child(root, id string) bool {
 	suffix, ok := strings.CutPrefix(id, root+"/")
 	return ok && suffix != "" && !strings.Contains(suffix, "/")
