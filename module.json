@@ -17,6 +17,6 @@
     "STORAGE-09": ["integration_test.go#TestDrainWaitsForVerifiedReplacement"],
     "STORAGE-10": ["integration_test.go#TestRestrictedPlacementAndCredentialRotation", "integration_test.go#TestExpiredEmptyObjectIsTombstoned"],
     "STORAGE-11": ["drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion", "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed"],
-    "STORAGE-12": ["drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload"]
+    "STORAGE-12": ["drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload", "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline"]
   }
 }

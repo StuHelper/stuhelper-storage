@@ -171,3 +171,37 @@ func TestRevokedSessionCannotSendGrantedUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExplicitSessionDeadline(t *testing.T) {
+	ctx := context.Background()
+	p := NewPool()
+	t.Cleanup(p.Close)
+	f := &fake{}
+	expires := time.Now().Add(48 * time.Hour)
+	i, err := p.Provision(ctx, "managed-credential", 1, f, expires)
+	if err != nil || !i.ExpiresAt.Equal(expires) {
+		t.Fatalf("explicit authorization deadline rejected: %v", err)
+	}
+	if _, err = p.Verify(ctx, i); err != nil {
+		t.Fatal(err)
+	}
+	p.Revoke(i.CredentialRef, i.CredentialRevision)
+	if _, err = p.Resolve(ctx, i); !errors.Is(err, storage.ErrDenied) || !f.closed {
+		t.Fatalf("longer authorization must remain revocable: %v", err)
+	}
+	for _, expired := range []time.Time{{}, time.Now().Add(-time.Second)} {
+		untouched := &fake{}
+		if _, err = p.Provision(ctx, "expired", 1, untouched, expired); !errors.Is(err, storage.ErrInput) || untouched.root != "" {
+			t.Fatalf("expired authorization contacted provider: %v", err)
+		}
+	}
+
+	i, err = p.Provision(ctx, "short-credential", 1, &fake{}, time.Now().Add(50*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-time.After(time.Until(i.ExpiresAt) + time.Millisecond)
+	if _, err = p.Resolve(ctx, i); !errors.Is(err, storage.ErrDenied) {
+		t.Fatalf("expired session accepted: %v", err)
+	}
+}

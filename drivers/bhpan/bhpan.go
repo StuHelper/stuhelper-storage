@@ -46,8 +46,9 @@ type session struct {
 	timer                       *time.Timer
 }
 
-// Pool holds explicitly short-lived validation sessions. Its 15 minute ceiling
-// is deliberate: persistent contribution remains disabled until renewal is proven.
+// Pool holds sessions until an explicit operator-authorized deadline. That
+// deadline limits local use; it does not assert a provider token's lifetime.
+// Credential retention and renewal belong to the composition layer.
 type Pool struct {
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -71,7 +72,7 @@ func child(root, id string) bool {
 // Provision creates a new isolated directory. It never adopts a caller-selected
 // personal directory. On success the pool owns the client and closes it on expiry.
 func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client Client, expires time.Time) (storage.Instance, error) {
-	if !token.MatchString(ref) || revision < 1 || client == nil || !expires.After(time.Now()) || expires.After(time.Now().Add(15*time.Minute)) {
+	if !token.MatchString(ref) || revision < 1 || client == nil || !expires.After(time.Now()) {
 		return storage.Instance{}, storage.ErrInput
 	}
 	p.mu.Lock()
