@@ -52,12 +52,22 @@ type session struct {
 type Pool struct {
 	mu       sync.Mutex
 	sessions map[string]*session
+	versions map[string]uint64
+	revoked  map[string]int64
+	closed   bool
 }
 
-func NewPool() *Pool { return &Pool{sessions: map[string]*session{}} }
+func NewPool() *Pool {
+	return &Pool{sessions: map[string]*session{}, versions: map[string]uint64{}, revoked: map[string]int64{}}
+}
 
 var token = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
 var intentPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
+// ErrSessionExpired distinguishes an invalid provider session from an operation
+// permission denial. Callers may schedule a fresh login, but must not replay a
+// possibly completed write merely because this error was returned.
+var ErrSessionExpired = errors.New("bhpan_session_expired")
 
 func accountDomain(id string) string {
 	h := sha256.Sum256([]byte("bhpan.buaa.edu.cn\x00" + id))
@@ -77,7 +87,7 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, ok := p.sessions[ref]; ok || len(p.sessions) >= 100 {
+	if _, ok := p.sessions[ref]; ok || p.closed || len(p.versions) >= 100 || revision <= p.revoked[ref] {
 		return storage.Instance{}, storage.ErrConflict
 	}
 	identity, err := client.Identity(ctx)
@@ -117,12 +127,18 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	sessionCtx, cancel := context.WithDeadline(context.Background(), expires)
 	s := &session{client: client, root: root, library: library, account: accountDomain(identity.ID), ref: ref, revision: revision, expires: expires, ctx: sessionCtx, cancel: cancel}
 	p.sessions[ref] = s
-	s.timer = time.AfterFunc(time.Until(expires), func() { p.Revoke(ref, revision) })
+	p.versions[ref]++
+	s.timer = time.AfterFunc(time.Until(expires), func() { p.expire(s) })
 	return storage.Instance{Adapter: "bhpan", AccountDomain: s.account, Root: root, CredentialRef: ref, CredentialRevision: revision, ExpiresAt: expires}, nil
 }
 
 func (p *Pool) Revoke(ref string, revision int64) {
 	p.mu.Lock()
+	_, tracked := p.versions[ref]
+	if token.MatchString(ref) && revision > 0 && (tracked || len(p.versions) < 100) {
+		p.revoked[ref] = max(p.revoked[ref], revision)
+		p.versions[ref]++
+	}
 	s, ok := p.sessions[ref]
 	if ok && s.revision == revision {
 		delete(p.sessions, ref)
@@ -140,6 +156,7 @@ func (p *Pool) Revoke(ref string, revision int64) {
 }
 func (p *Pool) Close() {
 	p.mu.Lock()
+	p.closed = true
 	snapshots := make([]*session, 0, len(p.sessions))
 	for _, s := range p.sessions {
 		snapshots = append(snapshots, s)
@@ -148,6 +165,21 @@ func (p *Pool) Close() {
 	for _, s := range snapshots {
 		p.Revoke(s.ref, s.revision)
 	}
+}
+
+// expire targets the actual session, so an old timer cannot revoke a replacement
+// that uses the same credential revision after a fresh provider login.
+func (p *Pool) expire(expected *session) {
+	p.mu.Lock()
+	if p.sessions[expected.ref] != expected {
+		p.mu.Unlock()
+		return
+	}
+	delete(p.sessions, expected.ref)
+	p.versions[expected.ref]++
+	expected.cancel()
+	p.mu.Unlock()
+	expected.client.Close()
 }
 func (p *Pool) get(i storage.Instance) (*session, error) {
 	p.mu.Lock()
@@ -392,9 +424,11 @@ func safe(err error) error {
 		return nil
 	}
 	switch {
+	case errors.Is(err, protocol.ErrSession):
+		return errors.Join(storage.ErrDenied, ErrSessionExpired)
 	case errors.Is(err, protocol.ErrNotFound):
 		return storage.ErrNotFound
-	case errors.Is(err, protocol.ErrSession), errors.Is(err, protocol.ErrPermission), errors.Is(err, protocol.ErrCredentials), errors.Is(err, context.Canceled):
+	case errors.Is(err, protocol.ErrPermission), errors.Is(err, protocol.ErrCredentials), errors.Is(err, context.Canceled):
 		return storage.ErrDenied
 	case errors.Is(err, protocol.ErrInput):
 		return storage.ErrInput

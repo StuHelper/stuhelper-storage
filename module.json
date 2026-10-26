@@ -22,6 +22,7 @@
     "STORAGE-14": ["staging_test.go#TestPacerCancellationAndSharedBudget", "limits_test.go#TestAccountConcurrencyDoesNotBlockOtherAccounts", "runtime_integration_test.go#TestTransferAdmissionAndShutdownCancellation"],
     "STORAGE-15": ["executor/executor_test.go#TestBoundedWorkersAndGracefulStop", "executor/executor_test.go#TestStopDeadlineCancelsAndWaitsForCleanup", "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas"],
     "STORAGE-16": ["runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"],
-    "STORAGE-17": ["runtime_integration_test.go#TestBlockedJobsKeepRetryLimit", "runtime_integration_test.go#TestBlockedPeriodicVerificationDoesNotRestart"]
+    "STORAGE-17": ["runtime_integration_test.go#TestBlockedJobsKeepRetryLimit", "runtime_integration_test.go#TestBlockedPeriodicVerificationDoesNotRestart"],
+    "STORAGE-18": ["drivers/bhpan/restore_test.go#TestRestoreExistingBindingAndReplaceSession", "drivers/bhpan/restore_test.go#TestRestoreRejectsForeignRootAndRevokedLateResult"]
   }
 }
