@@ -99,3 +99,72 @@ func TestStopDeadlineCancelsAndWaitsForCleanup(t *testing.T) {
 		t.Fatalf("bad cancellation state: %+v", e.Snapshot())
 	}
 }
+
+type refreshBackend struct {
+	instance  storage.Instance
+	refreshes atomic.Int64
+}
+
+func (*refreshBackend) RunOne(context.Context, string) (bool, error) { return false, nil }
+func (*refreshBackend) Reconcile(context.Context, storage.Principal, int, string) (storage.MaintenanceResult, error) {
+	return storage.MaintenanceResult{}, nil
+}
+func (b *refreshBackend) Instances(context.Context, storage.Principal, int, string) ([]storage.Instance, error) {
+	return []storage.Instance{b.instance}, nil
+}
+func (b *refreshBackend) RefreshInstance(context.Context, storage.Principal, string) error {
+	b.refreshes.Add(1)
+	b.instance.QuotaExpiresAt = b.instance.QuotaExpiresAt.Add(2 * time.Hour)
+	return nil
+}
+
+func TestConfiguredQuotaRefreshWindowAndAuthorization(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		ahead      time.Duration
+		authorized bool
+		state      string
+		grant      time.Duration
+		want       int64
+	}{
+		{"default", 0, true, "active", time.Hour, 1},
+		{"not-yet-due", 10 * time.Second, true, "active", time.Hour, 0},
+		{"custom-window", 45 * time.Second, true, "active", time.Hour, 1},
+		{"revoked", time.Minute, true, "revoked", time.Hour, 0},
+		{"unauthorized", time.Minute, false, "active", time.Hour, 0},
+		{"expired", time.Minute, true, "active", -time.Second, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &refreshBackend{instance: storage.Instance{ID: "account", Authorized: tc.authorized, State: tc.state, ExpiresAt: now.Add(tc.grant), QuotaExpiresAt: now.Add(30 * time.Second)}}
+			cfg := config()
+			cfg.Clock = func() time.Time { return now }
+			cfg.QuotaRefreshAhead = tc.ahead
+			e, err := New(b, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = e.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { e.Stop(context.Background()) })
+			deadline := time.Now().Add(time.Second)
+			for e.Snapshot().LastMaintenance.IsZero() && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if err = e.Stop(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !e.Snapshot().LastMaintenance.Equal(now) || b.refreshes.Load() != tc.want {
+				t.Fatalf("unexpected scheduled provider calls: %d", b.refreshes.Load())
+			}
+		})
+	}
+	for _, ahead := range []time.Duration{-time.Second, time.Second - time.Nanosecond, time.Hour + time.Nanosecond} {
+		cfg := config()
+		cfg.QuotaRefreshAhead = ahead
+		if _, err := New(&refreshBackend{}, cfg); !errors.Is(err, storage.ErrInput) {
+			t.Fatal("invalid refresh window accepted")
+		}
+	}
+}

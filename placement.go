@@ -340,7 +340,7 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 			return ErrConflict
 		}
 		i.ProviderFree = evidence.ProviderFree
-		i.QuotaExpiresAt = s.now().Add(5 * time.Minute)
+		i.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
 		i.QuotaRevision++
 		return tx.SaveInstance(i)
 	})

@@ -19,10 +19,12 @@ type Backend interface {
 	RefreshInstance(context.Context, storage.Principal, string) error
 }
 type Config struct {
+	Clock                                                 func() time.Time
 	ID                                                    string
 	Principal                                             storage.Principal
 	Workers                                               int
 	PollInterval, MaintenanceInterval, MaintenanceTimeout time.Duration
+	QuotaRefreshAhead                                     time.Duration
 	BatchSize                                             int
 }
 type Snapshot struct {
@@ -41,9 +43,16 @@ type Executor struct {
 	stop    chan struct{}
 	done    chan struct{}
 	cancel  context.CancelFunc
+	now     func() time.Time
 }
 
 func New(b Backend, cfg Config) (*Executor, error) {
+	if cfg.QuotaRefreshAhead == 0 {
+		cfg.QuotaRefreshAhead = time.Minute
+	}
+	if cfg.QuotaRefreshAhead < time.Second || cfg.QuotaRefreshAhead > time.Hour {
+		return nil, storage.ErrInput
+	}
 	if b == nil || !cfg.Principal.Valid() || len(cfg.ID) < 1 || len(cfg.ID) > 80 || cfg.Workers < 1 || cfg.Workers > 16 || cfg.PollInterval < 50*time.Millisecond || cfg.PollInterval > time.Minute || cfg.MaintenanceInterval < time.Second || cfg.MaintenanceInterval > time.Hour || cfg.MaintenanceTimeout < time.Second || cfg.MaintenanceTimeout > time.Minute || cfg.BatchSize < 1 || cfg.BatchSize > 100 {
 		return nil, storage.ErrInput
 	}
@@ -52,7 +61,11 @@ func New(b Backend, cfg Config) (*Executor, error) {
 			return nil, storage.ErrInput
 		}
 	}
-	return &Executor{backend: b, cfg: cfg, stop: make(chan struct{}), done: make(chan struct{})}, nil
+	clock := cfg.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	return &Executor{backend: b, cfg: cfg, stop: make(chan struct{}), done: make(chan struct{}), now: clock}, nil
 }
 func (e *Executor) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -153,7 +166,8 @@ func (e *Executor) maintenance(ctx context.Context) {
 		if listErr == nil && len(instances) > 0 {
 			i := instances[0]
 			instanceCursor = i.ID
-			if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(time.Now()) && time.Until(i.QuotaExpiresAt) < time.Minute {
+			now := e.now()
+			if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(now) && i.QuotaExpiresAt.Sub(now) < e.cfg.QuotaRefreshAhead {
 				listErr = e.backend.RefreshInstance(work, e.cfg.Principal, i.ID)
 			}
 		} else if listErr == nil {
@@ -162,7 +176,7 @@ func (e *Executor) maintenance(ctx context.Context) {
 		cancel()
 		e.mu.Lock()
 		if err == nil && listErr == nil {
-			e.state.LastMaintenance = time.Now()
+			e.state.LastMaintenance = e.now()
 		} else {
 			if err == nil {
 				err = listErr

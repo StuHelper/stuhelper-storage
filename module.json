@@ -118,6 +118,12 @@
     "STORAGE-29": [
       "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination",
       "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart"
+    ],
+    "STORAGE-30": [
+      "scheduling_test.go#TestConfiguredQuotaValidityControlsWritesAndRefresh",
+      "scheduling_test.go#TestConfiguredVerificationAgeControlsPeriodicJobs",
+      "scheduling_test.go#TestQuotaValidityRejectsInvalidDurations",
+      "executor/executor_test.go#TestConfiguredQuotaRefreshWindowAndAuthorization"
     ]
   }
 }

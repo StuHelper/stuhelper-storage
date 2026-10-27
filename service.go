@@ -19,6 +19,7 @@ type Config struct {
 	ParallelTransfers     int
 	Lease                 time.Duration
 	VerificationAge       time.Duration
+	QuotaValidity         time.Duration
 	MaxAttempts           int
 	TemporaryBytes        int64
 	MaxOutstandingJobs    int
@@ -46,6 +47,12 @@ type Service struct {
 }
 
 func New(repo Repository, auth Authorizer, resolver Resolver, verifier Verifier, cfg Config) (*Service, error) {
+	if cfg.QuotaValidity == 0 {
+		cfg.QuotaValidity = 5 * time.Minute
+	}
+	if cfg.QuotaValidity < time.Minute || cfg.QuotaValidity > 24*time.Hour {
+		return nil, ErrInput
+	}
 	if repo == nil || auth == nil || resolver == nil || verifier == nil || cfg.MaxObjectSize < 1 || cfg.MaxObjectSize > 1<<30 || cfg.TemporaryDirectory == "" || cfg.ParallelTransfers < 1 || cfg.ParallelTransfers > 16 || cfg.Lease < time.Minute || cfg.Lease > 30*time.Minute || cfg.VerificationAge < time.Minute || cfg.MaxAttempts < 1 || cfg.MaxAttempts > 100 {
 		return nil, ErrInput
 	}
@@ -224,7 +231,7 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 		v.Reserved = 0
 		v.Revision = 1
 		v.QuotaRevision = 1
-		v.QuotaExpiresAt = s.now().Add(5 * time.Minute)
+		v.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
 		if err := tx.SaveInstance(v); err != nil {
 			return nil, err
 		}
