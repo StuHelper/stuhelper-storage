@@ -109,7 +109,10 @@ func (*refreshBackend) RunOne(context.Context, string) (bool, error) { return fa
 func (*refreshBackend) Reconcile(context.Context, storage.Principal, int, string) (storage.MaintenanceResult, error) {
 	return storage.MaintenanceResult{}, nil
 }
-func (b *refreshBackend) Instances(context.Context, storage.Principal, int, string) ([]storage.Instance, error) {
+func (b *refreshBackend) Instances(_ context.Context, _ storage.Principal, _ int, after string) ([]storage.Instance, error) {
+	if after != "" {
+		return nil, nil
+	}
 	return []storage.Instance{b.instance}, nil
 }
 func (b *refreshBackend) RefreshInstance(context.Context, storage.Principal, string) error {
@@ -160,7 +163,7 @@ func TestConfiguredQuotaRefreshWindowAndAuthorization(t *testing.T) {
 			}
 		})
 	}
-	for _, ahead := range []time.Duration{-time.Second, time.Second - time.Nanosecond, time.Hour + time.Nanosecond} {
+	for _, ahead := range []time.Duration{-time.Second, time.Second - time.Nanosecond, 24*time.Hour + time.Nanosecond} {
 		cfg := config()
 		cfg.QuotaRefreshAhead = ahead
 		if _, err := New(&refreshBackend{}, cfg); !errors.Is(err, storage.ErrInput) {

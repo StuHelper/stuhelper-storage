@@ -217,7 +217,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					}
 					continue
 				}
-				if i.Allows(o.Protection, s.now()) && ((r.State == "healthy" && r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge/2))) || r.State == "checking") {
+				if i.Allows(o.Protection, s.now()) && ((r.State == "healthy" && !r.VerifiedAt.After(s.now().Add(-s.cfg.VerificationAge/2))) || r.State == "checking") {
 					if err := s.enqueue(tx, o.ID, r.ID, "verify"); err != nil {
 						return err
 					}

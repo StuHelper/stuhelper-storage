@@ -50,10 +50,10 @@ func New(b Backend, cfg Config) (*Executor, error) {
 	if cfg.QuotaRefreshAhead == 0 {
 		cfg.QuotaRefreshAhead = time.Minute
 	}
-	if cfg.QuotaRefreshAhead < time.Second || cfg.QuotaRefreshAhead > time.Hour {
+	if cfg.QuotaRefreshAhead < time.Second || cfg.QuotaRefreshAhead > 24*time.Hour {
 		return nil, storage.ErrInput
 	}
-	if b == nil || !cfg.Principal.Valid() || len(cfg.ID) < 1 || len(cfg.ID) > 80 || cfg.Workers < 1 || cfg.Workers > 16 || cfg.PollInterval < 50*time.Millisecond || cfg.PollInterval > time.Minute || cfg.MaintenanceInterval < time.Second || cfg.MaintenanceInterval > time.Hour || cfg.MaintenanceTimeout < time.Second || cfg.MaintenanceTimeout > time.Minute || cfg.BatchSize < 1 || cfg.BatchSize > 100 {
+	if b == nil || !cfg.Principal.Valid() || len(cfg.ID) < 1 || len(cfg.ID) > 80 || cfg.Workers < 1 || cfg.Workers > 16 || cfg.PollInterval < 50*time.Millisecond || cfg.PollInterval > time.Minute || cfg.MaintenanceInterval < time.Second || cfg.MaintenanceInterval > 24*time.Hour || cfg.MaintenanceTimeout < time.Second || cfg.MaintenanceTimeout > time.Minute || cfg.BatchSize < 1 || cfg.BatchSize > 100 {
 		return nil, storage.ErrInput
 	}
 	for _, c := range cfg.ID {
@@ -153,34 +153,15 @@ func (e *Executor) worker(ctx context.Context, id string) {
 	}
 }
 func (e *Executor) maintenance(ctx context.Context) {
-	cursor := ""
-	instanceCursor := ""
+	position := maintenancePosition{}
 	for !e.stopping() {
-		work, cancel := context.WithTimeout(ctx, e.cfg.MaintenanceTimeout)
-		result, err := e.backend.Reconcile(work, e.cfg.Principal, e.cfg.BatchSize, cursor)
-		if err == nil || result.NextCursor != "" {
-			cursor = result.NextCursor
-		}
-		// Refresh one account per cycle to spread provider requests over time.
-		instances, listErr := e.backend.Instances(work, e.cfg.Principal, 1, instanceCursor)
-		if listErr == nil && len(instances) > 0 {
-			i := instances[0]
-			instanceCursor = i.ID
-			now := e.now()
-			if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(now) && i.QuotaExpiresAt.Sub(now) < e.cfg.QuotaRefreshAhead {
-				listErr = e.backend.RefreshInstance(work, e.cfg.Principal, i.ID)
-			}
-		} else if listErr == nil {
-			instanceCursor = ""
-		}
+		work, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		err := e.maintenanceSweep(work, &position)
 		cancel()
 		e.mu.Lock()
-		if err == nil && listErr == nil {
+		if err == nil {
 			e.state.LastMaintenance = e.now()
 		} else {
-			if err == nil {
-				err = listErr
-			}
 			e.state.LastError = code(err)
 		}
 		e.mu.Unlock()
@@ -213,6 +194,8 @@ func (e *Executor) Stop(ctx context.Context) error {
 func (e *Executor) Done() <-chan struct{} { return e.done }
 func code(err error) string {
 	switch {
+	case errors.Is(err, errMaintenanceIncomplete):
+		return "maintenance_incomplete"
 	case errors.Is(err, storage.ErrDenied):
 		return "permission_denied"
 	case errors.Is(err, storage.ErrCapacity):

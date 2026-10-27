@@ -123,7 +123,10 @@
       "scheduling_test.go#TestConfiguredQuotaValidityControlsWritesAndRefresh",
       "scheduling_test.go#TestConfiguredVerificationAgeControlsPeriodicJobs",
       "scheduling_test.go#TestQuotaValidityRejectsInvalidDurations",
-      "executor/executor_test.go#TestConfiguredQuotaRefreshWindowAndAuthorization"
+      "executor/executor_test.go#TestConfiguredQuotaRefreshWindowAndAuthorization",
+      "executor/maintenance_test.go#TestLongMaintenanceSweepVisitsAllPagesAndDueAccounts",
+      "executor/maintenance_test.go#TestLongMaintenanceSweepStopsInFlightPage",
+      "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor"
     ]
   }
 }
