@@ -709,3 +709,27 @@ func TestOldLeaseCannotCommitAfterAnotherWorkerClaims(t *testing.T) {
 		t.Fatal("recovery did not reconcile existing content")
 	}
 }
+
+func TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission(t *testing.T) {
+	h := harnessFor(t)
+	h.instance(t, "review-store", "review-owner", "platform", 1024)
+	data := []byte("unpublished review data")
+	o := h.object(t, "review", data)
+	h.ingest(t, o.ID, data)
+	var out bytes.Buffer
+	if e := h.s.Download(h.ctx, h.actor, o.ID, &out); !errors.Is(e, storage.ErrUnavailable) || out.Len() != 0 {
+		t.Fatal("ordinary read before threshold", e)
+	}
+	if e := h.s.ReviewDownload(h.ctx, h.actor, o.ID, &out); e != nil || !bytes.Equal(out.Bytes(), data) {
+		t.Fatal("review read", e)
+	}
+	status, e := h.s.Status(h.ctx, h.actor, o.ID)
+	if e != nil || status.Published || status.Healthy != 1 {
+		t.Fatal("review altered publication", status, e)
+	}
+	h.auth.denied.Store(true)
+	out.Reset()
+	if e = h.s.ReviewDownload(h.ctx, h.actor, o.ID, &out); !errors.Is(e, storage.ErrDenied) || out.Len() != 0 {
+		t.Fatal("revoked review read", e)
+	}
+}

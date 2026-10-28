@@ -127,6 +127,9 @@
       "executor/maintenance_test.go#TestLongMaintenanceSweepVisitsAllPagesAndDueAccounts",
       "executor/maintenance_test.go#TestLongMaintenanceSweepStopsInFlightPage",
       "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor"
+    ],
+    "STORAGE-31": [
+      "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission"
     ]
   }
 }

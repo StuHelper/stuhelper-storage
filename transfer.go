@@ -136,6 +136,19 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 // Download buffers within the configured size/concurrency budget so corrupted
 // or replaced remote content cannot partially escape before checksum validation.
 func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.Writer) error {
+	return s.download(ctx, p, id, dst, false)
+}
+
+// ReviewDownload uses a separate permission to inspect an unpublished verified
+// copy. It never changes publication, references, replica policy or protection.
+func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, dst io.Writer) error {
+	return s.download(ctx, p, id, dst, true)
+}
+func (s *Service) download(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
+	action := "storage.objects.download"
+	if review {
+		action = "storage.objects.review"
+	}
 	if dst == nil {
 		return ErrInput
 	}
@@ -147,7 +160,7 @@ func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.W
 	var o Object
 	err = s.repo.Transaction(ctx, func(tx Transaction) error {
 		var err error
-		o, err = s.objectGuard(ctx, tx, p, "storage.objects.download", id)
+		o, err = s.objectGuard(ctx, tx, p, action, id)
 		if err != nil {
 			return err
 		}
@@ -155,7 +168,7 @@ func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.W
 		if err != nil {
 			return err
 		}
-		if o.State == "deleting" || o.State == "deleted" || st.Healthy == 0 || (!o.Published && st.Healthy < o.Policy.Publish) {
+		if o.State == "deleting" || o.State == "deleted" || st.Healthy == 0 || (!review && !o.Published && st.Healthy < o.Policy.Publish) {
 			return ErrUnavailable
 		}
 		return nil
@@ -169,7 +182,7 @@ func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.W
 	}
 	defer removeTemporary(f)
 	err = s.repo.Transaction(ctx, func(tx Transaction) error {
-		current, err := s.objectGuard(ctx, tx, p, "storage.objects.download", id)
+		current, err := s.objectGuard(ctx, tx, p, action, id)
 		if err != nil {
 			return err
 		}
