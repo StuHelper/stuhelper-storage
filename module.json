@@ -133,7 +133,8 @@
     ],
     "STORAGE-32": [
       "content_test.go#TestSharedContentConcurrentProofAndSinglePhysicalObject",
-      "content_test.go#TestSharedContentIndependentReferencesAndLastRelease"
+      "content_test.go#TestSharedContentIndependentReferencesAndLastRelease",
+      "content_test.go#TestConcurrentSharedIngestKeepsOneProviderIntent"
     ],
     "STORAGE-33": [
       "content_test.go#TestSharedContentProtectionMigrationAndReuseRemainIndependent",

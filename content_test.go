@@ -293,3 +293,42 @@ func TestSharedContentLostReplyExpiryAndCanonicalProtection(t *testing.T) {
 		}
 	}
 }
+
+func TestConcurrentSharedIngestKeepsOneProviderIntent(t *testing.T) {
+	h := harnessFor(t)
+	h.instance(t, "one", "one", "platform", 4096)
+	data := []byte("overlapping provider uploads")
+	a := sharedCreate(t, h, "first", sharedRequest(data))
+	b := sharedCreate(t, h, "second", sharedRequest(data))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	h.provider.afterWrite = func() { once.Do(func() { close(entered); <-release }) }
+	first := make(chan error, 1)
+	go func() { _, e := h.s.Ingest(h.ctx, h.actor, a.ID, "first-body", bytes.NewReader(data)); first <- e }()
+	<-entered
+	second := make(chan error, 1)
+	go func() { _, e := h.s.Ingest(h.ctx, h.actor, b.ID, "second-body", bytes.NewReader(data)); second <- e }()
+	select {
+	case e := <-second:
+		if !errors.Is(e, storage.ErrConflict) {
+			close(release)
+			<-first
+			t.Fatalf("overlapping write result %v", e)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		<-first
+		<-second
+		t.Fatal("concurrent upload did not reject the occupied intent")
+	}
+	close(release)
+	if e := <-first; e != nil {
+		t.Fatal(e)
+	}
+	h.provider.afterWrite = nil
+	h.ingest(t, b.ID, data)
+	if h.provider.writes != 1 || physicalCount(t, h) != 1 {
+		t.Fatal("concurrent requests duplicated provider content")
+	}
+}
