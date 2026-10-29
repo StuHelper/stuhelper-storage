@@ -87,13 +87,30 @@ func (s *Service) contentView(tx Transaction, h ContentHandle, g ContentGroup) (
 	out := Status{ID: h.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy, Revision: h.Revision, State: "pending", Published: h.Published, Desired: g.Policy.Target}
 	if h.State != "active" {
 		out.State = "deleted"
-		if h.Verified && g.State == "deleting" {
-			out.State = "deleting"
-			o, e := tx.Object(g.ObjectID)
-			if e == nil && o.State == "deleted" {
-				out.State = "deleted"
-			} else if e != nil && !errors.Is(e, ErrNotFound) {
+		if !h.Verified && h.SourceObject == "" && h.PendingGroup == "" {
+			return out, nil
+		}
+		for _, id := range []string{h.GroupID, h.SourceGroup, h.PendingGroup} {
+			if id == "" {
+				continue
+			}
+			group, e := tx.ContentGroup(id)
+			if e != nil {
 				return out, e
+			}
+			if group.State != "deleting" {
+				continue
+			}
+			object, e := tx.Object(group.ObjectID)
+			if errors.Is(e, ErrNotFound) {
+				out.State = "deleting"
+				continue
+			}
+			if e != nil {
+				return out, e
+			}
+			if object.State != "deleted" {
+				out.State = "deleting"
 			}
 		}
 		return out, nil
@@ -439,7 +456,14 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 		return s.contentView(tx, h, g)
 	}, &out)
 	if err == nil {
-		err = s.cleanupContentGroup(ctx, g.ID)
+		for _, groupID := range []string{h.GroupID, h.SourceGroup, h.PendingGroup} {
+			if groupID != "" {
+				if e := s.cleanupContentGroup(ctx, groupID); e != nil {
+					err = e
+					break
+				}
+			}
+		}
 	}
 	if err != nil {
 		return out, err

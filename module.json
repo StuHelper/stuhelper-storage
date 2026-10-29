@@ -141,7 +141,8 @@
       "content_test.go#TestSharedContentReplayScopePolicyAndMigration"
     ],
     "STORAGE-34": [
-      "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection"
+      "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
+      "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
     ]
   }
 }

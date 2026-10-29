@@ -333,3 +333,42 @@ func TestConcurrentSharedIngestKeepsOneProviderIntent(t *testing.T) {
 		t.Fatal("concurrent requests duplicated provider content")
 	}
 }
+
+func TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle(t *testing.T) {
+	h := harnessFor(t)
+	i := h.instance(t, "one", "one", "platform", 4096)
+	i.Admissions = append(i.Admissions, storage.Admission{Class: "quarantine", Scope: "school-a", Plaintext: true, ExpiresAt: i.ExpiresAt})
+	if _, e := h.s.UpdateInstance(h.ctx, h.actor, "quarantine", i); e != nil {
+		t.Fatal(e)
+	}
+	data := []byte("cancel protection copy")
+	a := sharedCreate(t, h, "a", sharedRequest(data))
+	h.ingest(t, a.ID, data)
+	req := sharedRequest(data)
+	req.ReuseFrom = a.ID
+	b := sharedCreate(t, h, "b", req)
+	var deleted storage.Status
+	var deleteErr error
+	h.provider.afterWrite = func() { deleted, deleteErr = h.s.Delete(h.ctx, h.actor, a.ID, "cancel-copy", a.Revision) }
+	_, err := h.s.ChangeProtection(h.ctx, h.actor, a.ID, "protect", a.Revision, storage.Protection{Class: "quarantine", Scope: "school-a"})
+	h.provider.afterWrite = nil
+	if err == nil || deleteErr != nil || deleted.State != "deleting" {
+		t.Fatalf("copy/delete result %v %v %+v", err, deleteErr, deleted)
+	}
+	drainContent(t, h)
+	state, e := h.s.Status(h.ctx, h.actor, a.ID)
+	if e != nil || state.State != "deleted" {
+		t.Fatal(state, e)
+	}
+	var out bytes.Buffer
+	if e = h.s.ReviewDownload(h.ctx, h.actor, b.ID, &out); e != nil || !bytes.Equal(data, out.Bytes()) {
+		t.Fatal("cancel removed another handle", e)
+	}
+	remaining := 0
+	for _, files := range h.provider.files {
+		remaining += len(files)
+	}
+	if remaining != 1 {
+		t.Fatal("cancelled destination retained bytes", remaining)
+	}
+}
