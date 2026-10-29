@@ -1,0 +1,148 @@
+{
+  "id": "storage",
+  "implementation": "library",
+  "interface_version": 1,
+  "required": [],
+  "optional": [
+    "storage-bhpan"
+  ],
+  "specifications": [
+    "docs/spec/storage.md"
+  ],
+  "scenario_tests": {
+    "STORAGE-01": [
+      "integration_test.go#TestPublicationThresholdAndThreeIndependentReplicas"
+    ],
+    "STORAGE-02": [
+      "integration_test.go#TestConcurrentCapacityReservationsAndIdempotency"
+    ],
+    "STORAGE-03": [
+      "integration_test.go#TestAccountDeduplicationAndContributorIsolation"
+    ],
+    "STORAGE-04": [
+      "integration_test.go#TestUnknownWriteReconcilesWithoutDuplicatingOrReleasingCapacity",
+      "integration_test.go#TestUnknownBeginNeverRetriesOrReleasesReservation"
+    ],
+    "STORAGE-05": [
+      "integration_test.go#TestChecksumMismatchNeverPublishesOrLeaksPartialDownload"
+    ],
+    "STORAGE-06": [
+      "integration_test.go#TestRevocationDuringWriteAndDeleteCannotResurrectObject",
+      "integration_test.go#TestOldLeaseCannotCommitAfterAnotherWorkerClaims"
+    ],
+    "STORAGE-07": [
+      "integration_test.go#TestRuntimeDatabaseIdentityAndAtomicAuditOutbox"
+    ],
+    "STORAGE-08": [
+      "integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary"
+    ],
+    "STORAGE-09": [
+      "integration_test.go#TestDrainWaitsForVerifiedReplacement"
+    ],
+    "STORAGE-10": [
+      "integration_test.go#TestRestrictedPlacementAndCredentialRotation",
+      "integration_test.go#TestExpiredEmptyObjectIsTombstoned"
+    ],
+    "STORAGE-11": [
+      "drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion",
+      "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed"
+    ],
+    "STORAGE-12": [
+      "drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload",
+      "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline"
+    ],
+    "STORAGE-13": [
+      "staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup",
+      "staging_test.go#TestStagingRejectsSymlinkAndForeignContent",
+      "staging_test.go#TestStagingProcessCrashRecovery"
+    ],
+    "STORAGE-14": [
+      "staging_test.go#TestPacerCancellationAndSharedBudget",
+      "limits_test.go#TestAccountConcurrencyDoesNotBlockOtherAccounts",
+      "runtime_integration_test.go#TestTransferAdmissionAndShutdownCancellation"
+    ],
+    "STORAGE-15": [
+      "executor/executor_test.go#TestBoundedWorkersAndGracefulStop",
+      "executor/executor_test.go#TestStopDeadlineCancelsAndWaitsForCleanup",
+      "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas"
+    ],
+    "STORAGE-16": [
+      "runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"
+    ],
+    "STORAGE-17": [
+      "runtime_integration_test.go#TestBlockedJobsKeepRetryLimit",
+      "runtime_integration_test.go#TestBlockedPeriodicVerificationDoesNotRestart"
+    ],
+    "STORAGE-18": [
+      "drivers/bhpan/restore_test.go#TestRestoreExistingBindingAndReplaceSession",
+      "drivers/bhpan/restore_test.go#TestRestoreRejectsForeignRootAndRevokedLateResult"
+    ],
+    "STORAGE-19": [
+      "runtime_integration_test.go#TestDisabledInstanceCannotTriggerProviderRefresh",
+      "runtime_integration_test.go#TestDisabledReplicaDoesNotSchedulePeriodicVerification"
+    ],
+    "STORAGE-20": [
+      "operations_test.go#TestMissingReplicaIsRebuiltWithNewIntentAndBalancedCapacity"
+    ],
+    "STORAGE-21": [
+      "operations_test.go#TestOperationsAuthorizationCapacityFailuresAndPagination",
+      "operations_test.go#TestSupersededVerificationIsNotAnActionableBlockage"
+    ],
+    "STORAGE-22": [
+      "media_boundary_test.go#TestStableClientKeySurvivesReplayExpiryAndDeletion",
+      "media_boundary_test.go#TestProtectionChangePreservesLastVerifiedSource"
+    ],
+    "STORAGE-23": [
+      "operations_commands_test.go#TestOperatorInstanceCommandsFenceReplayAndPreserveCustody",
+      "operations_commands_test.go#TestOperatorCommandHTTPContract"
+    ],
+    "STORAGE-24": [
+      "operations_commands_test.go#TestOperatorRetryPreservesUnknownWriteAndIsIdempotent",
+      "operations_commands_test.go#TestOperatorRetryRejectsRevocationSupersessionAndQueueOverflow",
+      "operations_commands_test.go#TestOperatorRetryRecoversTransientVerificationFailure"
+    ],
+    "STORAGE-25": [
+      "contribution_test.go#TestContributionControlFencesOwnershipReplayAndConsentExpiry",
+      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup"
+    ],
+    "STORAGE-26": [
+      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe"
+    ],
+    "STORAGE-27": [
+      "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation",
+      "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses"
+    ],
+    "STORAGE-28": [
+      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance"
+    ],
+    "STORAGE-29": [
+      "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination",
+      "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart"
+    ],
+    "STORAGE-30": [
+      "scheduling_test.go#TestConfiguredQuotaValidityControlsWritesAndRefresh",
+      "scheduling_test.go#TestConfiguredVerificationAgeControlsPeriodicJobs",
+      "scheduling_test.go#TestQuotaValidityRejectsInvalidDurations",
+      "executor/executor_test.go#TestConfiguredQuotaRefreshWindowAndAuthorization",
+      "executor/maintenance_test.go#TestLongMaintenanceSweepVisitsAllPagesAndDueAccounts",
+      "executor/maintenance_test.go#TestLongMaintenanceSweepStopsInFlightPage",
+      "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor"
+    ],
+    "STORAGE-31": [
+      "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission"
+    ],
+    "STORAGE-32": [
+      "content_test.go#TestSharedContentConcurrentProofAndSinglePhysicalObject",
+      "content_test.go#TestSharedContentIndependentReferencesAndLastRelease",
+      "content_test.go#TestConcurrentSharedIngestKeepsOneProviderIntent"
+    ],
+    "STORAGE-33": [
+      "content_test.go#TestSharedContentProtectionMigrationAndReuseRemainIndependent",
+      "content_test.go#TestSharedContentReplayScopePolicyAndMigration"
+    ],
+    "STORAGE-34": [
+      "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
+      "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
+    ]
+  }
+}
