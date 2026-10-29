@@ -127,9 +127,12 @@ func (s *Service) contentView(tx Transaction, h ContentHandle, g ContentGroup) (
 	return out, nil
 }
 func (s *Service) contentStatus(ctx context.Context, p Principal, id string) (Status, error) {
+	return s.contentStatusAction(ctx, p, id, "storage.objects.read")
+}
+func (s *Service) contentStatusAction(ctx context.Context, p Principal, id, action string) (Status, error) {
 	var out Status
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		h, g, e := s.contentGuard(ctx, tx, p, "storage.objects.read", id)
+		h, g, e := s.contentGuard(ctx, tx, p, action, id)
 		if e != nil {
 			return e
 		}
@@ -438,7 +441,10 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 	if err == nil {
 		err = s.cleanupContentGroup(ctx, g.ID)
 	}
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	return s.contentStatusAction(ctx, p, id, "storage.objects.delete")
 }
 func (s *Service) downloadContent(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
 	if dst == nil {

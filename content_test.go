@@ -136,8 +136,9 @@ func TestSharedContentIndependentReferencesAndLastRelease(t *testing.T) {
 	if _, e := h.s.Reference(h.ctx, h.actor, b.ID, "release", ref, false); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := h.s.Delete(h.ctx, h.actor, b.ID, "delete-b", b.Revision); e != nil {
-		t.Fatal(e)
+	deleting, e := h.s.Delete(h.ctx, h.actor, b.ID, "delete-b", b.Revision)
+	if e != nil || deleting.State != "deleting" {
+		t.Fatalf("last release reported cleanup before provider deletion: %+v %v", deleting, e)
 	}
 	drainContent(t, h)
 	h.reconcile(t)
