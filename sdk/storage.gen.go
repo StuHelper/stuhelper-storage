@@ -330,11 +330,17 @@ type ContributionSnapshot struct {
 // CreateObject defines model for CreateObject.
 type CreateObject struct {
 	// ClientKey Optional stable key scoped to the service principal. Its object identity survives the 24-hour request replay window; changed creation parameters conflict and deleted objects are not recreated.
-	ClientKey  *string    `json:"client_key,omitempty"`
-	Policy     *Policy    `json:"policy,omitempty"`
-	Protection Protection `json:"protection"`
-	Sha256     string     `json:"sha256"`
-	Size       int64      `json:"size"`
+	ClientKey *string `json:"client_key,omitempty"`
+
+	// Deduplicate Create an independent logical handle whose verified content is shared only within the same service principal, protection, size, digest and replica policy. Hash-only creation does not grant content access.
+	Deduplicate *bool      `json:"deduplicate,omitempty"`
+	Policy      *Policy    `json:"policy,omitempty"`
+	Protection  Protection `json:"protection"`
+
+	// ReuseFrom Optional existing object or shared handle to copy without client upload. Requires deduplicate and current storage.objects.reuse permission on the verified source. Different protection requirements use separate physical groups.
+	ReuseFrom *string `json:"reuse_from,omitempty"`
+	Sha256    string  `json:"sha256"`
+	Size      int64   `json:"size"`
 }
 
 // CustodyBinding defines model for CustodyBinding.

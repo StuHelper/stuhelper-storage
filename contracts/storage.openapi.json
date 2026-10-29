@@ -2921,6 +2921,17 @@
             "maxLength": 128,
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$",
             "description": "Optional stable key scoped to the service principal. Its object identity survives the 24-hour request replay window; changed creation parameters conflict and deleted objects are not recreated."
+          },
+          "deduplicate": {
+            "type": "boolean",
+            "default": false,
+            "description": "Create an independent logical handle whose verified content is shared only within the same service principal, protection, size, digest and replica policy. Hash-only creation does not grant content access."
+          },
+          "reuse_from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Optional existing object or shared handle to copy without client upload. Requires deduplicate and current storage.objects.reuse permission on the verified source. Different protection requirements use separate physical groups."
           }
         }
       },

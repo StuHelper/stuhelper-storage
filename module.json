@@ -130,6 +130,17 @@
     ],
     "STORAGE-31": [
       "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission"
+    ],
+    "STORAGE-32": [
+      "content_test.go#TestSharedContentConcurrentProofAndSinglePhysicalObject",
+      "content_test.go#TestSharedContentIndependentReferencesAndLastRelease"
+    ],
+    "STORAGE-33": [
+      "content_test.go#TestSharedContentProtectionMigrationAndReuseRemainIndependent",
+      "content_test.go#TestSharedContentReplayScopePolicyAndMigration"
+    ],
+    "STORAGE-34": [
+      "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection"
     ]
   }
 }

@@ -305,11 +305,14 @@ func (s *Service) Instances(ctx context.Context, p Principal, limit int, after s
 }
 
 type CreateRequest struct {
-	ClientKey  string     `json:"client_key,omitempty"`
-	Size       int64      `json:"size"`
-	SHA256     string     `json:"sha256"`
-	Protection Protection `json:"protection"`
-	Policy     Policy     `json:"policy"`
+	Deduplicate  bool       `json:"deduplicate,omitempty"`
+	ReuseFrom    string     `json:"reuse_from,omitempty"`
+	ContentGroup string     `json:"-"`
+	ClientKey    string     `json:"client_key,omitempty"`
+	Size         int64      `json:"size"`
+	SHA256       string     `json:"sha256"`
+	Protection   Protection `json:"protection"`
+	Policy       Policy     `json:"policy"`
 }
 type Status struct {
 	ID         string     `json:"id"`
@@ -326,6 +329,12 @@ type Status struct {
 
 func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateRequest) (Status, error) {
 	var out Status
+	if r.Deduplicate {
+		return s.createContent(ctx, p, key, r)
+	}
+	if r.ReuseFrom != "" {
+		return out, ErrInput
+	}
 	if r.Policy == (Policy{}) {
 		r.Policy = DefaultPolicy()
 	}
@@ -333,7 +342,7 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 		return out, ErrInput
 	}
 	err := s.mutation(ctx, p, "storage.objects.create", "", key, r, func(tx Transaction) error { return s.authorize(ctx, p, "storage.objects.create", "", r.Protection) }, func(tx Transaction) (any, error) {
-		o := Object{ID: newID(), Owner: p, Size: r.Size, SHA256: r.SHA256, Protection: r.Protection, Policy: r.Policy, Revision: 1, State: "pending", CreatedAt: s.now(), References: []Reference{}}
+		o := Object{ContentGroup: r.ContentGroup, ID: newID(), Owner: p, Size: r.Size, SHA256: r.SHA256, Protection: r.Protection, Policy: r.Policy, Revision: 1, State: "pending", CreatedAt: s.now(), References: []Reference{}}
 		if r.ClientKey != "" {
 			o.ID = requestHash([]string{"client-object", p.Issuer, p.Subject, r.ClientKey})
 			o.CreationHash = requestHash(r)
@@ -417,6 +426,9 @@ func (s *Service) status(tx Transaction, o Object) (Status, error) {
 	return Status{o.ID, o.Size, o.SHA256, o.Protection, o.Policy, o.Revision, state, o.Published, count, o.Policy.Target}, nil
 }
 func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, error) {
+	if contentID(id) {
+		return s.contentStatus(ctx, p, id)
+	}
 	var out Status
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
 		o, err := s.objectGuard(ctx, tx, p, "storage.objects.read", id)
@@ -429,6 +441,9 @@ func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, e
 	return out, err
 }
 func (s *Service) Reference(ctx context.Context, p Principal, id, key string, ref Reference, attach bool) (Status, error) {
+	if contentID(id) {
+		return s.contentReference(ctx, p, id, key, ref, attach)
+	}
 	var out Status
 	var o Object
 	if !validID(ref.Module) || !validID(ref.ID) {
@@ -490,6 +505,12 @@ func (s *Service) Reference(ctx context.Context, p Principal, id, key string, re
 }
 
 func (s *Service) Delete(ctx context.Context, p Principal, id, key string, revision int64) (Status, error) {
+	if contentID(id) {
+		return s.deleteContent(ctx, p, id, key, revision)
+	}
+	return s.deleteObject(ctx, p, id, key, revision, false)
+}
+func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string, revision int64, ownedContent bool) (Status, error) {
 	var out Status
 	var o Object
 	err := s.mutation(ctx, p, "storage.objects.delete", id, key, revision, func(tx Transaction) error {
@@ -497,6 +518,9 @@ func (s *Service) Delete(ctx context.Context, p Principal, id, key string, revis
 		o, err = s.objectGuard(ctx, tx, p, "storage.objects.delete", id)
 		return err
 	}, func(tx Transaction) (any, error) {
+		if o.ContentGroup != "" && !ownedContent {
+			return nil, ErrDenied
+		}
 		if o.Revision != revision || len(o.References) > 0 {
 			return nil, ErrConflict
 		}
@@ -538,6 +562,9 @@ func (s *Service) Delete(ctx context.Context, p Principal, id, key string, revis
 	return out, err
 }
 func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key string, revision int64, protection Protection) (Status, error) {
+	if contentID(id) {
+		return s.changeContentProtection(ctx, p, id, key, revision, protection)
+	}
 	var out Status
 	var o Object
 	if !protection.Valid() {
@@ -554,6 +581,9 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 		}
 		return s.authorize(ctx, p, "storage.protection.assign", id, protection)
 	}, func(tx Transaction) (any, error) {
+		if o.ContentGroup != "" {
+			return nil, ErrDenied
+		}
 		if o.Revision != revision || o.State == "deleting" || o.State == "deleted" {
 			return nil, ErrConflict
 		}

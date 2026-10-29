@@ -42,6 +42,9 @@ func verifyFile(ctx context.Context, f *stagedFile, o Object) error {
 // Ingest hashes bounded local staging before any provider write. The staging
 // file is removed on return; retry uses the immutable object's size and digest.
 func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src io.Reader) (Status, error) {
+	if contentID(id) {
+		return s.ingestContent(ctx, p, id, key, src)
+	}
 	if !validKey(key) || src == nil {
 		return Status{}, ErrInput
 	}
@@ -145,6 +148,9 @@ func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, ds
 	return s.download(ctx, p, id, dst, true)
 }
 func (s *Service) download(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
+	if contentID(id) {
+		return s.downloadContent(ctx, p, id, dst, review)
+	}
 	action := "storage.objects.download"
 	if review {
 		action = "storage.objects.review"

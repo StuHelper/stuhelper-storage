@@ -137,6 +137,7 @@ func DefaultPolicy() Policy  { return Policy{Target: 3, Publish: 2} }
 func (p Policy) Valid() bool { return p.Publish >= 2 && p.Target >= p.Publish && p.Target <= 10 }
 
 type Object struct {
+	ContentGroup string      `json:"content_group,omitempty"`
 	CreationHash string      `json:"creation_hash,omitempty"`
 	ID           string      `json:"id"`
 	Owner        Principal   `json:"owner"`
@@ -258,6 +259,14 @@ type Repository interface {
 // Locks are acquired object -> instances in sorted ID order -> job. Claim only
 // locks a job and commits before execution, so it cannot invert that order.
 type Transaction interface {
+	ContentGroup(string) (ContentGroup, error)
+	ActiveContentGroup(string) (ContentGroup, error)
+	SaveContentGroup(ContentGroup) error
+	ContentHandle(string) (ContentHandle, error)
+	SaveContentHandle(ContentHandle) error
+	ContentGroupHeld(string) (bool, error)
+	ContentCleanup(int, string) ([]ContentGroup, error)
+	ExpiredContentHandles(int, time.Time) ([]ContentHandle, error)
 	Lock(string) error
 	Instance(string) (Instance, error)
 	Instances(int, string) ([]Instance, error)

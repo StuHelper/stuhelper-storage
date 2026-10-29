@@ -454,6 +454,13 @@ export interface components {
             policy?: components["schemas"]["Policy"];
             /** @description Optional stable key scoped to the service principal. Its object identity survives the 24-hour request replay window; changed creation parameters conflict and deleted objects are not recreated. */
             client_key?: string;
+            /**
+             * @description Create an independent logical handle whose verified content is shared only within the same service principal, protection, size, digest and replica policy. Hash-only creation does not grant content access.
+             * @default false
+             */
+            deduplicate: boolean;
+            /** @description Optional existing object or shared handle to copy without client upload. Requires deduplicate and current storage.objects.reuse permission on the verified source. Different protection requirements use separate physical groups. */
+            reuse_from?: string;
         };
         ObjectStatus: {
             id: string;

@@ -119,6 +119,10 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 	if err := s.authorize(ctx, p, "storage.maintenance", "", Protection{}); err != nil {
 		return result, err
 	}
+	var cleanupErr error
+	if after == "" {
+		cleanupErr = s.cleanupContents(ctx, p, limit)
+	}
 	var objects []Object
 	err := s.repo.Transaction(ctx, func(tx Transaction) error { var err error; objects, err = tx.Objects(limit, after); return err })
 	if err != nil {
@@ -163,7 +167,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					return err
 				}
 			}
-			if o.State != "deleted" && o.State != "deleting" && len(o.References) == 0 && s.now().Sub(o.CreatedAt) >= 24*time.Hour {
+			if o.State != "deleted" && o.State != "deleting" && o.ContentGroup == "" && len(o.References) == 0 && s.now().Sub(o.CreatedAt) >= 24*time.Hour {
 				o.State = "deleting"
 				if len(replicas) == 0 {
 					o.State = "deleted"
@@ -292,7 +296,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 	if len(objects) < limit {
 		result.NextCursor = ""
 	}
-	return result, nil
+	return result, cleanupErr
 }
 
 // RefreshInstance samples capacity only without outstanding writes. This avoids
