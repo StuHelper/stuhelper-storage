@@ -143,6 +143,9 @@
     "STORAGE-34": [
       "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
       "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
+    ],
+    "AUDIT-01": [
+      "postgres/audit_query_test.go#TestPublicAuditQuery"
     ]
   }
 }
