@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS outbox_pending ON storage.outbox(id) WHERE NOT delive
 CREATE TABLE IF NOT EXISTS storage.audit (
     id text PRIMARY KEY,
     data jsonb NOT NULL
-);
+, reason text NOT NULL DEFAULT '', result text NOT NULL DEFAULT 'unknown' CHECK(result IN ('success','denied','failed','unknown')), recorded_xid xid8 NOT NULL DEFAULT pg_current_xact_id(), audit_actor text NOT NULL DEFAULT 'unknown', audit_target text NOT NULL DEFAULT 'unknown', audit_action text NOT NULL DEFAULT 'unknown', audit_school text NOT NULL DEFAULT '*', audit_group text NOT NULL DEFAULT '*', audit_time timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS storage.event_streams (
     subject text PRIMARY KEY,
     revision bigint NOT NULL CHECK (revision > 0)
@@ -75,3 +75,13 @@ CREATE INDEX IF NOT EXISTS content_handle_pending ON storage.content_handles(pen
 
 REVOKE ALL ON SCHEMA storage FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA storage FROM PUBLIC;
+
+
+CREATE TABLE IF NOT EXISTS storage.audit_retention(singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton), revision bigint NOT NULL DEFAULT 0);
+INSERT INTO storage.audit_retention(singleton) VALUES(true) ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION storage.audit_project() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.audit_actor=CASE WHEN COALESCE(NEW.data->'actor'->>'issuer','')='' OR COALESCE(NEW.data->'actor'->>'subject','')='' THEN 'unknown' ELSE translate(rtrim(replace(encode(convert_to(NEW.data->'actor'->>'issuer','UTF8'),'base64'),E'\n',''),'='),'+/','-_')||':'||translate(rtrim(replace(encode(convert_to(NEW.data->'actor'->>'subject','UTF8'),'base64'),E'\n',''),'='),'+/','-_') END; NEW.audit_target=COALESCE(NULLIF(NEW.data->'event'->'data'->>'object_id',''),NULLIF(NEW.data->'event'->>'subject',''),'unknown'); NEW.audit_action=NEW.data->'event'->>'type'; NEW.audit_time=(NEW.data->'event'->>'time')::timestamptz; RETURN NEW; END $$;
+CREATE OR REPLACE TRIGGER audit_project BEFORE INSERT OR UPDATE ON storage.audit FOR EACH ROW EXECUTE FUNCTION storage.audit_project();
+CREATE OR REPLACE FUNCTION storage.audit_invalidate() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN UPDATE storage.audit_retention SET revision=revision+1 WHERE singleton; RETURN NULL; END $$;
+REVOKE ALL ON FUNCTION storage.audit_invalidate() FROM PUBLIC;
+CREATE OR REPLACE TRIGGER audit_invalidate AFTER UPDATE OR DELETE OR TRUNCATE ON storage.audit FOR EACH STATEMENT EXECUTE FUNCTION storage.audit_invalidate();
+CREATE INDEX IF NOT EXISTS audit_query_order ON storage.audit(audit_time DESC,(id::text) COLLATE "C" DESC);

@@ -1,6 +1,6 @@
 github.com/RaveNoX/go-jsoncommentstrip v1.0.0/go.mod h1:78ihd09MekBnJnxpICcwzCMzGrKSKYe4AqU6PDYYpjk=
-github.com/StuHelper/stuhelper-storage-bhpan v0.0.0-20261026095540-51b6f1ff5029 h1:UEU7wyPl0KIjDB2OaIGIoozWx+HsJxcEub+yoUzQp1k=
-github.com/StuHelper/stuhelper-storage-bhpan v0.0.0-20261026095540-51b6f1ff5029/go.mod h1:JGTOe1BF8ZGE90rrqFunSJTDXbr7Pj8jOGqPSDwJq/8=
+github.com/StuHelper/stuhelper-storage-bhpan v0.1.0 h1:3F/FcoKKnGAR3ejy7WxQ8vzhE2l3SAacxe9xJerm0w8=
+github.com/StuHelper/stuhelper-storage-bhpan v0.1.0/go.mod h1:JGTOe1BF8ZGE90rrqFunSJTDXbr7Pj8jOGqPSDwJq/8=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0 h1:axGnT1gRIfimI7gJifB699GoE/oq+F2MU7Dml6nw9rQ=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0/go.mod h1:lvDnEdqiQrp0O42VQGgmlKpxL1AP2+08jFMw88y4klk=
 github.com/bmatcuk/doublestar v1.1.1/go.mod h1:UD6OnuiIn0yFxxA2le/rnRU1G4RaI4UvFv1sNto9p6w=

@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # A disposable, socket-only cluster; never connects to an application database.
-pg_bin="${STUHELPER_TEST_PG_BIN:-/usr/lib/postgresql/18/bin}"
+pg_bin="${STUHELPER_TEST_PG_BIN:-}"
+if [[ -z "$pg_bin" ]]; then
+  pg_package="$(dpkg-query -W -f='${Depends}' postgresql | grep -oE 'postgresql-[0-9]+' | head -n 1)"
+  test -n "$pg_package"
+  pg_bin="/usr/lib/postgresql/${pg_package#postgresql-}/bin"
+fi
+export STUHELPER_TEST_PG_BIN="$pg_bin"
+"$pg_bin/postgres" --version
 test -x "$pg_bin/initdb"
 task_dir="$(mktemp -d /tmp/stuhelper-storage-check.XXXXXX)"
 cleanup() {

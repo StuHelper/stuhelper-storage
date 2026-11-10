@@ -180,7 +180,7 @@ func (t *transaction) Event(v storage.Event) error {
 	if err := t.save(`INSERT INTO storage.outbox(id,data) VALUES($1,$2)`, v, v.ID); err != nil {
 		return err
 	}
-	return t.save(`INSERT INTO storage.audit(id,data) VALUES($1,$2)`, struct {
+	return t.save(`INSERT INTO storage.audit(id,reason,result,data) VALUES($1,'','unknown',$2)`, struct {
 		Event storage.Event     `json:"event"`
 		Actor storage.Principal `json:"actor"`
 	}{v, v.Actor}, v.ID)
