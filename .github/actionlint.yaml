@@ -1,0 +1,4 @@
+# actionlint 1.7.12 predates this GitHub-hosted label. This only extends lint.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

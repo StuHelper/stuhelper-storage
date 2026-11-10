@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-10-26T12:00:00Z",
+  "instances": [
+    {
+      "id": "fixture-instance",
+      "state": "active",
+      "reason": "",
+      "revision": 1,
+      "limit_bytes": 1024,
+      "used_bytes": 20,
+      "reserved_bytes": 10,
+      "available_bytes": 994,
+      "authorization_expires_at": "2026-10-28T12:00:00Z",
+      "quota_expires_at": "2026-10-26T12:05:00Z"
+    }
+  ],
+  "objects": [
+    {
+      "id": "fixture-object",
+      "state": "degraded",
+      "healthy": 2,
+      "desired": 3,
+      "missing": 1,
+      "reason": "insufficient_eligible_capacity"
+    }
+  ],
+  "jobs": {
+    "pending": 1,
+    "running": 0,
+    "blocked": 1
+  },
+  "failures": [
+    {
+      "id": "fixture-job",
+      "object_id": "fixture-object",
+      "kind": "replicate",
+      "state": "blocked",
+      "generation": 2,
+      "attempts": 3,
+      "error_code": "storage_unavailable",
+      "next_attempt": "2026-10-26T12:00:00Z"
+    }
+  ],
+  "next_cursor": "",
+  "failures_next_cursor": ""
+}
