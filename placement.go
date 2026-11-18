@@ -239,7 +239,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				if err := tx.SaveObject(o); err != nil {
 					return err
 				}
-				if err := s.emit(tx, p, "storage.object.expired", o.ID, o.Revision); err != nil {
+				if err := s.emitScoped(tx, p, "storage.object.expired", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 					return err
 				}
 			}

@@ -189,7 +189,16 @@ func (s *Service) mutation(ctx context.Context, p Principal, action, id, key str
 	})
 }
 func (s *Service) emit(tx Transaction, p Principal, kind, id string, revision int64) error {
-	return tx.Event(Event{ID: newID(), Type: kind, ObjectID: id, Revision: revision, Time: s.now(), Actor: p})
+	return s.emitScoped(tx, p, kind, id, revision, "success", "*")
+}
+func (s *Service) emitScoped(tx Transaction, p Principal, kind, id string, revision int64, result, school string) error {
+	if result == "" {
+		result = "success"
+	}
+	if school == "" {
+		school = "*"
+	}
+	return tx.Event(Event{ID: newID(), Type: kind, ObjectID: id, Revision: revision, Time: s.now(), Actor: p, AuditResult: result, AuditSchool: school})
 }
 
 func validateInstance(v Instance, now time.Time) bool {
@@ -444,7 +453,7 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, "storage.object.created", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, "storage.object.created", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -590,7 +599,7 @@ func (s *Service) Reference(ctx context.Context, p Principal, id, key string, re
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, action, o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, action, o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -650,7 +659,7 @@ func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string,
 				return nil, err
 			}
 		}
-		if err := s.emit(tx, p, "storage.object.deleting", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, "storage.object.deleting", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -734,7 +743,7 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, "storage.protection.changed", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, "storage.protection.changed", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)

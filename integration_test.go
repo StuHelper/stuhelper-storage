@@ -20,6 +20,7 @@ import (
 	"time"
 
 	storage "github.com/StuHelper/stuhelper-storage"
+	"github.com/StuHelper/stuhelper-storage/auditquery"
 	"github.com/StuHelper/stuhelper-storage/httpapi"
 	"github.com/StuHelper/stuhelper-storage/postgres"
 	"github.com/StuHelper/stuhelper-storage/sdk"
@@ -264,7 +265,8 @@ func harnessFor(t *testing.T, configure ...func(*storage.Config)) *harness {
 	if _, err = admin.Exec(`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='storage_test_runtime') THEN CREATE ROLE storage_test_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE; END IF; END $$;
 GRANT USAGE ON SCHEMA storage TO storage_test_runtime;
 GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA storage TO storage_test_runtime;
-REVOKE UPDATE,DELETE ON storage.audit FROM storage_test_runtime;
+REVOKE UPDATE,DELETE,TRUNCATE ON storage.audit FROM storage_test_runtime;
+REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON storage.audit_retention FROM storage_test_runtime;
 CREATE SCHEMA other_module;
 CREATE TABLE other_module.private_data(id integer);
 REVOKE ALL ON SCHEMA other_module FROM PUBLIC;
@@ -734,6 +736,173 @@ func TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission(t *
 	}
 }
 
+func TestAuditRetentionBoundarySchoolProjectionAndReviewAudit(t *testing.T) {
+	h := harnessFor(t)
+
+	// 1. CheckRuntime must reject a runtime role that can mutate storage.audit_retention.
+	if _, err := h.admin.Exec(`GRANT UPDATE ON storage.audit_retention TO storage_test_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.CheckRuntime(h.ctx); !errors.Is(err, storage.ErrDenied) {
+		t.Fatalf("CheckRuntime permitted audit_retention write privilege: %v", err)
+	}
+	if _, err := h.admin.Exec(`REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON storage.audit_retention FROM storage_test_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.CheckRuntime(h.ctx); err != nil {
+		t.Fatalf("CheckRuntime rejected valid read-only audit_retention grant: %v", err)
+	}
+
+	// 2. Object operations and ReviewDownload (both regular object and shared content) must project school scope, result='success', and review audit.
+	h.instance(t, "audit-inst", "platform", "platform", 4096)
+	data := []byte("reviewable school-a content")
+	o := h.object(t, "school-obj", data)
+	h.ingest(t, o.ID, data)
+	var reviewed bytes.Buffer
+	if err := h.s.ReviewDownload(h.ctx, h.actor, o.ID, &reviewed); err != nil || !bytes.Equal(reviewed.Bytes(), data) {
+		t.Fatalf("object ReviewDownload failed: %v", err)
+	}
+
+	shared := sharedCreate(t, h, "school-shared", sharedRequest(data))
+	h.ingest(t, shared.ID, data)
+	reviewed.Reset()
+	if err := h.s.ReviewDownload(h.ctx, h.actor, shared.ID, &reviewed); err != nil || !bytes.Equal(reviewed.Bytes(), data) {
+		t.Fatalf("shared ReviewDownload failed: %v", err)
+	}
+
+	until := time.Now().UTC().Add(time.Hour)
+	batchA, err := h.repo.ReadAudit(h.ctx, auditquery.Request{
+		Scopes: []auditquery.Scope{{School: "school-a", Group: "*", Module: "storage"}},
+		Until:  until,
+		Limit:  100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenObjectReview := false
+	seenContentReview := false
+	for _, rec := range batchA.Records {
+		if rec.Scope.School != "school-a" || rec.Result != "success" {
+			t.Fatalf("unexpected audit projection: %+v", rec)
+		}
+		if rec.Action == "storage.object.reviewed.v1" && rec.Target == o.ID {
+			seenObjectReview = true
+		}
+		if rec.Action == "storage.content.reviewed.v1" && rec.Target == shared.ID {
+			seenContentReview = true
+		}
+	}
+	if !seenObjectReview || !seenContentReview {
+		t.Fatalf("missing review audit records in school-a scope: obj=%v content=%v total=%d", seenObjectReview, seenContentReview, len(batchA.Records))
+	}
+
+	batchB, err := h.repo.ReadAudit(h.ctx, auditquery.Request{
+		Scopes: []auditquery.Scope{{School: "school-b", Group: "*", Module: "storage"}},
+		Until:  until,
+		Limit:  100,
+	})
+	if err != nil || len(batchB.Records) != 0 {
+		t.Fatalf("foreign school leaked audit records: len=%d err=%v", len(batchB.Records), err)
+	}
+
+	// Failed custody password must record result='denied'.
+	ch, cs, cp, _, user, q := custodyFixture(t)
+	cp.failPrepare.Store(true)
+	cv, err := cs.Submit(ch.ctx, user, "", "60000000-0000-4000-8000-000000000001", q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	custodyBatch, err := ch.repo.ReadAudit(ch.ctx, auditquery.Request{
+		Scopes: []auditquery.Scope{{School: "*", Group: "*", Module: "storage"}},
+		Target: cv.ID,
+		Action: "storage.custody.credentials_required.v1",
+		Until:  time.Now().UTC().Add(time.Hour),
+		Limit:  10,
+	})
+	if err != nil || len(custodyBatch.Records) != 1 || custodyBatch.Records[0].Result != "denied" {
+		t.Fatalf("custody denied audit not projected: %+v err=%v", custodyBatch.Records, err)
+	}
+}
+
+func TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation(t *testing.T) {
+	h := harnessFor(t)
+	h.instance(t, "outbox-inst", "platform", "platform", 8192)
+
+	// Perform multiple sequential mutations on the same object so revision 1, 2, 3 are emitted;
+	// random hex IDs have >80% chance of inverting order across 10 objects without monotonic seq!
+	for idx := 0; idx < 10; idx++ {
+		payload := []byte(fmt.Sprintf("outbox-order-%d", idx))
+		o := h.object(t, fmt.Sprintf("ord-%d", idx), payload)
+		h.ingest(t, o.ID, payload)
+		if _, err := h.s.Delete(h.ctx, h.actor, o.ID, fmt.Sprintf("del-%d", idx), o.Revision); err != nil {
+			t.Fatal(err)
+		}
+		h.run(t)
+	}
+
+	events, err := h.repo.PendingEvents(h.ctx, 100)
+	if err != nil || len(events) != 41 {
+		t.Fatalf("expected 41 pending events, got %d err=%v", len(events), err)
+	}
+	lastRev := map[string]int64{}
+	for idx, ev := range events {
+		if idx > 0 && ev.Sequence <= events[idx-1].Sequence {
+			t.Fatalf("outbox sequence not strictly ascending: %d <= %d", ev.Sequence, events[idx-1].Sequence)
+		}
+		if ev.Data.Revision <= lastRev[ev.Subject] {
+			t.Fatalf("outbox broke per-subject revision order for %s: got rev %d after %d", ev.Subject, ev.Data.Revision, lastRev[ev.Subject])
+		}
+		lastRev[ev.Subject] = ev.Data.Revision
+	}
+
+	// Verify cursor + blocked subject exclusion prevents head-of-line starvation.
+	blockedSubject := events[1].Subject
+	filtered, err := h.repo.PendingEventsAfter(h.ctx, 10, events[0].Sequence, []string{blockedSubject})
+	if err != nil || len(filtered) != 10 {
+		t.Fatalf("PendingEventsAfter cursor/exclusion failed: len=%d err=%v", len(filtered), err)
+	}
+	for _, ev := range filtered {
+		if ev.Subject == blockedSubject || ev.Sequence <= events[0].Sequence {
+			t.Fatalf("PendingEventsAfter returned excluded/stale event: %+v", ev)
+		}
+	}
+}
+
+func TestOutboxUpgradePreservesPendingRevisions(t *testing.T) {
+	h := harnessFor(t)
+	// The old layout permits heap order to differ from stream order (e.g. after a restore).
+	_, err := h.admin.Exec(`ALTER TABLE storage.outbox DROP COLUMN seq;
+        INSERT INTO storage.outbox(id,data,delivered) VALUES
+        ('c','{"subject":"object/test","id":"c","data":{"revision":3}}',false),
+        ('b','{"subject":"object/test","id":"b","data":{"revision":2}}',false),
+        ('a','{"subject":"object/test","id":"a","data":{"revision":1}}',true)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := h.admin.Exec(postgres.Schema); err != nil {
+			t.Fatal(err)
+		}
+		events, err := h.repo.PendingEvents(h.ctx, 10)
+		if err != nil || len(events) != 2 {
+			t.Fatal(events, err)
+		}
+		if events[0].Data.Revision != 2 || events[1].Data.Revision != 3 || events[1].Sequence <= events[0].Sequence {
+			t.Fatalf("upgraded revisions %d,%d; seq %d,%d", events[0].Data.Revision, events[1].Data.Revision, events[0].Sequence, events[1].Sequence)
+		}
+	}
+	before, err := h.repo.PendingEvents(h.ctx, 10)
+	if err != nil || len(before) != 2 {
+		t.Fatal(before, err)
+	}
+	h.instance(t, "after-upgrade", "platform", "platform", 4096)
+	tail, err := h.repo.PendingEventsAfter(h.ctx, 10, before[1].Sequence, nil)
+	if err != nil || len(tail) != 1 || tail[0].Subject != "instance/after-upgrade" {
+		t.Fatalf("new event missing after backfill cursor: %+v %v", tail, err)
+	}
+
+}
+
 func TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion(t *testing.T) {
 	h := harnessFor(t)
 	h.instance(t, "contrib-only", "owner-1", "contributor", 1024)
@@ -764,5 +933,96 @@ func TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion(t *testing.T) {
 	expired, err := h.s.Status(h.ctx, h.actor, o2.ID)
 	if err != nil || expired.State != "deleted" {
 		t.Fatalf("expired object with only deleted replicas stuck in %q (err=%v)", expired.State, err)
+	}
+}
+
+func TestProtectionAuditUsesCommittedSchool(t *testing.T) {
+	h := harnessFor(t)
+	i := h.instance(t, "audit-race", "platform", "platform", 4096)
+	data := []byte("audit race content")
+	shared := sharedCreate(t, h, "shared-school", sharedRequest(data))
+	h.ingest(t, shared.ID, data)
+	next := storage.Protection{Class: "public", Scope: "school-b", Public: true}
+	if _, err := h.s.ChangeProtection(h.ctx, h.actor, shared.ID, "request-b", shared.Revision, next); !errors.Is(err, storage.ErrCapacity) {
+		t.Fatalf("copy without destination: %v", err)
+	}
+	school := func(target, action string) string {
+		t.Helper()
+		var s string
+		if err := h.db.QueryRow("SELECT audit_school FROM storage.audit WHERE audit_target=$1 AND audit_action=$2", target, action).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	if got := school(shared.ID, "storage.content.protection.requested.v1"); got != "school-a" {
+		t.Errorf("pending move belongs to %s", got)
+	}
+	i.Admissions = append(i.Admissions, storage.Admission{Class: "public", Scope: "school-b", Plaintext: true, ExpiresAt: i.ExpiresAt})
+	// Refresh the instance revision and counters before adding the second school.
+	current, err := h.s.Instances(h.ctx, h.actor, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := current[0]
+	updated.Admissions = i.Admissions
+	if _, err = h.s.UpdateInstance(h.ctx, h.actor, "admit-b", updated); err != nil {
+		t.Fatal(err)
+	}
+	o := h.object(t, "object-school", data)
+	h.ingest(t, o.ID, data)
+	h.provider.mu.Lock()
+	for id := range h.provider.files[i.ID] {
+		h.provider.files[i.ID][id] = []byte("incomplete")
+	}
+	h.provider.mu.Unlock()
+	h.provider.readStarted = make(chan struct{}, 1)
+	wait := make(chan struct{})
+	h.provider.readWait = wait
+	result := make(chan error, 1)
+	go func() { result <- h.s.ReviewDownload(h.ctx, h.actor, o.ID, io.Discard) }()
+	select {
+	case <-h.provider.readStarted:
+	case <-time.After(5 * time.Second):
+		close(wait)
+		t.Fatal("read did not start")
+	}
+	_, err = h.s.ChangeProtection(h.ctx, h.actor, o.ID, "move-before-corruption", o.Revision, next)
+	close(wait)
+	downloadErr := <-result
+	if err != nil || downloadErr == nil {
+		t.Fatalf("move=%v download=%v", err, downloadErr)
+	}
+	if got := school(o.ID, "storage.replica.corrupt.v1"); got != "school-b" {
+		t.Fatalf("committed corruption belongs to %s", got)
+	}
+}
+func TestOutboxDeliveryResumesOlderCommittedAndExcludedEvents(t *testing.T) {
+	h := harnessFor(t)
+	// Allocate an older sequence in an open transaction. The other subject
+	// commits independently and is acknowledged before the first becomes visible.
+	tx, err := h.admin.BeginTx(h.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`INSERT INTO storage.outbox(id,data) VALUES('late','{"id":"late","subject":"object/late"}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.admin.Exec(`INSERT INTO storage.outbox(id,data) VALUES('blocked','{"id":"blocked","subject":"object/blocked"}'),('ready','{"id":"ready","subject":"object/ready"}')`); err != nil {
+		t.Fatal(err)
+	}
+	first, err := h.repo.PendingEventsExcluding(h.ctx, 10, []string{"object/blocked"})
+	if err != nil || len(first) != 1 || first[0].ID != "ready" {
+		t.Fatal(first, err)
+	}
+	if err = h.repo.AcknowledgeEvent(h.ctx, first[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := h.repo.PendingEvents(h.ctx, 10)
+	if err != nil || len(next) != 2 || next[0].ID != "late" || next[1].ID != "blocked" {
+		t.Fatal(next, err)
 	}
 }

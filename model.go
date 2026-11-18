@@ -203,11 +203,15 @@ type Event struct {
 	Data            EventData `json:"data"`
 	ID              string    `json:"id"`
 	Type            string    `json:"type"`
+	Sequence        int64     `json:"-"`
 	ObjectID        string    `json:"-"`
 	Revision        int64     `json:"-"`
 	Time            time.Time `json:"time"`
 	Actor           Principal `json:"-"`
 	JobID           string    `json:"-"`
+	Reason          string    `json:"-"`
+	AuditResult     string    `json:"-"`
+	AuditSchool     string    `json:"-"`
 }
 
 type EventData struct {

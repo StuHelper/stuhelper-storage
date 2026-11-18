@@ -214,10 +214,20 @@ func (t *transaction) Event(v storage.Event) error {
 	if err := t.save(`INSERT INTO storage.outbox(id,data) VALUES($1,$2)`, v, v.ID); err != nil {
 		return err
 	}
-	return t.save(`INSERT INTO storage.audit(id,reason,result,data) VALUES($1,'','unknown',$2)`, struct {
+	result := v.AuditResult
+	switch result {
+	case "success", "denied", "failed", "unknown":
+	default:
+		result = "unknown"
+	}
+	school := v.AuditSchool
+	if school == "" {
+		school = "*"
+	}
+	return t.save(`INSERT INTO storage.audit(id,reason,result,audit_school,data) VALUES($1,$2,$3,$4,$5)`, struct {
 		Event storage.Event     `json:"event"`
 		Actor storage.Principal `json:"actor"`
-	}{v, v.Actor}, v.ID)
+	}{v, v.Actor}, v.ID, v.Reason, result, school)
 }
 func (r *Repository) Claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (storage.Job, error) {
 	var result storage.Job
@@ -241,14 +251,46 @@ func (r *Repository) Claim(ctx context.Context, owner string, now time.Time, lea
 	return result, err
 }
 func (r *Repository) PendingEvents(ctx context.Context, limit int) ([]storage.Event, error) {
-	if limit < 1 || limit > 100 {
+	return r.PendingEventsExcluding(ctx, limit, nil)
+}
+
+// PendingEventsExcluding starts a delivery pass. Only persisted acknowledgements
+// suppress delivery between passes. Removing a subject from backoff makes
+// all of its pending rows visible, including rows before a prior page cursor.
+func (r *Repository) PendingEventsExcluding(ctx context.Context, limit int, excludeSubjects []string) ([]storage.Event, error) {
+	return r.PendingEventsAfter(ctx, limit, 0, excludeSubjects)
+}
+
+// PendingEventsAfter pages within a pass with a fixed exclusion set. Begin
+// each new pass with PendingEventsExcluding: allocation order can differ from
+// commit order across subjects, and excluded subjects can become deliverable.
+func (r *Repository) PendingEventsAfter(ctx context.Context, limit int, afterSeq int64, excludeSubjects []string) ([]storage.Event, error) {
+	if limit < 1 || limit > 100 || afterSeq < 0 || len(excludeSubjects) > 1000 {
 		return nil, storage.ErrInput
+	}
+	if excludeSubjects == nil {
+		excludeSubjects = []string{}
 	}
 	var out []storage.Event
 	err := r.Transaction(ctx, func(tx storage.Transaction) error {
-		var err error
-		out, err = list[storage.Event](tx.(*transaction), `SELECT data FROM storage.outbox WHERE NOT delivered ORDER BY id LIMIT $1`, limit)
-		return err
+		t := tx.(*transaction)
+		rows, err := t.tx.QueryContext(t.ctx, `SELECT seq, data FROM storage.outbox WHERE NOT delivered AND seq>$1 AND NOT (data->>'subject' = ANY($2)) ORDER BY seq ASC LIMIT $3`, afterSeq, excludeSubjects, limit)
+		if err != nil {
+			return safe(err)
+		}
+		defer rows.Close()
+		out = make([]storage.Event, 0)
+		for rows.Next() {
+			var seq int64
+			var b []byte
+			var item storage.Event
+			if rows.Scan(&seq, &b) != nil || json.Unmarshal(b, &item) != nil {
+				return storage.ErrUnavailable
+			}
+			item.Sequence = seq
+			out = append(out, item)
+		}
+		return safe(rows.Err())
 	})
 	return out, err
 }
