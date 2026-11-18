@@ -38,6 +38,21 @@ func (t *custodyTx) SaveBinding(b custody.Binding) error {
 	_, e = t.tx.ExecContext(t.ctx, `INSERT INTO storage.custody_bindings(id,owner_issuer,owner_subject,account_domain,data) VALUES($1,$2,$3,NULLIF($4,''),$5) ON CONFLICT(id) DO UPDATE SET account_domain=EXCLUDED.account_domain,data=EXCLUDED.data WHERE storage.custody_bindings.owner_issuer=EXCLUDED.owner_issuer AND storage.custody_bindings.owner_subject=EXCLUDED.owner_subject`, b.ID, b.Owner.Issuer, b.Owner.Subject, b.AccountDomain, data)
 	return safe(e)
 }
+func (t *custodyTx) DeleteBinding(id string, owner storage.Principal, keepAttemptsSince time.Time) error {
+	res, e := t.tx.ExecContext(t.ctx, `DELETE FROM storage.custody_bindings WHERE id=$1 AND owner_issuer=$2 AND owner_subject=$3`, id, owner.Issuer, owner.Subject)
+	if e != nil {
+		return safe(e)
+	}
+	rows, e := res.RowsAffected()
+	if e != nil {
+		return safe(e)
+	}
+	if rows == 0 {
+		return storage.ErrNotFound
+	}
+	_, e = t.tx.ExecContext(t.ctx, `DELETE FROM storage.custody_operations WHERE data->>'BindingID'=$1 AND ((data->>'AttemptedAt') IS NULL OR (data->>'AttemptedAt')::timestamptz < $2)`, id, keepAttemptsSince)
+	return safe(e)
+}
 func (t *custodyTx) SaveOperation(o custody.Operation) error {
 	data, e := json.Marshal(o)
 	if e != nil {
@@ -72,4 +87,15 @@ func (t *custodyTx) RecentAttempts(p storage.Principal, since time.Time) (int, e
 	var n int
 	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(sum((data->>'Attempts')::int),0) FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3`, p.Issuer, p.Subject, since).Scan(&n)
 	return n, safe(e)
+}
+func (t *custodyTx) OldestRecentAttempt(p storage.Principal, since time.Time) (time.Time, error) {
+	var oldest time.Time
+	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(MIN((data->>'AttemptedAt')::timestamptz), 'epoch'::timestamptz) FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3`, p.Issuer, p.Subject, since).Scan(&oldest)
+	return oldest, safe(e)
+}
+func (t *custodyTx) Idempotency(key string) (storage.Idempotency, error) {
+	return t.transaction.Idempotency(key)
+}
+func (t *custodyTx) SaveIdempotency(v storage.Idempotency) error {
+	return t.transaction.SaveIdempotency(v)
 }

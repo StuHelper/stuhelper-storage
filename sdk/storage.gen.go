@@ -44,13 +44,14 @@ func (e ContributionControlState) Valid() bool {
 
 // Defines values for CustodyBindingLastError.
 const (
-	CustodyBindingLastErrorAttemptsExhausted     CustodyBindingLastError = "attempts_exhausted"
-	CustodyBindingLastErrorAuthorizationRejected CustodyBindingLastError = "authorization_rejected"
-	CustodyBindingLastErrorConflict              CustodyBindingLastError = "conflict"
-	CustodyBindingLastErrorCredentialsRequired   CustodyBindingLastError = "credentials_required"
-	CustodyBindingLastErrorDependencyUnavailable CustodyBindingLastError = "dependency_unavailable"
-	CustodyBindingLastErrorEmpty                 CustodyBindingLastError = ""
-	CustodyBindingLastErrorResultUnknown         CustodyBindingLastError = "result_unknown"
+	CustodyBindingLastErrorAttemptsExhausted               CustodyBindingLastError = "attempts_exhausted"
+	CustodyBindingLastErrorAuthorizationRejected           CustodyBindingLastError = "authorization_rejected"
+	CustodyBindingLastErrorConflict                        CustodyBindingLastError = "conflict"
+	CustodyBindingLastErrorCredentialsRequired             CustodyBindingLastError = "credentials_required"
+	CustodyBindingLastErrorDependencyUnavailable           CustodyBindingLastError = "dependency_unavailable"
+	CustodyBindingLastErrorEmpty                           CustodyBindingLastError = ""
+	CustodyBindingLastErrorInteractiveVerificationRequired CustodyBindingLastError = "interactive_verification_required"
+	CustodyBindingLastErrorResultUnknown                   CustodyBindingLastError = "result_unknown"
 )
 
 // Valid indicates whether the value is a known member of the CustodyBindingLastError enum.
@@ -67,6 +68,8 @@ func (e CustodyBindingLastError) Valid() bool {
 	case CustodyBindingLastErrorDependencyUnavailable:
 		return true
 	case CustodyBindingLastErrorEmpty:
+		return true
+	case CustodyBindingLastErrorInteractiveVerificationRequired:
 		return true
 	case CustodyBindingLastErrorResultUnknown:
 		return true
@@ -287,6 +290,8 @@ type ContributionCandidate struct {
 	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
 	AvailableBytes         int64     `json:"available_bytes"`
 	Id                     string    `json:"id"`
+	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
+	Reason                 string    `json:"reason"`
 }
 
 // ContributionCandidates defines model for ContributionCandidates.
@@ -574,7 +579,8 @@ type Policy struct {
 
 // Problem defines model for Problem.
 type Problem struct {
-	Code string `json:"code"`
+	Code              string `json:"code"`
+	RetryAfterSeconds *int   `json:"retry_after_seconds,omitempty"`
 }
 
 // Protection defines model for Protection.
@@ -638,6 +644,11 @@ type CreateCustodyParams struct {
 type ListCustodyOperationsParams struct {
 	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
 	After *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
+// DeleteOwnCustodyParams defines parameters for DeleteOwnCustody.
+type DeleteOwnCustodyParams struct {
+	IdempotencyKey openapi_types.UUID `json:"Idempotency-Key"`
 }
 
 // ReauthorizeCustodyParams defines parameters for ReauthorizeCustody.
@@ -893,6 +904,11 @@ type ClientInterface interface {
 	//
 	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
 	GetOwnCustodyRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteOwnCustody performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+	//
+	// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+	DeleteOwnCustody(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReauthorizeCustodyWithBody performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 	// with any type of body and a specified content type.
@@ -1201,6 +1217,21 @@ func (c *Client) GetCustodyPolicy(ctx context.Context, reqEditors ...RequestEdit
 // Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
 func (c *Client) GetOwnCustodyRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetOwnCustodyRequestRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteOwnCustody performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+//
+// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+func (c *Client) DeleteOwnCustody(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteOwnCustodyRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2097,6 +2128,53 @@ func NewGetOwnCustodyRequestRequest(server string, id string) (*http.Request, er
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteOwnCustodyRequest constructs an http.Request for the DeleteOwnCustody method
+func NewDeleteOwnCustodyRequest(server string, id openapi_types.UUID, params *DeleteOwnCustodyParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: "uuid"})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
 	}
 
 	return req, nil
@@ -3171,6 +3249,13 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetOwnCustodyRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOwnCustodyRequestResponse, error)
 
+	// DeleteOwnCustodyWithResponse performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+	//
+	// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DeleteOwnCustodyWithResponse(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error)
+
 	// ReauthorizeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -3846,6 +3931,103 @@ func (r GetOwnCustodyRequestResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetOwnCustodyRequestResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteOwnCustodyResponse503Headers the declared response headers of an HTTP 503 response for DeleteOwnCustody
+type DeleteOwnCustodyResponse503Headers struct {
+	RetryAfter *int
+}
+
+type DeleteOwnCustodyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustodyBinding
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *DeleteOwnCustodyResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON200() *CustodyBinding {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteOwnCustodyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteOwnCustodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteOwnCustodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteOwnCustodyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5433,6 +5615,19 @@ func (c *ClientWithResponses) GetOwnCustodyRequestWithResponse(ctx context.Conte
 	return ParseGetOwnCustodyRequestResponse(rsp)
 }
 
+// DeleteOwnCustodyWithResponse performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+//
+// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DeleteOwnCustodyWithResponse(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error) {
+	rsp, err := c.DeleteOwnCustody(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteOwnCustodyResponse(rsp)
+}
+
 // ReauthorizeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -6237,6 +6432,94 @@ func ParseGetOwnCustodyRequestResponse(rsp *http.Response) (*GetOwnCustodyReques
 	case rsp.StatusCode == 503:
 		break // No content-type
 
+	}
+
+	return response, nil
+}
+
+// ParseDeleteOwnCustodyResponse parses an HTTP response from a DeleteOwnCustodyWithResponse call
+func ParseDeleteOwnCustodyResponse(rsp *http.Response) (*DeleteOwnCustodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteOwnCustodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustodyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers DeleteOwnCustodyResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

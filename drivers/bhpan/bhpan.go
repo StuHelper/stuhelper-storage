@@ -430,6 +430,8 @@ func safe(err error) error {
 	switch {
 	case errors.Is(err, protocol.ErrSession):
 		return errors.Join(storage.ErrDenied, ErrSessionExpired)
+	case errors.Is(err, protocol.ErrChallenge):
+		return storage.ErrChallenge
 	case errors.Is(err, protocol.ErrNotFound):
 		return storage.ErrNotFound
 	case errors.Is(err, protocol.ErrPermission), errors.Is(err, protocol.ErrCredentials), errors.Is(err, context.Canceled):

@@ -120,6 +120,33 @@ func (t *transaction) Instances(limit int, after string) ([]storage.Instance, er
 func (t *transaction) SaveInstance(v storage.Instance) error {
 	return t.save(`INSERT INTO storage.instances(id,account_domain,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET account_domain=excluded.account_domain,data=excluded.data`, v, v.ID, v.AccountDomain)
 }
+func (t *transaction) DeleteRevokedInstance(id string) error {
+	var busy bool
+	if err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.replicas WHERE instance_id=$1 AND data->>'state'<>'deleted') OR EXISTS(SELECT 1 FROM storage.jobs j JOIN storage.replicas r ON r.id=j.data->>'replica_id' WHERE r.instance_id=$1 AND j.state<>'done')`, id).Scan(&busy); err != nil {
+		return safe(err)
+	}
+	if busy {
+		return storage.ErrConflict
+	}
+	if _, err := t.tx.ExecContext(t.ctx, `DELETE FROM storage.jobs WHERE state='done' AND data->>'replica_id' IN (SELECT id FROM storage.replicas WHERE instance_id=$1)`, id); err != nil {
+		return safe(err)
+	}
+	if _, err := t.tx.ExecContext(t.ctx, `DELETE FROM storage.replicas WHERE instance_id=$1 AND data->>'state'='deleted'`, id); err != nil {
+		return safe(err)
+	}
+	res, err := t.tx.ExecContext(t.ctx, `DELETE FROM storage.instances WHERE id=$1 AND data->>'state'='revoked' AND NOT (data->>'authorized')::boolean AND (data->>'used')::bigint=0 AND (data->>'reserved')::bigint=0`, id)
+	if err != nil {
+		return safe(err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return safe(err)
+	}
+	if rows == 0 {
+		return storage.ErrConflict
+	}
+	return nil
+}
 func (t *transaction) Object(id string) (storage.Object, error) {
 	return read[storage.Object](t, `SELECT data FROM storage.objects WHERE id=$1 FOR UPDATE`, id)
 }

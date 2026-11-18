@@ -304,6 +304,59 @@ func (s *Service) Instances(ctx context.Context, p Principal, limit int, after s
 	return out, err
 }
 
+// PurgeRevokedCustodyInstance removes a revoked, completely empty contributor
+// instance from the ledger so its custody binding and account claim can be released.
+func (s *Service) PurgeRevokedCustodyInstance(ctx context.Context, p Principal, id, ownerDomain, key string) error {
+	if !validID(id) || !validID(ownerDomain) {
+		return ErrInput
+	}
+	var out struct {
+		Deleted bool `json:"deleted"`
+	}
+	guard := func(Transaction) error {
+		return s.authorize(ctx, p, "storage.instances.manage", id, Protection{})
+	}
+	return s.mutation(ctx, p, "storage.instances.purge", id, key, ownerDomain, guard, func(tx Transaction) (any, error) {
+		if err := tx.Lock("instance-registry"); err != nil {
+			return nil, err
+		}
+		if err := tx.Lock("instance:" + id); err != nil {
+			return nil, err
+		}
+		i, err := tx.Instance(id)
+		if errors.Is(err, ErrNotFound) {
+			return struct {
+				Deleted bool `json:"deleted"`
+			}{Deleted: true}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if i.Ownership != "contributor" || i.OwnerDomain != ownerDomain {
+			return nil, ErrDenied
+		}
+		if i.Authorized || i.State != "revoked" || i.Used != 0 || i.Reserved != 0 {
+			return nil, ErrConflict
+		}
+		remaining, err := tx.InstanceReplicas(id)
+		if err != nil {
+			return nil, err
+		}
+		if remaining != 0 {
+			return nil, ErrConflict
+		}
+		if err := tx.DeleteRevokedInstance(id); err != nil {
+			return nil, err
+		}
+		if err := s.emit(tx, p, "storage.instance.purged", id, i.Revision+1); err != nil {
+			return nil, err
+		}
+		return struct {
+			Deleted bool `json:"deleted"`
+		}{Deleted: true}, nil
+	}, &out)
+}
+
 type CreateRequest struct {
 	Deduplicate  bool       `json:"deduplicate,omitempty"`
 	ReuseFrom    string     `json:"reuse_from,omitempty"`
@@ -696,7 +749,7 @@ func sortedInstances(instances []Instance) {
 	sort.Slice(instances, func(i, j int) bool { return instances[i].ID < instances[j].ID })
 }
 func errorCode(err error) string {
-	for _, e := range []error{ErrInput, ErrDenied, ErrNotFound, ErrConflict, ErrCapacity, ErrIntegrity, ErrStale, ErrUnknown} {
+	for _, e := range []error{ErrInput, ErrDenied, ErrNotFound, ErrConflict, ErrCapacity, ErrIntegrity, ErrStale, ErrUnknown, ErrChallenge} {
 		if errors.Is(err, e) {
 			return e.Error()
 		}

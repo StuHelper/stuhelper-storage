@@ -23,7 +23,27 @@ var (
 	ErrIntegrity   = errors.New("storage_integrity_failed")
 	ErrStale       = errors.New("storage_stale_operation")
 	ErrUnknown     = errors.New("storage_remote_result_unknown")
+	ErrChallenge   = errors.New("storage_interactive_verification_required")
 )
+
+type RetryAfterError struct {
+	Err               error
+	RetryAfterSeconds int
+}
+
+func (e RetryAfterError) Error() string {
+	if e.Err == nil {
+		return ErrCapacity.Error()
+	}
+	return e.Err.Error()
+}
+
+func (e RetryAfterError) Unwrap() error {
+	if e.Err == nil {
+		return ErrCapacity
+	}
+	return e.Err
+}
 
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
 var digest = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -272,6 +292,7 @@ type Transaction interface {
 	Instances(int, string) ([]Instance, error)
 	ContributionCandidates(string, int, string) ([]Instance, error)
 	SaveInstance(Instance) error
+	DeleteRevokedInstance(string) error
 	InstanceReplicas(string) (int64, error)
 	Object(string) (Object, error)
 	Objects(int, string) ([]Object, error)

@@ -10,6 +10,8 @@ type ContributionCandidate struct {
 	Adapter                string    `json:"adapter"`
 	AvailableBytes         int64     `json:"available_bytes"`
 	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
+	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
+	Reason                 string    `json:"reason"`
 }
 type ContributionCandidates struct {
 	Items      []ContributionCandidate `json:"items"`
@@ -41,7 +43,15 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 			if i.Limit == 0 {
 				i.Limit = 1 << 60
 			} // Initial custody has no contribution allocation yet.
-			out.Items = append(out.Items, ContributionCandidate{i.ID, i.Adapter, instanceHealth(i, s.now()).AvailableBytes, i.ExpiresAt})
+			health := instanceHealth(i, s.now())
+			out.Items = append(out.Items, ContributionCandidate{
+				ID:                     i.ID,
+				Adapter:                i.Adapter,
+				AvailableBytes:         health.AvailableBytes,
+				AuthorizationExpiresAt: i.ExpiresAt,
+				QuotaExpiresAt:         i.QuotaExpiresAt,
+				Reason:                 health.Reason,
+			})
 		}
 		return s.authorize(ctx, p, "storage.contributions.read", "", Protection{})
 	})
