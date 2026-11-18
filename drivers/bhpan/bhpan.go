@@ -48,6 +48,11 @@ type session struct {
 	shards                      map[string]string
 }
 
+type provisionOperation struct {
+	revision int64
+	cancel   context.CancelFunc
+}
+
 // Pool holds sessions until an explicit operator-authorized deadline. That
 // deadline limits local use; it does not assert a provider token's lifetime.
 // Credential retention and renewal belong to the composition layer.
@@ -56,7 +61,7 @@ type Pool struct {
 	sessions     map[string]*session
 	versions     map[string]uint64
 	revoked      map[string]int64
-	provisioning map[string]context.CancelFunc
+	provisioning map[string]*provisionOperation
 	inFlight     map[string]int
 	closed       bool
 }
@@ -66,7 +71,7 @@ func NewPool() *Pool {
 		sessions:     map[string]*session{},
 		versions:     map[string]uint64{},
 		revoked:      map[string]int64{},
-		provisioning: map[string]context.CancelFunc{},
+		provisioning: map[string]*provisionOperation{},
 		inFlight:     map[string]int{},
 	}
 }
@@ -128,7 +133,7 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	opCtx, opCancel := context.WithDeadline(ctx, expires)
 	p.versions[ref]++
 	version := p.versions[ref]
-	p.provisioning[ref] = opCancel
+	p.provisioning[ref] = &provisionOperation{revision: revision, cancel: opCancel}
 	p.inFlight[ref]++
 	p.mu.Unlock()
 
@@ -200,17 +205,15 @@ func provisionRemote(ctx context.Context, client Client) (string, string, string
 
 func (p *Pool) Revoke(ref string, revision int64) {
 	p.mu.Lock()
-	_, tracked := p.versions[ref]
 	var cancelProvision context.CancelFunc
 	if token.MatchString(ref) && revision > 0 {
 		p.revoked[ref] = max(p.revoked[ref], revision)
-		if tracked {
-			p.versions[ref]++
+		if work := p.provisioning[ref]; work != nil && work.revision <= revision {
+			cancelProvision = work.cancel
 		}
-		cancelProvision = p.provisioning[ref]
 	}
 	s, ok := p.sessions[ref]
-	if ok && s.revision == revision {
+	if ok && s.revision <= revision {
 		delete(p.sessions, ref)
 		s.cancel()
 		if s.timer != nil {
@@ -236,8 +239,8 @@ func (p *Pool) Close() {
 		snapshots = append(snapshots, s)
 	}
 	cancels := make([]context.CancelFunc, 0, len(p.provisioning))
-	for _, cancel := range p.provisioning {
-		cancels = append(cancels, cancel)
+	for _, work := range p.provisioning {
+		cancels = append(cancels, work.cancel)
 	}
 	p.mu.Unlock()
 	for _, cancel := range cancels {
@@ -481,7 +484,13 @@ func (p *Pool) Find(ctx context.Context, i storage.Instance, intent string, expe
 	return out, nil
 }
 func (p *Pool) Write(ctx context.Context, i storage.Instance, intent string, size int64, src io.Reader, checkpoint func(storage.Locator) error) (storage.Locator, error) {
-	if !intentPattern.MatchString(intent) || size < 1 || src == nil || checkpoint == nil {
+	return p.WriteWithFence(ctx, i, intent, size, src, func() error { return nil }, checkpoint)
+}
+
+// WriteWithFence records the durable upload intent after shard setup and before
+// BeginUpload, the first call that may create the remote file.
+func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent string, size int64, src io.Reader, issue func() error, checkpoint func(storage.Locator) error) (storage.Locator, error) {
+	if !intentPattern.MatchString(intent) || size < 1 || src == nil || issue == nil || checkpoint == nil {
 		return storage.Locator{}, storage.ErrInput
 	}
 	s, err := p.get(i)
@@ -498,6 +507,9 @@ func (p *Pool) Write(ctx context.Context, i storage.Instance, intent string, siz
 		return storage.Locator{}, err
 	}
 	if err := s.checkContext(ctx); err != nil {
+		return storage.Locator{}, err
+	}
+	if err := issue(); err != nil {
 		return storage.Locator{}, err
 	}
 	u, err := s.client.BeginUpload(opCtx, shard, intent, size)

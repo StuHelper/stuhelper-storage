@@ -402,19 +402,19 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 	if src == nil {
 		return ErrNotFound
 	}
-	if err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		_, current, _, _, err := s.jobState(ctx, tx, j, false)
-		if err != nil {
-			return err
-		}
-		if current.IssuedWrite {
-			return ErrUnknown
-		}
-		current.IssuedWrite = true
-		current.State = "writing"
-		return tx.SaveReplica(current)
-	}); err != nil {
-		return err
+	issue := func() error {
+		return s.repo.Transaction(ctx, func(tx Transaction) error {
+			_, current, _, _, err := s.jobState(ctx, tx, j, false)
+			if err != nil {
+				return err
+			}
+			if current.IssuedWrite {
+				return ErrUnknown
+			}
+			current.IssuedWrite = true
+			current.State = "writing"
+			return tx.SaveReplica(current)
+		})
 	}
 	checkpoint := func(remote Locator) error {
 		if remote.ID == "" || len(remote.ID) > 2048 || len(remote.Revision) > 512 {
@@ -430,7 +430,7 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 			return tx.SaveReplica(current)
 		})
 	}
-	remote, err := driver.Write(ctx, i, r.Intent, o.Size, src, checkpoint)
+	remote, err := writeWithFence(ctx, driver, i, r.Intent, o.Size, src, issue, checkpoint)
 	if err != nil {
 		return err
 	}
@@ -444,6 +444,16 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 	removeTemporary(f)
 	return s.complete(ctx, j, remote)
 }
+func writeWithFence(ctx context.Context, driver Driver, i Instance, intent string, size int64, src io.Reader, issue func() error, checkpoint func(Locator) error) (Locator, error) {
+	if writer, ok := driver.(FencedWriter); ok {
+		return writer.WriteWithFence(ctx, i, intent, size, src, issue, checkpoint)
+	}
+	if err := issue(); err != nil {
+		return Locator{}, err
+	}
+	return driver.Write(ctx, i, intent, size, src, checkpoint)
+}
+
 func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 	return s.repo.Transaction(ctx, func(tx Transaction) error {
 		o, r, i, current, err := s.jobState(ctx, tx, j, false)
@@ -555,6 +565,36 @@ func (s *Service) failJob(ctx context.Context, expected Job, cause error) error 
 		}
 		if j.Generation != expected.Generation || j.LeaseOwner != expected.LeaseOwner || j.State != "running" {
 			return ErrStale
+		}
+		// An ingest has no durable source to retry. If the provider has not
+		// received an upload, release the reservation so the caller can resubmit.
+		if j.Kind == "ingest" {
+			copies, err := tx.Replicas(j.ObjectID)
+			if err != nil {
+				return err
+			}
+			r, err := findReplica(copies, j.ReplicaID)
+			if err != nil {
+				return err
+			}
+			if r.Intent == j.Intent && r.Reserved && !r.Accounted && !r.IssuedWrite && r.Remote.ID == "" && r.State == "writing" {
+				i, err := tx.Instance(r.InstanceID)
+				if err != nil {
+					return err
+				}
+				i.Reserved -= r.Size
+				r.Reserved = false
+				r.State = "deleted"
+				if err = tx.SaveInstance(i); err != nil {
+					return err
+				}
+				if err = tx.SaveReplica(r); err != nil {
+					return err
+				}
+				j.State = "done"
+				j.ErrorCode = errorCode(cause)
+				return tx.SaveJob(j)
+			}
 		}
 		j.ErrorCode = errorCode(cause)
 		j.State = "pending"

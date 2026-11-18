@@ -32,6 +32,7 @@ type bhpanFakeClient struct {
 	rootLists      atomic.Int32
 	shardLists     atomic.Int32
 	failRootList   atomic.Bool
+	failShardSetup atomic.Bool
 	lostBegin      atomic.Bool
 	beforeDownload func(context.Context) error
 }
@@ -86,6 +87,9 @@ func (c *bhpanFakeClient) CreateDirectory(ctx context.Context, parent, name stri
 		c.root = fmt.Sprintf("%s/root-%d", parent, c.seq)
 		c.dirs[c.root] = name
 		return c.root, nil
+	}
+	if c.failShardSetup.Load() {
+		return "", protocol.ErrUnavailable
 	}
 	for id, existingName := range c.dirs {
 		if strings.HasPrefix(id, parent+"/") && !strings.Contains(strings.TrimPrefix(id, parent+"/"), "/") && existingName == name {
@@ -310,6 +314,13 @@ func TestBHpanShutdownCancellationRecoversWithoutBlockingJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	clientA.failShardSetup.Store(true)
+	clientB.failShardSetup.Store(true)
+	if _, err = svc.Ingest(base.ctx, base.actor, obj.ID, "ingest", bytes.NewReader(payload)); !errors.Is(err, storage.ErrUnavailable) {
+		t.Fatalf("initial setup: %v", err)
+	}
+	clientA.failShardSetup.Store(false)
+	clientB.failShardSetup.Store(false)
 	if _, err = svc.Ingest(base.ctx, base.actor, obj.ID, "ingest", bytes.NewReader(payload)); err != nil {
 		t.Fatal(err)
 	}
@@ -348,6 +359,35 @@ func TestBHpanShutdownCancellationRecoversWithoutBlockingJob(t *testing.T) {
 	}
 
 	c.Add(6 * time.Second)
+	clientA.failShardSetup.Store(true)
+	clientB.failShardSetup.Store(true)
+	if claimed, err = svc.RunOne(base.ctx, "shard-worker"); !claimed || !errors.Is(err, storage.ErrUnavailable) {
+		t.Fatalf("expected transient shard failure: %t %v", claimed, err)
+	}
+	if err = repo.Transaction(base.ctx, func(tx storage.Transaction) error {
+		copies, e := tx.Replicas(obj.ID)
+		if e != nil {
+			return e
+		}
+		var reserved int
+		for _, copy := range copies {
+			if copy.Reserved {
+				reserved++
+				if copy.IssuedWrite || copy.Remote.ID != "" {
+					t.Fatal("shard setup marked a remote write as issued")
+				}
+			}
+		}
+		if reserved != 1 {
+			t.Fatalf("reserved replicas: %d", reserved)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clientA.failShardSetup.Store(false)
+	clientB.failShardSetup.Store(false)
+	c.Add(12 * time.Second)
 	if claimed, err = svc.RunOne(base.ctx, "worker-2"); !claimed || err != nil {
 		t.Fatalf("restart worker failed to finish replicate: claimed=%v err=%v", claimed, err)
 	}

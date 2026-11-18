@@ -55,7 +55,8 @@
       "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline",
       "drivers/bhpan/bhpan_test.go#TestCallerCancellationAndLeaseDeadlinePreserveSession",
       "drivers/bhpan/bhpan_test.go#TestProvisionDoesNotBlockPoolOrLeakRefCapacity",
-      "drivers/bhpan/bhpan_test.go#TestRevokedReferencesReleasePoolSlots"
+      "drivers/bhpan/bhpan_test.go#TestRevokedReferencesReleasePoolSlots",
+      "drivers/bhpan/restore_test.go#TestOlderRevocationPreservesNewerCredentialWork"
     ],
     "STORAGE-13": [
       "staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup",

@@ -89,7 +89,7 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 	}
 	p.mu.Lock()
 	p.inFlight[i.CredentialRef]--
-	if ctx.Err() != nil || p.closed || p.versions[i.CredentialRef] != version || !i.ExpiresAt.After(time.Now()) {
+	if ctx.Err() != nil || p.closed || i.CredentialRevision <= p.revoked[i.CredentialRef] || p.versions[i.CredentialRef] != version || !i.ExpiresAt.After(time.Now()) {
 		p.cleanupRefLocked(i.CredentialRef)
 		p.mu.Unlock()
 		return storage.ErrStale
