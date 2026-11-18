@@ -67,6 +67,17 @@ func (r *Repository) Transaction(ctx context.Context, f func(storage.Transaction
 	}
 	return safe(tx.Commit())
 }
+func (r *Repository) ReadTransaction(ctx context.Context, f func(storage.Transaction) error) error {
+	tx, err := r.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return safe(err)
+	}
+	defer tx.Rollback()
+	if err = f(&transaction{tx, ctx}); err != nil {
+		return err
+	}
+	return safe(tx.Commit())
+}
 func (t *transaction) Lock(key string) error {
 	_, err := t.tx.ExecContext(t.ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "stuhelper-storage:"+key)
 	return safe(err)
@@ -111,6 +122,9 @@ func (t *transaction) save(query string, item any, args ...any) error {
 func (t *transaction) Instance(id string) (storage.Instance, error) {
 	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1 FOR UPDATE`, id)
 }
+func (t *transaction) InstanceSnapshot(id string) (storage.Instance, error) {
+	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1`, id)
+}
 func (t *transaction) ContributionCandidates(owner string, now time.Time, limit int, after string) ([]storage.Instance, error) {
 	return list[storage.Instance](t, `SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->>'authorized')::boolean AND (i.data->>'expires_at')::timestamptz>$3 AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $4`, after, owner, now, limit)
 }
@@ -123,14 +137,34 @@ func (t *transaction) SaveInstance(v storage.Instance) error {
 func (t *transaction) Object(id string) (storage.Object, error) {
 	return read[storage.Object](t, `SELECT data FROM storage.objects WHERE id=$1 FOR UPDATE`, id)
 }
+func (t *transaction) ObjectSnapshot(id string) (storage.Object, error) {
+	return read[storage.Object](t, `SELECT data FROM storage.objects WHERE id=$1`, id)
+}
 func (t *transaction) Objects(limit int, after string) ([]storage.Object, error) {
 	return list[storage.Object](t, `SELECT data FROM storage.objects WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
+}
+func (t *transaction) ActiveObjects(limit int, after string) ([]storage.Object, error) {
+	return list[storage.Object](t, `SELECT data FROM storage.objects WHERE id>$1 AND data->>'state'<>'deleted' ORDER BY id LIMIT $2`, after, limit)
 }
 func (t *transaction) SaveObject(v storage.Object) error {
 	return t.save(`INSERT INTO storage.objects(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, v, v.ID)
 }
 func (t *transaction) Replicas(id string) ([]storage.Replica, error) {
 	return list[storage.Replica](t, `SELECT data FROM storage.replicas WHERE object_id=$1 ORDER BY instance_id`, id)
+}
+func (t *transaction) ReplicasByObjects(ids []string) (map[string][]storage.Replica, error) {
+	out := make(map[string][]storage.Replica, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	items, err := list[storage.Replica](t, `SELECT data FROM storage.replicas WHERE object_id = ANY($1) ORDER BY object_id, instance_id`, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range items {
+		out[r.ObjectID] = append(out[r.ObjectID], r)
+	}
+	return out, nil
 }
 func (t *transaction) SaveReplica(v storage.Replica) error {
 	return t.save(`INSERT INTO storage.replicas(id,object_id,instance_id,data) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, v, v.ID, v.ObjectID, v.InstanceID)
@@ -148,7 +182,7 @@ func (t *transaction) OutstandingJobs(exclude string, limit int) (int, error) {
 }
 func (t *transaction) JobTotals() (storage.JobTotals, error) {
 	var out storage.JobTotals
-	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FILTER (WHERE state='pending'),count(*) FILTER (WHERE state='running'),count(*) FILTER (WHERE state='blocked') FROM storage.jobs`).Scan(&out.Pending, &out.Running, &out.Blocked)
+	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FILTER (WHERE state='pending'),count(*) FILTER (WHERE state='running'),count(*) FILTER (WHERE state='blocked') FROM storage.jobs WHERE state IN ('pending','running','blocked')`).Scan(&out.Pending, &out.Running, &out.Blocked)
 	return out, safe(err)
 }
 func (t *transaction) FailedJobs(limit int, after string) ([]storage.Job, error) {

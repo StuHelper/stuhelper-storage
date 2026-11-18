@@ -262,6 +262,12 @@ type Repository interface {
 	AcknowledgeEvent(context.Context, string) error
 }
 
+// ReadRepository is an optional extension implemented by PostgreSQL repositories
+// to execute read-only repeatable-read snapshots without row-level FOR UPDATE locks.
+type ReadRepository interface {
+	ReadTransaction(context.Context, func(Transaction) error) error
+}
+
 // Locks are acquired object -> instances in sorted ID order -> job. Claim only
 // locks a job and commits before execution, so it cannot invert that order.
 type Transaction interface {
@@ -275,14 +281,18 @@ type Transaction interface {
 	ExpiredContentHandles(int, time.Time) ([]ContentHandle, error)
 	Lock(string) error
 	Instance(string) (Instance, error)
+	InstanceSnapshot(string) (Instance, error)
 	Instances(int, string) ([]Instance, error)
 	ContributionCandidates(string, time.Time, int, string) ([]Instance, error)
 	SaveInstance(Instance) error
 	InstanceReplicas(string) (int64, error)
 	Object(string) (Object, error)
+	ObjectSnapshot(string) (Object, error)
 	Objects(int, string) ([]Object, error)
+	ActiveObjects(int, string) ([]Object, error)
 	SaveObject(Object) error
 	Replicas(string) ([]Replica, error)
+	ReplicasByObjects([]string) (map[string][]Replica, error)
 	SaveReplica(Replica) error
 	Job(string) (Job, error)
 	// JobSnapshot reads a binding without a row lock, for instance-before-job locking.

@@ -24,7 +24,7 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 	if e := s.authorize(ctx, p, "storage.contributions.read", "", Protection{}); e != nil {
 		return out, e
 	}
-	e := s.repo.Transaction(ctx, func(tx Transaction) error {
+	e := s.readTx(ctx, func(tx Transaction) error {
 		now := s.now()
 		items, e := tx.ContributionCandidates(owner, now, n+1, after)
 		if e != nil {
@@ -87,8 +87,8 @@ func (s *Service) InspectContribution(ctx context.Context, p Principal, id, owne
 	if err := s.authorize(ctx, p, "storage.contributions.read", id, Protection{}); err != nil {
 		return out, err
 	}
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		i, err := tx.Instance(id)
+	err := s.readTx(ctx, func(tx Transaction) error {
+		i, err := tx.InstanceSnapshot(id)
 		if err != nil {
 			return err
 		}
