@@ -178,6 +178,9 @@
       "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle",
       "content_test.go#TestSharedContentCleanupUsesActualActorWithoutOwnerPermissions"
     ],
+    "STORAGE-41": [
+      "config_validation_test.go#TestCrossComponentConfigurationValidation"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"
