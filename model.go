@@ -191,6 +191,7 @@ type Job struct {
 	LeaseOwner         string    `json:"lease_owner"`
 	LeaseUntil         time.Time `json:"lease_until"`
 	AvailableAt        time.Time `json:"available_at"`
+	CompletedAt        time.Time `json:"completed_at,omitempty"`
 	Attempts           int       `json:"attempts"`
 	ErrorCode          string    `json:"error_code"`
 }
@@ -288,5 +289,6 @@ type Transaction interface {
 	FailedJobs(int, string) ([]Job, error)
 	Idempotency(string) (Idempotency, error)
 	SaveIdempotency(Idempotency) error
+	PurgeRetention(RetentionCutoffs, int) (RetentionResult, error)
 	Event(Event) error
 }

@@ -144,6 +144,9 @@
       "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
       "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
     ],
+    "STORAGE-38": [
+      "retention_test.go#TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery"
     ]

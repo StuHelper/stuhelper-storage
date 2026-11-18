@@ -10,8 +10,11 @@ CREATE TABLE IF NOT EXISTS storage.custody_bindings (
 CREATE INDEX IF NOT EXISTS custody_owner ON storage.custody_bindings(owner_issuer,owner_subject,id);
 CREATE TABLE IF NOT EXISTS storage.custody_operations (
     id text PRIMARY KEY,
+    completed_at timestamptz,
     data jsonb NOT NULL
 );
+ALTER TABLE storage.custody_operations ADD COLUMN IF NOT EXISTS completed_at timestamptz;
+CREATE INDEX IF NOT EXISTS custody_operations_completed_at ON storage.custody_operations(completed_at) WHERE completed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS storage.instances (
     id text PRIMARY KEY,
@@ -35,20 +38,29 @@ CREATE TABLE IF NOT EXISTS storage.jobs (
     state text NOT NULL,
     available_at timestamptz NOT NULL,
     lease_until timestamptz NOT NULL,
+    completed_at timestamptz,
     data jsonb NOT NULL
 );
+ALTER TABLE storage.jobs ADD COLUMN IF NOT EXISTS completed_at timestamptz;
 CREATE INDEX IF NOT EXISTS replicas_instance ON storage.replicas(instance_id);
 CREATE INDEX IF NOT EXISTS jobs_claim ON storage.jobs(state,available_at,lease_until);
+CREATE INDEX IF NOT EXISTS jobs_completed_at ON storage.jobs(completed_at) WHERE state='done';
 CREATE TABLE IF NOT EXISTS storage.idempotency (
     key text PRIMARY KEY,
+    expires_at timestamptz,
     data jsonb NOT NULL
 );
+ALTER TABLE storage.idempotency ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+CREATE INDEX IF NOT EXISTS idempotency_expires_at ON storage.idempotency(expires_at);
 CREATE TABLE IF NOT EXISTS storage.outbox (
     id text PRIMARY KEY,
     data jsonb NOT NULL,
-    delivered boolean NOT NULL DEFAULT false
+    delivered boolean NOT NULL DEFAULT false,
+    delivered_at timestamptz
 );
+ALTER TABLE storage.outbox ADD COLUMN IF NOT EXISTS delivered_at timestamptz;
 CREATE INDEX IF NOT EXISTS outbox_pending ON storage.outbox(id) WHERE NOT delivered;
+CREATE INDEX IF NOT EXISTS outbox_delivered_at ON storage.outbox(delivered_at) WHERE delivered;
 CREATE TABLE IF NOT EXISTS storage.audit (
     id text PRIMARY KEY,
     data jsonb NOT NULL

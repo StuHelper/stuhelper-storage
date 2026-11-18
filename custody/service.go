@@ -378,6 +378,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		b.State = "blocked"
 		if resultErr == nil {
 			op.Complete = true
+			op.CompletedAt = s.cfg.Clock()
 			b.State = "ready"
 			b.Instance = applied
 		} else if op.Result == nil && (errors.Is(resultErr, storage.ErrDenied) || errors.Is(resultErr, storage.ErrNotFound)) {

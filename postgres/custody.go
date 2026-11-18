@@ -43,7 +43,17 @@ func (t *custodyTx) SaveOperation(o custody.Operation) error {
 	if e != nil {
 		return storage.ErrInput
 	}
-	_, e = t.tx.ExecContext(t.ctx, `INSERT INTO storage.custody_operations(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data`, o.ID, data)
+	var completedAt any
+	if o.Complete {
+		ts := o.CompletedAt
+		if ts.IsZero() {
+			ts = o.AttemptedAt
+		}
+		if !ts.IsZero() {
+			completedAt = ts
+		}
+	}
+	_, e = t.tx.ExecContext(t.ctx, `INSERT INTO storage.custody_operations(id,completed_at,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET completed_at=EXCLUDED.completed_at,data=EXCLUDED.data`, o.ID, completedAt, data)
 	return safe(e)
 }
 func (t *custodyTx) List(p storage.Principal, n int, after string) ([]custody.Binding, error) {
