@@ -239,6 +239,17 @@ func TestLeastPrivilegeCreateDownloadAndExpiredConsentRetryRejection(t *testing.
 		t.Fatalf("HTTP download demanded read permission: code=%d body=%q", dlRec.Code, dlRec.Body.String())
 	}
 
+	// The stable physical object outlives the 24-hour creation replay cache.
+	base.clock.Add(25 * time.Hour)
+	replay, err := svc.Ingest(base.ctx, uploader, created.ID, "dedup-upload-again", bytes.NewReader(payload))
+	if err != nil || replay.ID != created.ID {
+		t.Fatalf("stable content upload replay: %+v %v", replay, err)
+	}
+	var physical int
+	if err = base.db.QueryRow("SELECT count(*) FROM storage.objects WHERE data ? 'content_group'").Scan(&physical); err != nil || physical != 1 {
+		t.Fatalf("physical objects after replay: %d %v", physical, err)
+	}
+
 	// 3. RetryJob must reject blocked ingest/replicate job when ContributionControl.Until has expired!
 	h2 := harnessFor(t, func(c *storage.Config) { c.MaxAttempts = 1 })
 	cInst := h2.instance(t, "contrib-retry", "c-owner", "contributor", 0)

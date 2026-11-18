@@ -264,7 +264,11 @@ func (s *Service) contentSource(ctx context.Context, tx Transaction, p Principal
 	return o, group, nil
 }
 func (s *Service) ensureContentObject(ctx context.Context, g ContentGroup) (Status, error) {
-	return s.Create(ctx, g.Owner, "content-create:"+g.ID, CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy, ContentGroup: g.ID})
+	_, err := s.Create(ctx, g.Owner, "content-create:"+g.ID, CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy, ContentGroup: g.ID})
+	if err != nil {
+		return Status{}, err
+	}
+	return s.statusWithAction(ctx, g.Owner, g.ObjectID, "storage.objects.create")
 }
 func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string, src io.Reader) (Status, error) {
 	if !validKey(key) || src == nil {
