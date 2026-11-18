@@ -152,6 +152,39 @@ func validKey(key string) bool {
 	return true
 }
 
+func (s *Service) checkIdempotency(ctx context.Context, p Principal, action, id, key string, request any, guard func(Transaction) error, out any) (bool, error) {
+	if !validKey(key) || !p.Valid() {
+		return false, ErrInput
+	}
+	operation := requestHash([]string{p.Issuer, p.Subject, action, id, key})
+	hash := requestHash(request)
+	hit := false
+	err := s.repo.Transaction(ctx, func(tx Transaction) error {
+		if err := tx.Lock("operation:" + operation); err != nil {
+			return err
+		}
+		if err := guard(tx); err != nil {
+			return err
+		}
+		previous, err := tx.Idempotency(operation)
+		if errors.Is(err, ErrNotFound) || (err == nil && !previous.ExpiresAt.After(s.now())) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if previous.Digest != hash {
+			return ErrConflict
+		}
+		if json.Unmarshal(previous.Result, out) != nil {
+			return ErrUnavailable
+		}
+		hit = true
+		return nil
+	})
+	return hit, err
+}
+
 // mutation persists the exact replay response with its audit/outbox effects.
 // Current authorization is checked even when returning an earlier response.
 func (s *Service) mutation(ctx context.Context, p Principal, action, id, key string, request any, guard func(Transaction) error, apply func(Transaction) (any, error), out any) error {
@@ -195,7 +228,16 @@ func (s *Service) mutation(ctx context.Context, p Principal, action, id, key str
 	})
 }
 func (s *Service) emit(tx Transaction, p Principal, kind, id string, revision int64) error {
-	return tx.Event(Event{ID: newID(), Type: kind, ObjectID: id, Revision: revision, Time: s.now(), Actor: p})
+	return s.emitScoped(tx, p, kind, id, revision, "success", "*")
+}
+func (s *Service) emitScoped(tx Transaction, p Principal, kind, id string, revision int64, result, school string) error {
+	if result == "" {
+		result = "success"
+	}
+	if school == "" {
+		school = "*"
+	}
+	return tx.Event(Event{ID: newID(), Type: kind, ObjectID: id, Revision: revision, Time: s.now(), Actor: p, AuditResult: result, AuditSchool: school})
 }
 
 func validateInstance(v Instance, now time.Time) bool {
@@ -229,11 +271,16 @@ func validateInstance(v Instance, now time.Time) bool {
 // claims. An alias or a second directory under the same account cannot add capacity.
 func (s *Service) Register(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
-	if !validateInstance(v, s.now()) || v.Revision != 0 || v.ContributionControl != nil {
+	if !validID(v.ID) || v.Revision != 0 || v.ContributionControl != nil {
 		return result, ErrInput
 	}
-	if err := s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}); err != nil {
+	guard := func(Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }
+	request := v
+	if hit, err := s.checkIdempotency(ctx, p, "storage.instances.register", v.ID, key, request, guard, &result); err != nil || hit {
 		return result, err
+	}
+	if !validateInstance(v, s.now()) {
+		return result, ErrInput
 	}
 	evidence, err := s.verifier.Verify(ctx, v)
 	if err != nil {
@@ -242,8 +289,7 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 	if evidence.AccountDomain == "" || len(evidence.AccountDomain) > 256 || evidence.ProviderFree < 0 || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {
 		return result, ErrUnavailable
 	}
-	request := v
-	err = s.mutation(ctx, p, "storage.instances.register", v.ID, key, request, func(tx Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }, func(tx Transaction) (any, error) {
+	err = s.mutation(ctx, p, "storage.instances.register", v.ID, key, request, guard, func(tx Transaction) (any, error) {
 		if err := tx.Lock("instance-registry"); err != nil {
 			return nil, err
 		}
@@ -279,26 +325,57 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 	return result, err
 }
 
+// The provider call runs outside the transaction. A concurrent sample or
+// transfer owns newer ledger evidence even if no reservation remains at commit.
+func (s *Service) applyQuotaEvidence(current *Instance, before Instance, sample InstanceEvidence) {
+	if sample.ProviderFree < 0 || before.Reserved != 0 || current.Reserved != 0 ||
+		current.QuotaRevision != before.QuotaRevision || current.Used != before.Used {
+		return
+	}
+	current.ProviderFree = sample.ProviderFree
+	current.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
+	current.QuotaRevision++
+}
+
 func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
-	if !validateInstance(v, s.now()) || v.Revision < 1 {
+	if !validID(v.ID) || v.Revision < 1 {
 		return result, ErrInput
 	}
-	if err := s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}); err != nil {
+	guard := func(Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }
+	if hit, err := s.checkIdempotency(ctx, p, "storage.instances.update", v.ID, key, v, guard, &result); err != nil || hit {
 		return result, err
+	}
+	if !validateInstance(v, s.now()) {
+		return result, ErrInput
 	}
 	// Every renewal or credential change is revalidated with the provider. A
 	// caller cannot extend authorization by changing only a timestamp.
+	var evidence InstanceEvidence
+	var before Instance
+	verified := false
 	if v.Authorized && v.State != "revoked" {
-		evidence, err := s.verifier.Verify(ctx, v)
+		err := s.repo.Transaction(ctx, func(tx Transaction) error {
+			var err error
+			before, err = tx.Instance(v.ID)
+			return err
+		})
+		if err != nil {
+			return result, err
+		}
+		if before.Revision != v.Revision {
+			return result, ErrConflict
+		}
+		evidence, err = s.verifier.Verify(ctx, v)
 		if err != nil {
 			return result, err
 		}
 		if evidence.AccountDomain != v.AccountDomain || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {
 			return result, ErrDenied
 		}
+		verified = true
 	}
-	err := s.mutation(ctx, p, "storage.instances.update", v.ID, key, v, func(tx Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }, func(tx Transaction) (any, error) {
+	err := s.mutation(ctx, p, "storage.instances.update", v.ID, key, v, guard, func(tx Transaction) (any, error) {
 		old, err := tx.Instance(v.ID)
 		if err != nil {
 			return nil, err
@@ -319,6 +396,9 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 		v.Used = old.Used
 		v.Reserved = old.Reserved
 		v.QuotaExpiresAt = old.QuotaExpiresAt
+		if verified {
+			s.applyQuotaEvidence(&v, before, evidence)
+		}
 		v.Revision++
 		if v.Limit < v.Used+v.Reserved && v.State == "active" {
 			v.State = "paused"
@@ -331,6 +411,13 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 	return result, err
 }
 
+func (s *Service) readTx(ctx context.Context, f func(Transaction) error) error {
+	if rr, ok := s.repo.(ReadRepository); ok {
+		return rr.ReadTransaction(ctx, f)
+	}
+	return s.repo.Transaction(ctx, f)
+}
+
 func (s *Service) Instances(ctx context.Context, p Principal, limit int, after string) ([]Instance, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrInput
@@ -339,7 +426,7 @@ func (s *Service) Instances(ctx context.Context, p Principal, limit int, after s
 		return nil, err
 	}
 	var out []Instance
-	err := s.repo.Transaction(ctx, func(tx Transaction) error { var err error; out, err = tx.Instances(limit, after); return err })
+	err := s.readTx(ctx, func(tx Transaction) error { var err error; out, err = tx.Instances(limit, after); return err })
 	return out, err
 }
 
@@ -393,7 +480,11 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 				if existing.Owner != p || existing.CreationHash != o.CreationHash {
 					return nil, ErrConflict
 				}
-				if err := s.authorize(ctx, p, "storage.objects.read", existing.ID, existing.Protection); err != nil {
+				action := "storage.objects.read"
+				if r.ContentGroup != "" && existing.ContentGroup == r.ContentGroup {
+					action = "storage.objects.create"
+				}
+				if err := s.authorize(ctx, p, action, existing.ID, existing.Protection); err != nil {
 					return nil, err
 				}
 				return s.status(tx, existing)
@@ -405,7 +496,7 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, "storage.object.created", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, "storage.object.created", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -425,23 +516,19 @@ func (s *Service) objectGuard(ctx context.Context, tx Transaction, p Principal, 
 	}
 	return o, s.authorize(ctx, p, action, id, o.Protection)
 }
-func (s *Service) status(tx Transaction, o Object) (Status, error) {
-	replicas, err := tx.Replicas(o.ID)
-	if err != nil {
-		return Status{}, err
-	}
+func (s *Service) statusFromLoaded(o Object, replicas []Replica, lookup func(string) (Instance, error), now time.Time) (Status, error) {
 	count := 0
 	accounts := map[string]bool{}
 	owners := map[string]bool{}
 	for _, r := range replicas {
-		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) {
+		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(now.Add(-s.cfg.VerificationAge)) {
 			continue
 		}
-		i, err := tx.Instance(r.InstanceID)
+		i, err := lookup(r.InstanceID)
 		if err != nil {
 			return Status{}, err
 		}
-		if !i.Allows(o.Protection, s.now()) || r.CredentialRevision != i.CredentialRevision || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
+		if !i.Allows(o.Protection, now) || r.CredentialRevision != i.CredentialRevision || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
 			continue
 		}
 		accounts[i.AccountDomain] = true
@@ -464,17 +551,40 @@ func (s *Service) status(tx Transaction, o Object) (Status, error) {
 	}
 	return Status{o.ID, o.Size, o.SHA256, o.Protection, o.Policy, o.Revision, state, o.Published, count, o.Policy.Target}, nil
 }
+func (s *Service) status(tx Transaction, o Object) (Status, error) {
+	replicas, err := tx.Replicas(o.ID)
+	if err != nil {
+		return Status{}, err
+	}
+	return s.statusFromLoaded(o, replicas, tx.Instance, s.now())
+}
+func (s *Service) statusSnapshot(tx Transaction, o Object) (Status, error) {
+	replicas, err := tx.Replicas(o.ID)
+	if err != nil {
+		return Status{}, err
+	}
+	return s.statusFromLoaded(o, replicas, tx.InstanceSnapshot, s.now())
+}
 func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, error) {
+	return s.statusWithAction(ctx, p, id, "storage.objects.read")
+}
+func (s *Service) statusWithAction(ctx context.Context, p Principal, id, action string) (Status, error) {
 	if contentID(id) {
-		return s.contentStatus(ctx, p, id)
+		return s.contentStatusAction(ctx, p, id, action)
+	}
+	if !validID(id) {
+		return Status{}, ErrInput
 	}
 	var out Status
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		o, err := s.objectGuard(ctx, tx, p, "storage.objects.read", id)
+	err := s.readTx(ctx, func(tx Transaction) error {
+		o, err := tx.ObjectSnapshot(id)
 		if err != nil {
 			return err
 		}
-		out, err = s.status(tx, o)
+		if err := s.authorize(ctx, p, action, id, o.Protection); err != nil {
+			return err
+		}
+		out, err = s.statusSnapshot(tx, o)
 		return err
 	})
 	return out, err
@@ -535,7 +645,7 @@ func (s *Service) Reference(ctx context.Context, p Principal, id, key string, re
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, action, o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, action, o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -575,10 +685,12 @@ func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string,
 		if err != nil {
 			return nil, err
 		}
+		remaining := 0
 		for _, r := range replicas {
 			if r.State == "deleted" {
 				continue
 			}
+			remaining++
 			r.State = "cleanup"
 			if err := tx.SaveReplica(r); err != nil {
 				return nil, err
@@ -587,13 +699,13 @@ func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string,
 				return nil, err
 			}
 		}
-		if len(replicas) == 0 {
+		if remaining == 0 {
 			o.State = "deleted"
 			if err := tx.SaveObject(o); err != nil {
 				return nil, err
 			}
 		}
-		if err := s.emit(tx, p, "storage.object.deleting", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, "storage.object.deleting", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -677,7 +789,7 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, "storage.protection.changed", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(tx, p, "storage.protection.changed", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)

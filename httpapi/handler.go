@@ -122,6 +122,10 @@ func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoi
 			}
 			return
 		}
+		if len(r.Header.Values("Idempotency-Key")) > 1 {
+			respondError(w, storage.ErrInput)
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 		defer cancel()
 		controller := http.NewResponseController(w)
@@ -291,15 +295,12 @@ func (w *trackingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 func (h *handler) download(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
-	status, err := h.s.Status(r.Context(), p, r.PathValue("id"))
-	if err != nil {
-		return nil, err
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(status.Size, 10))
-	w.Header().Set("Content-Disposition", "attachment")
 	writer := &trackingWriter{ResponseWriter: w}
-	err = h.s.Download(r.Context(), p, status.ID, writer)
+	err := h.s.DownloadWithSize(r.Context(), p, r.PathValue("id"), func(size int64) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.Header().Set("Content-Disposition", "attachment")
+	}, writer)
 	if err != nil && writer.started {
 		panic(http.ErrAbortHandler)
 	}
