@@ -199,7 +199,7 @@ func respondError(w http.ResponseWriter, err error) {
 	for _, entry := range []struct {
 		err    error
 		status int
-	}{{storage.ErrInput, 400}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404}, {storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
+	}{{storage.ErrInput, 400}, {storage.ErrChallenge, 403}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404}, {storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
 		if errors.Is(err, entry.err) {
 			status, code = entry.status, entry.err.Error()
 			break
@@ -208,6 +208,13 @@ func respondError(w http.ResponseWriter, err error) {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
 		status, code = 413, "storage_upload_too_large"
+	}
+	var retryAfter storage.RetryAfterError
+	if errors.As(err, &retryAfter) && retryAfter.RetryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter.RetryAfterSeconds))
+		w.Header().Del("Content-Disposition")
+		writeJSON(w, status, map[string]any{"code": code, "retry_after_seconds": retryAfter.RetryAfterSeconds})
+		return
 	}
 	problem(w, status, code)
 }

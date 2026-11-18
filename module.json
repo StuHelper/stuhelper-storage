@@ -198,6 +198,10 @@
       "drivers/bhpan/bhpan_test.go#TestMultipartUploadCheckpointRevocationAndFallback",
       "transfer_http_test.go#TestStreamingHashRangeAndETagDownload"
     ],
+    "STORAGE-36": [
+      "custody_ux_test.go#TestCustodyDeleteRechecksProvisioningAndExpiresOrphanAttempts",
+      "custody_ux_test.go#TestCustodyChallengeCooldownCleanupAndCandidateReasons"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"

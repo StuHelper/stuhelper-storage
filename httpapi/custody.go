@@ -68,6 +68,9 @@ func NewCustody(s *custody.Service, a Authenticator) (http.Handler, error) {
 			return s.Submit(r.Context(), p, r.PathValue("id"), r.Header.Get("Idempotency-Key"), q)
 		})
 	}
+	mount("DELETE "+base+"/{id}", false, func(r *http.Request, p storage.Principal) (any, error) {
+		return s.Delete(r.Context(), p, r.PathValue("id"), r.Header.Get("Idempotency-Key"))
+	})
 	mount("GET "+base+"/requests/{id}", false, func(r *http.Request, p storage.Principal) (any, error) {
 		return s.GetRequest(r.Context(), p, r.PathValue("id"))
 	})

@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS storage.custody_operations (
     data jsonb NOT NULL
 );
 ALTER TABLE storage.custody_operations ADD COLUMN IF NOT EXISTS completed_at timestamptz;
+ALTER TABLE storage.custody_operations ADD COLUMN IF NOT EXISTS orphan_purge_after timestamptz;
+UPDATE storage.custody_operations o SET orphan_purge_after=COALESCE((o.data->>'AttemptedAt')::timestamptz,transaction_timestamp()) + interval '5 minutes'
+WHERE orphan_purge_after IS NULL AND data ? 'BindingID' AND NOT EXISTS (SELECT 1 FROM storage.custody_bindings b WHERE b.id=o.data->>'BindingID');
+CREATE INDEX IF NOT EXISTS custody_orphan_purge_after ON storage.custody_operations(orphan_purge_after) WHERE orphan_purge_after IS NOT NULL;
 UPDATE storage.custody_operations SET completed_at=transaction_timestamp() WHERE completed_at IS NULL AND (data->>'Complete')::boolean;
 CREATE INDEX IF NOT EXISTS custody_operations_completed_at ON storage.custody_operations(completed_at) WHERE completed_at IS NOT NULL;
 
