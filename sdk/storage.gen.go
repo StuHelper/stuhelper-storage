@@ -273,6 +273,69 @@ func (e ProtectionEncrypted) Valid() bool {
 	}
 }
 
+// Defines values for StorageOperationsParamsObjectFilter.
+const (
+	All         StorageOperationsParamsObjectFilter = "all"
+	Problematic StorageOperationsParamsObjectFilter = "problematic"
+)
+
+// Valid indicates whether the value is a known member of the StorageOperationsParamsObjectFilter enum.
+func (e StorageOperationsParamsObjectFilter) Valid() bool {
+	switch e {
+	case All:
+		return true
+	case Problematic:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StorageOperationsParamsFailureState.
+const (
+	StorageOperationsParamsFailureStateBlocked StorageOperationsParamsFailureState = "blocked"
+	StorageOperationsParamsFailureStatePending StorageOperationsParamsFailureState = "pending"
+	StorageOperationsParamsFailureStateRunning StorageOperationsParamsFailureState = "running"
+)
+
+// Valid indicates whether the value is a known member of the StorageOperationsParamsFailureState enum.
+func (e StorageOperationsParamsFailureState) Valid() bool {
+	switch e {
+	case StorageOperationsParamsFailureStateBlocked:
+		return true
+	case StorageOperationsParamsFailureStatePending:
+		return true
+	case StorageOperationsParamsFailureStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StorageOperationsParamsFailureKind.
+const (
+	Delete    StorageOperationsParamsFailureKind = "delete"
+	Ingest    StorageOperationsParamsFailureKind = "ingest"
+	Replicate StorageOperationsParamsFailureKind = "replicate"
+	Verify    StorageOperationsParamsFailureKind = "verify"
+)
+
+// Valid indicates whether the value is a known member of the StorageOperationsParamsFailureKind enum.
+func (e StorageOperationsParamsFailureKind) Valid() bool {
+	switch e {
+	case Delete:
+		return true
+	case Ingest:
+		return true
+	case Replicate:
+		return true
+	case Verify:
+		return true
+	default:
+		return false
+	}
+}
+
 // Admission defines model for Admission.
 type Admission struct {
 	Class     string    `json:"class"`
@@ -503,6 +566,7 @@ type JobFailure struct {
 	Kind        string    `json:"kind"`
 	NextAttempt time.Time `json:"next_attempt"`
 	ObjectId    string    `json:"object_id"`
+	ReplicaId   *string   `json:"replica_id,omitempty"`
 	State       string    `json:"state"`
 }
 
@@ -549,6 +613,15 @@ type ObjectStatus struct {
 	State      string     `json:"state"`
 }
 
+// ObjectTotals defines model for ObjectTotals.
+type ObjectTotals struct {
+	Degraded    int64 `json:"degraded"`
+	Deleting    int64 `json:"deleting"`
+	Pending     int64 `json:"pending"`
+	Ready       int64 `json:"ready"`
+	Unavailable int64 `json:"unavailable"`
+}
+
 // Operations defines model for Operations.
 type Operations struct {
 	Failures           []JobFailure     `json:"failures"`
@@ -557,6 +630,7 @@ type Operations struct {
 	Instances          []InstanceHealth `json:"instances"`
 	Jobs               JobTotals        `json:"jobs"`
 	NextCursor         string           `json:"next_cursor"`
+	ObjectTotals       ObjectTotals     `json:"object_totals"`
 	Objects            []ObjectHealth   `json:"objects"`
 }
 
@@ -598,6 +672,19 @@ type ProtectionChange struct {
 type Reference struct {
 	Id     string `json:"id"`
 	Module string `json:"module"`
+}
+
+// ReplicaWriteOff defines model for ReplicaWriteOff.
+type ReplicaWriteOff struct {
+	InstanceRevision int64  `json:"instance_revision"`
+	ObjectRevision   int64  `json:"object_revision"`
+	Reason           string `json:"reason"`
+}
+
+// ReplicaWriteOffResult defines model for ReplicaWriteOffResult.
+type ReplicaWriteOffResult struct {
+	Instance InstanceHealth `json:"instance"`
+	Object   ObjectStatus   `json:"object"`
 }
 
 // RetryJob Only blocked jobs with unchanged object, instance, credentials and intent can be retried. Reuses the original remote write identity; unknown writes remain subject to reconciliation.
@@ -694,10 +781,23 @@ type AttachReferenceParams struct {
 
 // StorageOperationsParams defines parameters for StorageOperations.
 type StorageOperationsParams struct {
-	After         *string `form:"after,omitempty" json:"after,omitempty"`
-	Limit         *int    `form:"limit,omitempty" json:"limit,omitempty"`
-	FailuresAfter *string `form:"failures_after,omitempty" json:"failures_after,omitempty"`
+	After         *string                              `form:"after,omitempty" json:"after,omitempty"`
+	Limit         *int                                 `form:"limit,omitempty" json:"limit,omitempty"`
+	FailuresAfter *string                              `form:"failures_after,omitempty" json:"failures_after,omitempty"`
+	ObjectFilter  *StorageOperationsParamsObjectFilter `form:"object_filter,omitempty" json:"object_filter,omitempty"`
+	FailureState  *StorageOperationsParamsFailureState `form:"failure_state,omitempty" json:"failure_state,omitempty"`
+	FailureKind   *StorageOperationsParamsFailureKind  `form:"failure_kind,omitempty" json:"failure_kind,omitempty"`
+	ErrorCode     *string                              `form:"error_code,omitempty" json:"error_code,omitempty"`
 }
+
+// StorageOperationsParamsObjectFilter defines parameters for StorageOperations.
+type StorageOperationsParamsObjectFilter string
+
+// StorageOperationsParamsFailureState defines parameters for StorageOperations.
+type StorageOperationsParamsFailureState string
+
+// StorageOperationsParamsFailureKind defines parameters for StorageOperations.
+type StorageOperationsParamsFailureKind string
 
 // CommandStorageInstanceParams defines parameters for CommandStorageInstance.
 type CommandStorageInstanceParams struct {
@@ -706,6 +806,11 @@ type CommandStorageInstanceParams struct {
 
 // RetryStorageJobParams defines parameters for RetryStorageJob.
 type RetryStorageJobParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
+// WriteOffUnknownReplicaParams defines parameters for WriteOffUnknownReplica.
+type WriteOffUnknownReplicaParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
@@ -753,6 +858,9 @@ type CommandStorageInstanceJSONRequestBody = InstanceCommand
 
 // RetryStorageJobJSONRequestBody defines body for RetryStorageJob for application/json ContentType.
 type RetryStorageJobJSONRequestBody = RetryJob
+
+// WriteOffUnknownReplicaJSONRequestBody defines body for WriteOffUnknownReplica for application/json ContentType.
+type WriteOffUnknownReplicaJSONRequestBody = ReplicaWriteOff
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -995,6 +1103,11 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	AttachReference(ctx context.Context, id string, params *AttachReferenceParams, body AttachReferenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReviewObjectContent performs a GET /api/v1/storage/objects/{id}/review-content (the `ReviewObjectContent` operationId) request.
+	//
+	// Authorized moderation/review download requiring storage.objects.review. Serves a verified complete copy even before initial publication threshold, without altering publication or references, and records an audit entry.
+	ReviewObjectContent(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StorageOperations performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
 	//
 	// Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
@@ -1023,6 +1136,18 @@ type ClientInterface interface {
 	//
 	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
 	RetryStorageJob(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WriteOffUnknownReplicaWithBody performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+	WriteOffUnknownReplicaWithBody(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WriteOffUnknownReplica performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+	WriteOffUnknownReplica(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, body WriteOffUnknownReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListContributionCandidates performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
@@ -1552,6 +1677,21 @@ func (c *Client) AttachReference(ctx context.Context, id string, params *AttachR
 	return c.Client.Do(req)
 }
 
+// ReviewObjectContent performs a GET /api/v1/storage/objects/{id}/review-content (the `ReviewObjectContent` operationId) request.
+//
+// Authorized moderation/review download requiring storage.objects.review. Serves a verified complete copy even before initial publication threshold, without altering publication or references, and records an audit entry.
+func (c *Client) ReviewObjectContent(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReviewObjectContentRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // StorageOperations performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
 //
 // Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
@@ -1621,6 +1761,38 @@ func (c *Client) RetryStorageJobWithBody(ctx context.Context, objectId string, j
 // Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
 func (c *Client) RetryStorageJob(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRetryStorageJobRequest(c.Server, objectId, jobId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WriteOffUnknownReplicaWithBody performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request,
+// with any type of body and a specified content type.
+//
+// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+func (c *Client) WriteOffUnknownReplicaWithBody(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWriteOffUnknownReplicaRequestWithBody(c.Server, objectId, replicaId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WriteOffUnknownReplica performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+func (c *Client) WriteOffUnknownReplica(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, body WriteOffUnknownReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWriteOffUnknownReplicaRequest(c.Server, objectId, replicaId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2838,6 +3010,40 @@ func NewAttachReferenceRequestWithBody(server string, id string, params *AttachR
 	return req, nil
 }
 
+// NewReviewObjectContentRequest constructs an http.Request for the ReviewObjectContent method
+func NewReviewObjectContentRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/objects/%s/review-content", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStorageOperationsRequest constructs an http.Request for the StorageOperations method
 func NewStorageOperationsRequest(server string, params *StorageOperationsParams) (*http.Request, error) {
 	var err error
@@ -2893,6 +3099,54 @@ func NewStorageOperationsRequest(server string, params *StorageOperationsParams)
 		if params.FailuresAfter != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "failures_after", *params.FailuresAfter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ObjectFilter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "object_filter", *params.ObjectFilter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.FailureState != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "failure_state", *params.FailureState, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.FailureKind != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "failure_kind", *params.FailureKind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ErrorCode != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error_code", *params.ErrorCode, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -3011,6 +3265,73 @@ func NewRetryStorageJobRequestWithBody(server string, objectId string, jobId str
 	}
 
 	operationPath := fmt.Sprintf("/api/v1/storage/operations/objects/%s/jobs/%s/retry", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewWriteOffUnknownReplicaRequest calls the generic WriteOffUnknownReplica builder with application/json body
+func NewWriteOffUnknownReplicaRequest(server string, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, body WriteOffUnknownReplicaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewWriteOffUnknownReplicaRequestWithBody(server, objectId, replicaId, params, "application/json", bodyReader)
+}
+
+// NewWriteOffUnknownReplicaRequestWithBody constructs an http.Request for the WriteOffUnknownReplica method, with any body, and a specified content type
+func NewWriteOffUnknownReplicaRequestWithBody(server string, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "object_id", objectId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "replica_id", replicaId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/operations/objects/%s/replicas/%s/writeoff", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3300,6 +3621,13 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	AttachReferenceWithResponse(ctx context.Context, id string, params *AttachReferenceParams, body AttachReferenceJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachReferenceResponse, error)
 
+	// ReviewObjectContentWithResponse performs a GET /api/v1/storage/objects/{id}/review-content (the `ReviewObjectContent` operationId) request.
+	//
+	// Authorized moderation/review download requiring storage.objects.review. Serves a verified complete copy even before initial publication threshold, without altering publication or references, and records an audit entry.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReviewObjectContentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ReviewObjectContentResponse, error)
+
 	// StorageOperationsWithResponse performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
 	//
 	// Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
@@ -3334,6 +3662,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization.
 	RetryStorageJobWithResponse(ctx context.Context, objectId string, jobId string, params *RetryStorageJobParams, body RetryStorageJobJSONRequestBody, reqEditors ...RequestEditorFn) (*RetryStorageJobResponse, error)
+
+	// WriteOffUnknownReplicaWithBodyWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	WriteOffUnknownReplicaWithBodyWithResponse(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteOffUnknownReplicaResponse, error)
+
+	// WriteOffUnknownReplicaWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+	WriteOffUnknownReplicaWithResponse(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, body WriteOffUnknownReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*WriteOffUnknownReplicaResponse, error)
 }
 
 type ListContributionCandidatesResponse struct {
@@ -5007,6 +5349,89 @@ func (r AttachReferenceResponse) ContentType() string {
 	return ""
 }
 
+type ReviewObjectContentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReviewObjectContentResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ReviewObjectContentResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ReviewObjectContentResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReviewObjectContentResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ReviewObjectContentResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ReviewObjectContentResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ReviewObjectContentResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReviewObjectContentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReviewObjectContentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReviewObjectContentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReviewObjectContentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type StorageOperationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5271,6 +5696,96 @@ func (r RetryStorageJobResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RetryStorageJobResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type WriteOffUnknownReplicaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReplicaWriteOffResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON200() *ReplicaWriteOffResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r WriteOffUnknownReplicaResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r WriteOffUnknownReplicaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r WriteOffUnknownReplicaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WriteOffUnknownReplicaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r WriteOffUnknownReplicaResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5706,6 +6221,19 @@ func (c *ClientWithResponses) AttachReferenceWithResponse(ctx context.Context, i
 	return ParseAttachReferenceResponse(rsp)
 }
 
+// ReviewObjectContentWithResponse performs a GET /api/v1/storage/objects/{id}/review-content (the `ReviewObjectContent` operationId) request.
+//
+// Authorized moderation/review download requiring storage.objects.review. Serves a verified complete copy even before initial publication threshold, without altering publication or references, and records an audit entry.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReviewObjectContentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ReviewObjectContentResponse, error) {
+	rsp, err := c.ReviewObjectContent(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReviewObjectContentResponse(rsp)
+}
+
 // StorageOperationsWithResponse performs a GET /api/v1/storage/operations (the `StorageOperations` operationId) request.
 //
 // Global operator-only snapshot requiring storage.operations.read. Bounded object and failed-job pages have independent cursors. No provider requests, credentials, provider paths or account identifiers are returned. Missing replicas do not imply an eligible replacement account exists.
@@ -5769,6 +6297,32 @@ func (c *ClientWithResponses) RetryStorageJobWithResponse(ctx context.Context, o
 		return nil, err
 	}
 	return ParseRetryStorageJobResponse(rsp)
+}
+
+// WriteOffUnknownReplicaWithBodyWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request,
+// with any type of body and a specified content type.
+//
+// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) WriteOffUnknownReplicaWithBodyWithResponse(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteOffUnknownReplicaResponse, error) {
+	rsp, err := c.WriteOffUnknownReplicaWithBody(ctx, objectId, replicaId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWriteOffUnknownReplicaResponse(rsp)
+}
+
+// WriteOffUnknownReplicaWithResponse performs a POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff (the `WriteOffUnknownReplica` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
+func (c *ClientWithResponses) WriteOffUnknownReplicaWithResponse(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, body WriteOffUnknownReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*WriteOffUnknownReplicaResponse, error) {
+	rsp, err := c.WriteOffUnknownReplica(ctx, objectId, replicaId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWriteOffUnknownReplicaResponse(rsp)
 }
 
 // ParseListContributionCandidatesResponse parses an HTTP response from a ListContributionCandidatesWithResponse call
@@ -7217,6 +7771,74 @@ func ParseAttachReferenceResponse(rsp *http.Response) (*AttachReferenceResponse,
 	return response, nil
 }
 
+// ParseReviewObjectContentResponse parses an HTTP response from a ReviewObjectContentWithResponse call
+func ParseReviewObjectContentResponse(rsp *http.Response) (*ReviewObjectContentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReviewObjectContentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseStorageOperationsResponse parses an HTTP response from a StorageOperationsWithResponse call
 func ParseStorageOperationsResponse(rsp *http.Response) (*StorageOperationsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7383,6 +8005,81 @@ func ParseRetryStorageJobResponse(rsp *http.Response) (*RetryStorageJobResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest JobFailure
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseWriteOffUnknownReplicaResponse parses an HTTP response from a WriteOffUnknownReplicaWithResponse call
+func ParseWriteOffUnknownReplicaResponse(rsp *http.Response) (*WriteOffUnknownReplicaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WriteOffUnknownReplicaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReplicaWriteOffResult
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

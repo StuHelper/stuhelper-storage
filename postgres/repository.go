@@ -126,11 +126,28 @@ func (t *transaction) Object(id string) (storage.Object, error) {
 func (t *transaction) Objects(limit int, after string) ([]storage.Object, error) {
 	return list[storage.Object](t, `SELECT data FROM storage.objects WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
 }
+func (t *transaction) ActiveObjects(limit int, after string) ([]storage.Object, error) {
+	return list[storage.Object](t, `SELECT data FROM storage.objects WHERE id>$1 AND data->>'state'<>'deleted' ORDER BY id LIMIT $2`, after, limit)
+}
 func (t *transaction) SaveObject(v storage.Object) error {
 	return t.save(`INSERT INTO storage.objects(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, v, v.ID)
 }
 func (t *transaction) Replicas(id string) ([]storage.Replica, error) {
 	return list[storage.Replica](t, `SELECT data FROM storage.replicas WHERE object_id=$1 ORDER BY instance_id`, id)
+}
+func (t *transaction) ReplicasByObjects(ids []string) (map[string][]storage.Replica, error) {
+	out := make(map[string][]storage.Replica, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	items, err := list[storage.Replica](t, `SELECT data FROM storage.replicas WHERE object_id = ANY($1) ORDER BY object_id, instance_id`, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range items {
+		out[r.ObjectID] = append(out[r.ObjectID], r)
+	}
+	return out, nil
 }
 func (t *transaction) SaveReplica(v storage.Replica) error {
 	return t.save(`INSERT INTO storage.replicas(id,object_id,instance_id,data) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, v, v.ID, v.ObjectID, v.InstanceID)
@@ -152,7 +169,10 @@ func (t *transaction) JobTotals() (storage.JobTotals, error) {
 	return out, safe(err)
 }
 func (t *transaction) FailedJobs(limit int, after string) ([]storage.Job, error) {
-	return list[storage.Job](t, `SELECT data FROM storage.jobs WHERE id>$1 AND state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'' ORDER BY id LIMIT $2`, after, limit)
+	return t.FailedJobsFiltered(limit, after, "", "", "")
+}
+func (t *transaction) FailedJobsFiltered(limit int, after, state, kind, errorCode string) ([]storage.Job, error) {
+	return list[storage.Job](t, `SELECT data FROM storage.jobs WHERE id>$1 AND state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'' AND ($2='' OR state=$2) AND ($3='' OR data->>'kind'=$3) AND ($4='' OR data->>'error_code'=$4) ORDER BY id LIMIT $5`, after, state, kind, errorCode, limit)
 }
 func (t *transaction) Idempotency(key string) (storage.Idempotency, error) {
 	return read[storage.Idempotency](t, `SELECT data FROM storage.idempotency WHERE key=$1 FOR UPDATE`, key)
@@ -180,10 +200,10 @@ func (t *transaction) Event(v storage.Event) error {
 	if err := t.save(`INSERT INTO storage.outbox(id,data) VALUES($1,$2)`, v, v.ID); err != nil {
 		return err
 	}
-	return t.save(`INSERT INTO storage.audit(id,reason,result,data) VALUES($1,'','unknown',$2)`, struct {
+	return t.save(`INSERT INTO storage.audit(id,reason,result,data) VALUES($1,$2,'unknown',$3)`, struct {
 		Event storage.Event     `json:"event"`
 		Actor storage.Principal `json:"actor"`
-	}{v, v.Actor}, v.ID)
+	}{v, v.Actor}, v.ID, v.Reason)
 }
 func (r *Repository) Claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (storage.Job, error) {
 	var result storage.Job

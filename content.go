@@ -470,7 +470,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 	}
 	return s.contentStatusAction(ctx, p, id, "storage.objects.delete")
 }
-func (s *Service) downloadContent(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
+func (s *Service) downloadContent(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer, review bool) error {
 	if dst == nil {
 		return ErrInput
 	}
@@ -480,7 +480,7 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, d
 	}
 	var object string
 	var revision int64
-	check := func() error {
+	check := func(recordReviewAudit bool) error {
 		return s.repo.Transaction(ctx, func(tx Transaction) error {
 			h, g, e := s.contentGuard(ctx, tx, p, action, id)
 			if e != nil {
@@ -501,26 +501,41 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, d
 			}
 			object = g.ObjectID
 			revision = h.Revision
+			if review && recordReviewAudit {
+				return s.emit(tx, p, "storage.content.reviewed", id, h.Revision)
+			}
 			return nil
 		})
 	}
-	if e := check(); e != nil {
+	if e := check(false); e != nil {
 		return e
 	}
 	// The handle gate above prevents inheriting another handle's publication.
-	return s.download(ctx, p, object, &contentWriter{check: check, dst: dst}, review)
+	cw := &contentWriter{check: func() error { return check(true) }, beforeWrite: beforeWrite, dst: dst}
+	return s.download(ctx, p, object, cw.setSize, cw, review, false)
 }
 
 type contentWriter struct {
-	check   func() error
-	dst     io.Writer
-	checked bool
+	check       func() error
+	beforeWrite func(int64)
+	size        int64
+	sizeSet     bool
+	dst         io.Writer
+	checked     bool
+}
+
+func (w *contentWriter) setSize(size int64) {
+	w.size = size
+	w.sizeSet = true
 }
 
 func (w *contentWriter) Write(b []byte) (int, error) {
 	if !w.checked {
 		if e := w.check(); e != nil {
 			return 0, e
+		}
+		if w.beforeWrite != nil && w.sizeSet {
+			w.beforeWrite(w.size)
 		}
 		w.checked = true
 	}

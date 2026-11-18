@@ -208,6 +208,7 @@ type Event struct {
 	Time            time.Time `json:"time"`
 	Actor           Principal `json:"-"`
 	JobID           string    `json:"-"`
+	Reason          string    `json:"-"`
 }
 
 type EventData struct {
@@ -275,8 +276,10 @@ type Transaction interface {
 	InstanceReplicas(string) (int64, error)
 	Object(string) (Object, error)
 	Objects(int, string) ([]Object, error)
+	ActiveObjects(int, string) ([]Object, error)
 	SaveObject(Object) error
 	Replicas(string) ([]Replica, error)
+	ReplicasByObjects([]string) (map[string][]Replica, error)
 	SaveReplica(Replica) error
 	Job(string) (Job, error)
 	// JobSnapshot reads a binding without a row lock, for instance-before-job locking.
@@ -286,6 +289,7 @@ type Transaction interface {
 	ActiveWrites(string, time.Time) (bool, error)
 	JobTotals() (JobTotals, error)
 	FailedJobs(int, string) ([]Job, error)
+	FailedJobsFiltered(int, string, string, string, string) ([]Job, error)
 	Idempotency(string) (Idempotency, error)
 	SaveIdempotency(Idempotency) error
 	Event(Event) error

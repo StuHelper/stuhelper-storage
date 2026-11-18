@@ -144,6 +144,9 @@
       "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
       "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
     ],
+    "STORAGE-37": [
+      "operations_b03_test.go#TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery"
     ]

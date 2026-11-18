@@ -139,17 +139,25 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 // Download buffers within the configured size/concurrency budget so corrupted
 // or replaced remote content cannot partially escape before checksum validation.
 func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, false)
+	return s.download(ctx, p, id, nil, dst, false, false)
 }
 
 // ReviewDownload uses a separate permission to inspect an unpublished verified
-// copy. It never changes publication, references, replica policy or protection.
+// copy. It never changes publication, references, replica policy or protection,
+// and always records an audit entry when content is released to the reviewer.
 func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, true)
+	return s.download(ctx, p, id, nil, dst, true, true)
 }
-func (s *Service) download(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
+
+// ReviewDownloadWithSize invokes beforeWrite with the verified byte size after
+// staging validation and authorization recheck, before writing any content bytes.
+func (s *Service) ReviewDownloadWithSize(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer) error {
+	return s.download(ctx, p, id, beforeWrite, dst, true, true)
+}
+
+func (s *Service) download(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer, review, recordAudit bool) error {
 	if contentID(id) {
-		return s.downloadContent(ctx, p, id, dst, review)
+		return s.downloadContent(ctx, p, id, beforeWrite, dst, review)
 	}
 	action := "storage.objects.download"
 	if review {
@@ -195,10 +203,16 @@ func (s *Service) download(ctx context.Context, p Principal, id string, dst io.W
 		if current.Revision != o.Revision || current.State == "deleting" || current.State == "deleted" {
 			return ErrStale
 		}
+		if review && recordAudit {
+			return s.emit(tx, p, "storage.object.reviewed", o.ID, current.Revision)
+		}
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+	if beforeWrite != nil {
+		beforeWrite(o.Size)
 	}
 	_, err = io.Copy(&pacedWriter{ctx: ctx, dst: dst, global: s.bandwidth}, f)
 	return err

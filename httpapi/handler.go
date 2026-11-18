@@ -60,6 +60,7 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	})
 	h.mount(mux, "POST /api/v1/storage/operations/instances/{id}/commands", false, h.commandInstance)
 	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry", false, h.retryJob)
+	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff", false, h.writeOffReplica)
 	h.mount(mux, "GET /api/v1/storage/instances", false, h.instances)
 	h.mount(mux, "POST /api/v1/storage/instances", false, h.register)
 	h.mount(mux, "PUT /api/v1/storage/instances/{id}", false, h.update)
@@ -70,6 +71,7 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h.mount(mux, "DELETE /api/v1/storage/objects/{id}", false, h.remove)
 	h.mount(mux, "PUT /api/v1/storage/objects/{id}/content", true, h.upload)
 	h.mount(mux, "GET /api/v1/storage/objects/{id}/content", false, h.download)
+	h.mount(mux, "GET /api/v1/storage/objects/{id}/review-content", false, h.reviewDownload)
 	h.mount(mux, "POST /api/v1/storage/objects/{id}/references", false, h.reference)
 	h.mount(mux, "DELETE /api/v1/storage/objects/{id}/references", false, h.reference)
 	h.mount(mux, "PUT /api/v1/storage/objects/{id}/protection", false, h.protection)
@@ -94,6 +96,17 @@ func (h *handler) retryJob(_ http.ResponseWriter, r *http.Request, p storage.Pri
 	}
 	return h.s.RetryJob(r.Context(), p, r.PathValue("object_id"), r.PathValue("job_id"), r.Header.Get("Idempotency-Key"), input.Generation)
 }
+func (h *handler) writeOffReplica(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	input, err := decode[sdk.ReplicaWriteOff](r)
+	if err != nil {
+		return nil, err
+	}
+	req, err := convert[sdk.ReplicaWriteOff, storage.ReplicaWriteOff](input)
+	if err != nil {
+		return nil, err
+	}
+	return h.s.WriteOffUnknownReplica(r.Context(), p, r.PathValue("object_id"), r.PathValue("replica_id"), r.Header.Get("Idempotency-Key"), req)
+}
 func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	limit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -103,7 +116,16 @@ func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.P
 			return nil, storage.ErrInput
 		}
 	}
-	return h.s.Operations(r.Context(), p, limit, r.URL.Query().Get("after"), r.URL.Query().Get("failures_after"))
+	q := r.URL.Query()
+	return h.s.QueryOperations(r.Context(), p, storage.OperationsQuery{
+		Limit:         limit,
+		After:         q.Get("after"),
+		FailuresAfter: q.Get("failures_after"),
+		ObjectFilter:  q.Get("object_filter"),
+		FailureState:  q.Get("failure_state"),
+		FailureKind:   q.Get("failure_kind"),
+		ErrorCode:     q.Get("error_code"),
+	})
 }
 func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoint) {
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +322,18 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request, p storage.Pri
 	w.Header().Set("Content-Disposition", "attachment")
 	writer := &trackingWriter{ResponseWriter: w}
 	err = h.s.Download(r.Context(), p, status.ID, writer)
+	if err != nil && writer.started {
+		panic(http.ErrAbortHandler)
+	}
+	return nil, err
+}
+func (h *handler) reviewDownload(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	writer := &trackingWriter{ResponseWriter: w}
+	err := h.s.ReviewDownloadWithSize(r.Context(), p, r.PathValue("id"), func(size int64) {
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		writer.Header().Set("Content-Disposition", "attachment")
+	}, writer)
 	if err != nil && writer.started {
 		panic(http.ErrAbortHandler)
 	}
