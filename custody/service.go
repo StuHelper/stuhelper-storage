@@ -162,7 +162,7 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 			return e
 		}
 		out = b.View
-		return s.event(tx, p, b, "requested")
+		return s.event(tx, p, b, "requested", "success")
 	})
 	if e != nil {
 		return out, e
@@ -390,16 +390,25 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			return err
 		}
 		out = b.View
-		return s.event(tx, p, b, b.State)
+		auditResult := "failed"
+		switch {
+		case resultErr == nil:
+			auditResult = "success"
+		case errors.Is(resultErr, storage.ErrUnknown):
+			auditResult = "unknown"
+		case errors.Is(resultErr, storage.ErrDenied):
+			auditResult = "denied"
+		}
+		return s.event(tx, p, b, b.State, auditResult)
 	})
 	return out, e
 }
-func (s *Service) event(tx Tx, p storage.Principal, b Binding, kind string) error {
+func (s *Service) event(tx Tx, p storage.Principal, b Binding, kind, result string) error {
 	var nonce [16]byte
 	if _, e := rand.Read(nonce[:]); e != nil {
 		return storage.ErrUnavailable
 	}
-	return tx.Event(storage.Event{ID: hex.EncodeToString(nonce[:]), Type: "storage.custody." + kind, ObjectID: b.ID, Revision: b.Revision, Time: s.cfg.Clock(), Actor: p})
+	return tx.Event(storage.Event{ID: hex.EncodeToString(nonce[:]), Type: "storage.custody." + kind, ObjectID: b.ID, Revision: b.Revision, Time: s.cfg.Clock(), Actor: p, AuditResult: result, AuditSchool: "*"})
 }
 func safeCode(e error) string {
 	switch {

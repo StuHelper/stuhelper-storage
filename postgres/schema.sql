@@ -44,11 +44,14 @@ CREATE TABLE IF NOT EXISTS storage.idempotency (
     data jsonb NOT NULL
 );
 CREATE TABLE IF NOT EXISTS storage.outbox (
+    seq bigint GENERATED ALWAYS AS IDENTITY,
     id text PRIMARY KEY,
     data jsonb NOT NULL,
     delivered boolean NOT NULL DEFAULT false
 );
+ALTER TABLE storage.outbox ADD COLUMN IF NOT EXISTS seq bigint GENERATED ALWAYS AS IDENTITY;
 CREATE INDEX IF NOT EXISTS outbox_pending ON storage.outbox(id) WHERE NOT delivered;
+CREATE INDEX IF NOT EXISTS outbox_pending_seq ON storage.outbox(seq) WHERE NOT delivered;
 CREATE TABLE IF NOT EXISTS storage.audit (
     id text PRIMARY KEY,
     data jsonb NOT NULL

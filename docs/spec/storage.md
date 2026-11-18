@@ -1,7 +1,7 @@
 ---
 type: spec
 status: Accepted
-updated: 2026-11-09
+updated: 2026-11-18
 ---
 
 # 存储核心
@@ -24,7 +24,7 @@ OpenAPI 位于 contracts/storage.openapi.json，Go 与 TypeScript SDK 由固定�
 
 ## 数据库与运行
 
-postgres/schema.sql 为首版迁移，由迁移身份执行。运行身份仅获 storage schema 的必要表权限，audit 只追加。审计与 CloudEvents outbox 同事务提交；事件 revision 按对象或实例递增，消费者去重后重新读取当前状态。
+postgres/schema.sql 为首版迁移，由迁移身份执行。运行身份仅获 storage schema 必要表权限，audit 只追加且 audit_retention 只读。审计与 CloudEvents outbox 同事务提交；outbox 按自增序号保序并支持游标与受阻主题排除。
 
 未引用上传在创建满 24 小时后进入删除。幂等响应有效期为 24 小时。生产装配还需实现已完成事件和幂等记录清理、审计保留与备份恢复；未完成这些事项前不开放生产服务。
 
@@ -134,7 +134,7 @@ GET /api/v1/storage/operations 要求独立的 storage.operations.read 全局运
 | STORAGE-29 | 同账号不能重复登记或建根，列表分页有上限，当前权限决定可见范围 |
 | STORAGE-30 | 配置控制容量有效期、提前刷新和巡检时机；长周期扫描分页覆盖账号和对象，超限保留游标，停止取消在途调用；过期样本拒绝上传，失败刷新不延长期限 |
 
-独立审核读取使用 storage.objects.review 权限，可以读取尚未达到发布副本数的完整已校验副本。读取前后检查当前权限、对象和实例状态，不改变发布状态或副本策略。普通下载继续遵守发布门槛。
+独立审核读取使用 storage.objects.review 权限，可以读取尚未达到发布副本数的完整已校验副本。读取前后检查当前权限、对象和实例状态，完成校验后记录审核读取审计，不改变发布状态或副本策略。普通下载继续遵守发布门槛。
 
 | 场景 | 预期结果 |
 | --- | --- |
@@ -167,7 +167,7 @@ AUDIT-01：postgres.Repository.ReadAudit(ctx, auditquery.Request) 返回 auditqu
 
 时间为左闭右开区间，每次最多 101 条，按时间、模块、ID 字节序降序。Before 使用全局位置。Snapshot 固定 PostgreSQL 已提交成员，排除回填和延迟提交；删除或修改审计使旧快照失效，调用方须重新查询。
 
-摘要只含模块、内部对象和操作者标识、时间、操作、原因、结果与范围。学校或群不明时使用 *，仅对应全局权限可见。没有原因时为空，超出 512 字节或含控制字符的原因省略；无法证明结果时为 unknown。
+摘要只含模块、内部对象和操作者标识、时间、操作、原因、结果与范围。业务提交投影实际结果与对象所属学校范围，学校或群不明时使用 *。没有原因时为空，超出 512 字节或含控制字符的原因省略；无法证明结果时为 unknown。
 
 表结构直接定义最终形态，不转换历史数据。审计与业务同事务写入。运行身份需要读取 audit_retention，清理修订由固定 schema 的触发器更新。快照超过 256 字节或无效时明确报错。
 

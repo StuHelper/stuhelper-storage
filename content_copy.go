@@ -40,7 +40,7 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emit(tx, p, "storage.content.protection.requested", id, h.Revision); e != nil {
+		if e = s.emitScoped(tx, p, "storage.content.protection.requested", id, h.Revision, "success", target.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -176,7 +176,7 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string)
 				return e
 			}
 		}
-		return s.emit(tx, p, "storage.content.reused", id, current.Revision)
+		return s.emitScoped(tx, p, "storage.content.reused", id, current.Revision, "success", target.Protection.Scope)
 	})
 	if err != nil {
 		return err

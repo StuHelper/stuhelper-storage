@@ -173,7 +173,7 @@ func (s *Service) RetryJob(ctx context.Context, p Principal, objectID, jobID, ke
 		if err = s.queue(tx, j); err != nil {
 			return nil, err
 		}
-		if err = tx.Event(Event{ID: newID(), Type: "storage.job.retried", ObjectID: object.ID, JobID: j.ID, Revision: object.Revision, Time: s.now(), Actor: p}); err != nil {
+		if err = tx.Event(Event{ID: newID(), Type: "storage.job.retried", ObjectID: object.ID, JobID: j.ID, Revision: object.Revision, Time: s.now(), Actor: p, AuditResult: "success", AuditSchool: object.Protection.Scope}); err != nil {
 			return nil, err
 		}
 		return jobFailure(j), nil

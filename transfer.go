@@ -139,15 +139,16 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 // Download buffers within the configured size/concurrency budget so corrupted
 // or replaced remote content cannot partially escape before checksum validation.
 func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, false)
+	return s.download(ctx, p, id, dst, false, false)
 }
 
 // ReviewDownload uses a separate permission to inspect an unpublished verified
-// copy. It never changes publication, references, replica policy or protection.
+// copy. It never changes publication, references, replica policy or protection,
+// and records an audit entry when verified content is released to the reviewer.
 func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, true)
+	return s.download(ctx, p, id, dst, true, true)
 }
-func (s *Service) download(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
+func (s *Service) download(ctx context.Context, p Principal, id string, dst io.Writer, review, recordAudit bool) error {
 	if contentID(id) {
 		return s.downloadContent(ctx, p, id, dst, review)
 	}
@@ -194,6 +195,9 @@ func (s *Service) download(ctx context.Context, p Principal, id string, dst io.W
 		}
 		if current.Revision != o.Revision || current.State == "deleting" || current.State == "deleted" {
 			return ErrStale
+		}
+		if review && recordAudit {
+			return s.emitScoped(tx, p, "storage.object.reviewed", o.ID, current.Revision, "success", current.Protection.Scope)
 		}
 		return nil
 	})
@@ -303,7 +307,7 @@ func (s *Service) markCorrupt(ctx context.Context, o Object, r Replica) error {
 		if err := tx.SaveReplica(current); err != nil {
 			return err
 		}
-		return s.emit(tx, Principal{}, "storage.replica.corrupt", o.ID, o.Revision)
+		return s.emitScoped(tx, Principal{}, "storage.replica.corrupt", o.ID, o.Revision, "failed", o.Protection.Scope)
 	})
 }
 
@@ -472,7 +476,7 @@ func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 		if err := tx.SaveJob(current); err != nil {
 			return err
 		}
-		return s.emit(tx, Principal{}, "storage.replica.verified", o.ID, o.Revision)
+		return s.emitScoped(tx, Principal{}, "storage.replica.verified", o.ID, o.Revision, "success", o.Protection.Scope)
 	})
 }
 
@@ -639,6 +643,6 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 				}
 			}
 		}
-		return s.emit(tx, Principal{}, "storage.replica.deleted", o.ID, o.Revision)
+		return s.emitScoped(tx, Principal{}, "storage.replica.deleted", o.ID, o.Revision, "success", o.Protection.Scope)
 	})
 }

@@ -214,7 +214,7 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emit(tx, p, "storage.content.created", h.ID, h.Revision); e != nil {
+		if e = s.emitScoped(tx, p, "storage.content.created", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -400,7 +400,7 @@ func (s *Service) contentReference(ctx context.Context, p Principal, id, key str
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emit(tx, p, action, h.ID, h.Revision); e != nil {
+		if e = s.emitScoped(tx, p, action, h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -450,7 +450,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 				return nil, e
 			}
 		}
-		if e := s.emit(tx, p, "storage.content.released", h.ID, h.Revision); e != nil {
+		if e := s.emitScoped(tx, p, "storage.content.released", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -480,7 +480,7 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, d
 	}
 	var object string
 	var revision int64
-	check := func() error {
+	check := func(recordReviewAudit bool) error {
 		return s.repo.Transaction(ctx, func(tx Transaction) error {
 			h, g, e := s.contentGuard(ctx, tx, p, action, id)
 			if e != nil {
@@ -501,14 +501,17 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, d
 			}
 			object = g.ObjectID
 			revision = h.Revision
+			if review && recordReviewAudit {
+				return s.emitScoped(tx, p, "storage.content.reviewed", id, h.Revision, "success", g.Protection.Scope)
+			}
 			return nil
 		})
 	}
-	if e := check(); e != nil {
+	if e := check(false); e != nil {
 		return e
 	}
 	// The handle gate above prevents inheriting another handle's publication.
-	return s.download(ctx, p, object, &contentWriter{check: check, dst: dst}, review)
+	return s.download(ctx, p, object, &contentWriter{check: func() error { return check(true) }, dst: dst}, review, false)
 }
 
 type contentWriter struct {
@@ -635,7 +638,7 @@ func (s *Service) expireContentHandles(ctx context.Context, p Principal, limit i
 					return e
 				}
 			}
-			if e = s.emit(tx, p, "storage.content.expired", h.ID, h.Revision); e != nil {
+			if e = s.emitScoped(tx, p, "storage.content.expired", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 				return e
 			}
 		}

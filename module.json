@@ -31,7 +31,8 @@
       "integration_test.go#TestOldLeaseCannotCommitAfterAnotherWorkerClaims"
     ],
     "STORAGE-07": [
-      "integration_test.go#TestRuntimeDatabaseIdentityAndAtomicAuditOutbox"
+      "integration_test.go#TestRuntimeDatabaseIdentityAndAtomicAuditOutbox",
+      "integration_test.go#TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation"
     ],
     "STORAGE-08": [
       "integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary"
@@ -129,7 +130,8 @@
       "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor"
     ],
     "STORAGE-31": [
-      "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission"
+      "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission",
+      "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"
     ],
     "STORAGE-32": [
       "content_test.go#TestSharedContentConcurrentProofAndSinglePhysicalObject",
@@ -145,7 +147,8 @@
       "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
     ],
     "AUDIT-01": [
-      "postgres/audit_query_test.go#TestPublicAuditQuery"
+      "postgres/audit_query_test.go#TestPublicAuditQuery",
+      "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"
     ]
   }
 }

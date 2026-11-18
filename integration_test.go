@@ -20,6 +20,7 @@ import (
 	"time"
 
 	storage "github.com/StuHelper/stuhelper-storage"
+	"github.com/StuHelper/stuhelper-storage/auditquery"
 	"github.com/StuHelper/stuhelper-storage/httpapi"
 	"github.com/StuHelper/stuhelper-storage/postgres"
 	"github.com/StuHelper/stuhelper-storage/sdk"
@@ -264,7 +265,8 @@ func harnessFor(t *testing.T, configure ...func(*storage.Config)) *harness {
 	if _, err = admin.Exec(`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='storage_test_runtime') THEN CREATE ROLE storage_test_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE; END IF; END $$;
 GRANT USAGE ON SCHEMA storage TO storage_test_runtime;
 GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA storage TO storage_test_runtime;
-REVOKE UPDATE,DELETE ON storage.audit FROM storage_test_runtime;
+REVOKE UPDATE,DELETE,TRUNCATE ON storage.audit FROM storage_test_runtime;
+REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON storage.audit_retention FROM storage_test_runtime;
 CREATE SCHEMA other_module;
 CREATE TABLE other_module.private_data(id integer);
 REVOKE ALL ON SCHEMA other_module FROM PUBLIC;
@@ -731,5 +733,137 @@ func TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission(t *
 	out.Reset()
 	if e = h.s.ReviewDownload(h.ctx, h.actor, o.ID, &out); !errors.Is(e, storage.ErrDenied) || out.Len() != 0 {
 		t.Fatal("revoked review read", e)
+	}
+}
+
+func TestAuditRetentionBoundarySchoolProjectionAndReviewAudit(t *testing.T) {
+	h := harnessFor(t)
+
+	// 1. CheckRuntime must reject a runtime role that can mutate storage.audit_retention.
+	if _, err := h.admin.Exec(`GRANT UPDATE ON storage.audit_retention TO storage_test_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.CheckRuntime(h.ctx); !errors.Is(err, storage.ErrDenied) {
+		t.Fatalf("CheckRuntime permitted audit_retention write privilege: %v", err)
+	}
+	if _, err := h.admin.Exec(`REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON storage.audit_retention FROM storage_test_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.CheckRuntime(h.ctx); err != nil {
+		t.Fatalf("CheckRuntime rejected valid read-only audit_retention grant: %v", err)
+	}
+
+	// 2. Object operations and ReviewDownload (both regular object and shared content) must project school scope, result='success', and review audit.
+	h.instance(t, "audit-inst", "platform", "platform", 4096)
+	data := []byte("reviewable school-a content")
+	o := h.object(t, "school-obj", data)
+	h.ingest(t, o.ID, data)
+	var reviewed bytes.Buffer
+	if err := h.s.ReviewDownload(h.ctx, h.actor, o.ID, &reviewed); err != nil || !bytes.Equal(reviewed.Bytes(), data) {
+		t.Fatalf("object ReviewDownload failed: %v", err)
+	}
+
+	shared := sharedCreate(t, h, "school-shared", sharedRequest(data))
+	h.ingest(t, shared.ID, data)
+	reviewed.Reset()
+	if err := h.s.ReviewDownload(h.ctx, h.actor, shared.ID, &reviewed); err != nil || !bytes.Equal(reviewed.Bytes(), data) {
+		t.Fatalf("shared ReviewDownload failed: %v", err)
+	}
+
+	until := time.Now().UTC().Add(time.Hour)
+	batchA, err := h.repo.ReadAudit(h.ctx, auditquery.Request{
+		Scopes: []auditquery.Scope{{School: "school-a", Group: "*", Module: "storage"}},
+		Until:  until,
+		Limit:  100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenObjectReview := false
+	seenContentReview := false
+	for _, rec := range batchA.Records {
+		if rec.Scope.School != "school-a" || rec.Result != "success" {
+			t.Fatalf("unexpected audit projection: %+v", rec)
+		}
+		if rec.Action == "storage.object.reviewed.v1" && rec.Target == o.ID {
+			seenObjectReview = true
+		}
+		if rec.Action == "storage.content.reviewed.v1" && rec.Target == shared.ID {
+			seenContentReview = true
+		}
+	}
+	if !seenObjectReview || !seenContentReview {
+		t.Fatalf("missing review audit records in school-a scope: obj=%v content=%v total=%d", seenObjectReview, seenContentReview, len(batchA.Records))
+	}
+
+	batchB, err := h.repo.ReadAudit(h.ctx, auditquery.Request{
+		Scopes: []auditquery.Scope{{School: "school-b", Group: "*", Module: "storage"}},
+		Until:  until,
+		Limit:  100,
+	})
+	if err != nil || len(batchB.Records) != 0 {
+		t.Fatalf("foreign school leaked audit records: len=%d err=%v", len(batchB.Records), err)
+	}
+
+	// Failed custody password must record result='denied'.
+	ch, cs, cp, _, user, q := custodyFixture(t)
+	cp.failPrepare.Store(true)
+	cv, err := cs.Submit(ch.ctx, user, "", "60000000-0000-4000-8000-000000000001", q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	custodyBatch, err := ch.repo.ReadAudit(ch.ctx, auditquery.Request{
+		Scopes: []auditquery.Scope{{School: "*", Group: "*", Module: "storage"}},
+		Target: cv.ID,
+		Action: "storage.custody.credentials_required.v1",
+		Until:  time.Now().UTC().Add(time.Hour),
+		Limit:  10,
+	})
+	if err != nil || len(custodyBatch.Records) != 1 || custodyBatch.Records[0].Result != "denied" {
+		t.Fatalf("custody denied audit not projected: %+v err=%v", custodyBatch.Records, err)
+	}
+}
+
+func TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation(t *testing.T) {
+	h := harnessFor(t)
+	h.instance(t, "outbox-inst", "platform", "platform", 8192)
+
+	// Perform multiple sequential mutations on the same object so revision 1, 2, 3 are emitted;
+	// random hex IDs have >80% chance of inverting order across 10 objects without monotonic seq!
+	for idx := 0; idx < 10; idx++ {
+		payload := []byte(fmt.Sprintf("outbox-order-%d", idx))
+		o := h.object(t, fmt.Sprintf("ord-%d", idx), payload)
+		h.ingest(t, o.ID, payload)
+		if _, err := h.s.Delete(h.ctx, h.actor, o.ID, fmt.Sprintf("del-%d", idx), o.Revision); err != nil {
+			t.Fatal(err)
+		}
+		h.run(t)
+	}
+
+	events, err := h.repo.PendingEvents(h.ctx, 100)
+	if err != nil || len(events) != 41 {
+		t.Fatalf("expected 41 pending events, got %d err=%v", len(events), err)
+	}
+	lastRev := map[string]int64{}
+	for idx, ev := range events {
+		if idx > 0 && ev.Sequence <= events[idx-1].Sequence {
+			t.Fatalf("outbox sequence not strictly ascending: %d <= %d", ev.Sequence, events[idx-1].Sequence)
+		}
+		if ev.Data.Revision <= lastRev[ev.Subject] {
+			t.Fatalf("outbox broke per-subject revision order for %s: got rev %d after %d", ev.Subject, ev.Data.Revision, lastRev[ev.Subject])
+		}
+		lastRev[ev.Subject] = ev.Data.Revision
+	}
+
+	// Verify cursor + blocked subject exclusion prevents head-of-line starvation.
+	blockedSubject := events[1].Subject
+	filtered, err := h.repo.PendingEventsAfter(h.ctx, 10, events[0].Sequence, []string{blockedSubject})
+	if err != nil || len(filtered) != 10 {
+		t.Fatalf("PendingEventsAfter cursor/exclusion failed: len=%d err=%v", len(filtered), err)
+	}
+	for _, ev := range filtered {
+		if ev.Subject == blockedSubject || ev.Sequence <= events[0].Sequence {
+			t.Fatalf("PendingEventsAfter returned excluded/stale event: %+v", ev)
+		}
 	}
 }
