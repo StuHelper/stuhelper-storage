@@ -107,19 +107,35 @@ func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.P
 }
 
 type routeOptions struct {
-	auth                       Authenticator
-	public                     bool
-	timeout                    time.Duration
-	maxBodyBytes               int64
-	unavailableCode            string
-	rejectDuplicateIdempotency bool
-	successStatus              func(*http.Request) int
+	auth            Authenticator
+	public          bool
+	timeout         time.Duration
+	maxBodyBytes    int64
+	unavailableCode string
+
+	successStatus func(*http.Request) int
 }
 
 func mountEndpoint(mux *http.ServeMux, path string, opts routeOptions, run endpoint) {
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		ctx, cancel := context.WithTimeout(r.Context(), opts.timeout)
+		defer cancel()
+		if tp := r.Header.Get("Traceparent"); tp != "" {
+			ctx = storage.WithTraceParent(ctx, tp)
+		}
+		controller := http.NewResponseController(w)
+		deadline, _ := ctx.Deadline()
+		_ = controller.SetReadDeadline(deadline)
+		_ = controller.SetWriteDeadline(deadline)
+		stopIO := context.AfterFunc(ctx, func() {
+			_ = controller.SetReadDeadline(time.Now())
+			_ = controller.SetWriteDeadline(time.Now())
+		})
+		defer stopIO()
+		r = r.WithContext(ctx)
+		r.Body = http.MaxBytesReader(w, r.Body, opts.maxBodyBytes)
 		var p storage.Principal
 		if !opts.public {
 			if opts.auth == nil {
@@ -137,23 +153,10 @@ func mountEndpoint(mux *http.ServeMux, path string, opts routeOptions, run endpo
 				return
 			}
 		}
-		if opts.rejectDuplicateIdempotency && len(r.Header.Values("Idempotency-Key")) > 1 {
+		if len(r.Header.Values("Idempotency-Key")) > 1 {
 			respondError(w, storage.ErrInput)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), opts.timeout)
-		defer cancel()
-		controller := http.NewResponseController(w)
-		deadline, _ := ctx.Deadline()
-		_ = controller.SetReadDeadline(deadline)
-		_ = controller.SetWriteDeadline(deadline)
-		stopIO := context.AfterFunc(ctx, func() {
-			_ = controller.SetReadDeadline(time.Now())
-			_ = controller.SetWriteDeadline(time.Now())
-		})
-		defer stopIO()
-		r = r.WithContext(ctx)
-		r.Body = http.MaxBytesReader(w, r.Body, opts.maxBodyBytes)
 		out, err := run(w, r, p)
 		if err != nil {
 			respondError(w, err)
@@ -323,15 +326,12 @@ func (w *trackingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 func (h *handler) download(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
-	status, err := h.s.Status(r.Context(), p, r.PathValue("id"))
-	if err != nil {
-		return nil, err
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(status.Size, 10))
-	w.Header().Set("Content-Disposition", "attachment")
 	writer := &trackingWriter{ResponseWriter: w}
-	err = h.s.Download(r.Context(), p, status.ID, writer)
+	err := h.s.DownloadWithSize(r.Context(), p, r.PathValue("id"), func(size int64) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.Header().Set("Content-Disposition", "attachment")
+	}, writer)
 	if err != nil && writer.started {
 		panic(http.ErrAbortHandler)
 	}

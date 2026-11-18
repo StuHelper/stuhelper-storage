@@ -191,6 +191,7 @@ type Job struct {
 	LeaseOwner         string    `json:"lease_owner"`
 	LeaseUntil         time.Time `json:"lease_until"`
 	AvailableAt        time.Time `json:"available_at"`
+	CompletedAt        time.Time `json:"completed_at,omitempty"`
 	Attempts           int       `json:"attempts"`
 	ErrorCode          string    `json:"error_code"`
 }
@@ -200,14 +201,20 @@ type Event struct {
 	Source          string    `json:"source"`
 	Subject         string    `json:"subject"`
 	DataContentType string    `json:"datacontenttype"`
+	TraceParent     string    `json:"traceparent,omitempty"`
+	SchoolID        string    `json:"schoolid,omitempty"`
 	Data            EventData `json:"data"`
 	ID              string    `json:"id"`
 	Type            string    `json:"type"`
+	Sequence        int64     `json:"-"`
 	ObjectID        string    `json:"-"`
 	Revision        int64     `json:"-"`
 	Time            time.Time `json:"time"`
 	Actor           Principal `json:"-"`
 	JobID           string    `json:"-"`
+	Reason          string    `json:"-"`
+	AuditResult     string    `json:"-"`
+	AuditSchool     string    `json:"-"`
 }
 
 type EventData struct {
@@ -234,6 +241,12 @@ type Verifier interface {
 	Verify(context.Context, Instance) (InstanceEvidence, error)
 }
 
+// FencedWriter lets drivers finish directory setup before recording the first
+// possibly ambiguous file write. Other drivers are fenced before Write.
+type FencedWriter interface {
+	WriteWithFence(context.Context, Instance, string, int64, io.Reader, func() error, func(Locator) error) (Locator, error)
+}
+
 // Driver's intent is a unique, platform-owned name in an isolated root. Find
 // reconciles a write whose result was lost. Checkpoint must run before data write.
 // Errors must be sanitized; absence must be explicit ErrNotFound.
@@ -256,6 +269,12 @@ type Repository interface {
 	AcknowledgeEvent(context.Context, string) error
 }
 
+// ReadRepository is an optional extension implemented by PostgreSQL repositories
+// to execute read-only repeatable-read snapshots without row-level FOR UPDATE locks.
+type ReadRepository interface {
+	ReadTransaction(context.Context, func(Transaction) error) error
+}
+
 // Locks are acquired object -> instances in sorted ID order -> job. Claim only
 // locks a job and commits before execution, so it cannot invert that order.
 type Transaction interface {
@@ -269,14 +288,18 @@ type Transaction interface {
 	ExpiredContentHandles(int, time.Time) ([]ContentHandle, error)
 	Lock(string) error
 	Instance(string) (Instance, error)
+	InstanceSnapshot(string) (Instance, error)
 	Instances(int, string) ([]Instance, error)
-	ContributionCandidates(string, int, string) ([]Instance, error)
+	ContributionCandidates(string, time.Time, int, string) ([]Instance, error)
 	SaveInstance(Instance) error
 	InstanceReplicas(string) (int64, error)
 	Object(string) (Object, error)
+	ObjectSnapshot(string) (Object, error)
 	Objects(int, string) ([]Object, error)
+	ActiveObjects(int, string) ([]Object, error)
 	SaveObject(Object) error
 	Replicas(string) ([]Replica, error)
+	ReplicasByObjects([]string) (map[string][]Replica, error)
 	SaveReplica(Replica) error
 	Job(string) (Job, error)
 	// JobSnapshot reads a binding without a row lock, for instance-before-job locking.
@@ -288,5 +311,6 @@ type Transaction interface {
 	FailedJobs(int, string) ([]Job, error)
 	Idempotency(string) (Idempotency, error)
 	SaveIdempotency(Idempotency) error
+	PurgeRetention(RetentionCutoffs, int) (RetentionResult, error)
 	Event(Event) error
 }

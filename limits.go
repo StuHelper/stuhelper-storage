@@ -4,18 +4,27 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // pacer permits a bounded chunk then spaces subsequent chunks. The aggregate
 // limiter is shared by all accounts in this execution process.
 type pacer struct {
-	mu   sync.Mutex
-	rate int64
-	next time.Time
+	mu        sync.Mutex
+	rate      int64
+	next      time.Time
+	waits     atomic.Uint64
+	waitNanos atomic.Uint64
 }
 
 func newPacer(rate int64) *pacer { return &pacer{rate: rate} }
+func (p *pacer) stats() (rate int64, waits, waitNanos uint64) {
+	if p == nil {
+		return 0, 0, 0
+	}
+	return p.rate, p.waits.Load(), p.waitNanos.Load()
+}
 func (p *pacer) wait(ctx context.Context, n int) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -32,11 +41,15 @@ func (p *pacer) wait(ctx context.Context, n int) error {
 	p.next = start.Add(time.Duration(float64(n) / float64(p.rate) * float64(time.Second)))
 	p.mu.Unlock()
 	if delay := time.Until(start); delay > 0 {
+		waitStart := time.Now()
+		p.waits.Add(1)
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		select {
 		case <-timer.C:
+			p.waitNanos.Add(uint64(max(0, time.Since(waitStart))))
 		case <-ctx.Done():
+			p.waitNanos.Add(uint64(max(0, time.Since(waitStart))))
 			return ctx.Err()
 		}
 	}
@@ -108,12 +121,15 @@ func (d *limitedDriver) Remove(ctx context.Context, i Instance, l Locator) error
 	return d.inner.Remove(ctx, i, l)
 }
 func (d *limitedDriver) Write(ctx context.Context, i Instance, intent string, size int64, src io.Reader, checkpoint func(Locator) error) (Locator, error) {
+	return d.WriteWithFence(ctx, i, intent, size, src, func() error { return nil }, checkpoint)
+}
+func (d *limitedDriver) WriteWithFence(ctx context.Context, i Instance, intent string, size int64, src io.Reader, issue func() error, checkpoint func(Locator) error) (Locator, error) {
 	release, err := d.slot(ctx)
 	if err != nil {
 		return Locator{}, err
 	}
 	defer release()
-	return d.inner.Write(ctx, i, intent, size, &pacedReader{ctx: ctx, src: src, global: d.global, account: d.account.pacer}, checkpoint)
+	return writeWithFence(ctx, d.inner, i, intent, size, &pacedReader{ctx: ctx, src: src, global: d.global, account: d.account.pacer}, issue, checkpoint)
 }
 func (d *limitedDriver) Read(ctx context.Context, i Instance, l Locator, dst io.Writer) (int64, error) {
 	release, err := d.slot(ctx)

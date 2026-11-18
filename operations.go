@@ -75,27 +75,49 @@ func instanceHealth(i Instance, now time.Time) InstanceHealth {
 // Operations is a global administration privilege, independent of content read
 // access. It reads the ledger only and never extends supplier sessions.
 func (s *Service) Operations(ctx context.Context, p Principal, limit int, after, failuresAfter string) (Operations, error) {
-	out := Operations{GeneratedAt: s.now(), Instances: []InstanceHealth{}, Objects: []ObjectHealth{}, Failures: []JobFailure{}}
+	now := s.now()
+	out := Operations{GeneratedAt: now, Instances: []InstanceHealth{}, Objects: []ObjectHealth{}, Failures: []JobFailure{}}
 	if limit < 1 || limit > 100 || (after != "" && !validID(after)) || (failuresAfter != "" && !validID(failuresAfter)) {
 		return out, ErrInput
 	}
 	if err := s.authorize(ctx, p, "storage.operations.read", "", Protection{}); err != nil {
 		return out, err
 	}
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
+	err := s.readTx(ctx, func(tx Transaction) error {
 		instances, err := tx.Instances(100, "")
 		if err != nil {
 			return err
 		}
+		byID := make(map[string]Instance, len(instances))
 		for _, i := range instances {
-			out.Instances = append(out.Instances, instanceHealth(i, s.now()))
+			byID[i.ID] = i
+			out.Instances = append(out.Instances, instanceHealth(i, now))
 		}
 		objects, err := tx.Objects(limit, after)
 		if err != nil {
 			return err
 		}
+		ids := make([]string, 0, len(objects))
 		for _, o := range objects {
-			st, err := s.status(tx, o)
+			ids = append(ids, o.ID)
+		}
+		replicasByObject, err := tx.ReplicasByObjects(ids)
+		if err != nil {
+			return err
+		}
+		lookup := func(id string) (Instance, error) {
+			if inst, ok := byID[id]; ok {
+				return inst, nil
+			}
+			inst, e := tx.InstanceSnapshot(id)
+			if e == nil {
+				byID[id] = inst
+			}
+			return inst, e
+		}
+		for _, o := range objects {
+			copies := replicasByObject[o.ID]
+			st, err := s.statusFromLoaded(o, copies, lookup, now)
 			if err != nil {
 				return err
 			}
@@ -107,17 +129,14 @@ func (s *Service) Operations(ctx context.Context, p Principal, limit int, after,
 					if st.Healthy == 0 {
 						h.Reason = "no_healthy_source"
 					} else {
-						now := s.now()
 						seen := newIndependentSet()
-						copies, e := tx.Replicas(o.ID)
-						if e != nil {
-							return e
-						}
 						for _, r := range copies {
-							for _, i := range instances {
-								if i.ID == r.InstanceID && healthyVerifiedReplica(r, o, i, now, s.cfg.VerificationAge) && !seen.seen(i) {
-									seen.add(i)
-								}
+							i, e := lookup(r.InstanceID)
+							if e != nil {
+								return e
+							}
+							if healthyVerifiedReplica(r, o, i, now, s.cfg.VerificationAge) {
+								seen.add(i)
 							}
 						}
 						for _, i := range instances {

@@ -23,11 +23,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: StuHelper/stuhelper-tooling/actions/setup@v0.1.0
-      - uses: actions/setup-go@v7.0.0
+      - uses: StuHelper/stuhelper-tooling/actions/setup@v0.1.10
         with:
           go-version-file: .go-version
-          cache: false
       - name: Install locked tools and PostgreSQL
         run: |
           pnpm install --frozen-lockfile

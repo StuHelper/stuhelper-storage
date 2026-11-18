@@ -4,7 +4,7 @@ export type CustodyBinding = components['schemas']['CustodyBinding'];
 export type CustodyPage = components['schemas']['CustodyPage'];
 export type CustodyPolicy = components['schemas']['CustodyPolicy'];
 export type CustodyRequest = components['schemas']['CustodyRequest'];
-type Code = 'conflict' | 'forbidden' | 'incompatible' | 'invalid' | 'network' | 'unauthenticated' | 'unavailable';
+type Code = 'conflict' | 'forbidden' | 'incompatible' | 'invalid' | 'network' | 'not_found' | 'unauthenticated' | 'unavailable';
 export class CustodyError extends Error {
   readonly code: Code;
   readonly uncertain: boolean;
@@ -48,6 +48,7 @@ export function custodyAPI(fetcher: typeof fetch = fetch) {
     catch { throw new CustodyError('network', mutation); }
     if (res.status === 401) throw new CustodyError('unauthenticated');
     if (res.status === 403) throw new CustodyError('forbidden');
+    if (res.status === 404) throw new CustodyError('not_found');
     if (res.status === 409) throw new CustodyError('conflict');
     if (res.status === 400 || res.status === 413) throw new CustodyError('invalid');
     if (res.status !== (mutation ? 202 : 200)) throw new CustodyError('unavailable', mutation);

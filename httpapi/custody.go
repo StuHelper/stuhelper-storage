@@ -17,12 +17,12 @@ func NewCustody(s *custody.Service, a Authenticator) (http.Handler, error) {
 	base := "/api/v1/storage/custody"
 	mount := func(path string, public bool, run func(*http.Request, storage.Principal) (any, error)) {
 		mountEndpoint(m, path, routeOptions{
-			auth:                       a,
-			public:                     public,
-			timeout:                    time.Minute,
-			maxBodyBytes:               16384,
-			unavailableCode:            storage.ErrUnavailable.Error(),
-			rejectDuplicateIdempotency: true,
+			auth:            a,
+			public:          public,
+			timeout:         time.Minute,
+			maxBodyBytes:    16384,
+			unavailableCode: "identity_unavailable",
+
 			successStatus: func(r *http.Request) int {
 				if r.Method == "POST" {
 					return 202
