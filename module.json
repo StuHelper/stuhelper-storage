@@ -186,6 +186,9 @@
       "retention_test.go#TestLegacyRetentionBeginsOnMigration",
       "retention_test.go#TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords"
     ],
+    "STORAGE-40": [
+      "observability_test.go#TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"

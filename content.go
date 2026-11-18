@@ -233,7 +233,7 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emitScoped(tx, p, "storage.content.created", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
+		if e = s.emitScoped(ctx, tx, p, "storage.content.created", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -317,7 +317,7 @@ func (s *Service) ensureContentObject(ctx context.Context, actor Principal, g Co
 		if err := tx.SaveObject(o); err != nil {
 			return err
 		}
-		if err := s.emit(tx, actor, "storage.object.created", o.ID, o.Revision); err != nil {
+		if err := s.emit(ctx, tx, actor, "storage.object.created", o.ID, o.Revision); err != nil {
 			return err
 		}
 		out, err = s.status(tx, o)
@@ -545,7 +545,7 @@ func (s *Service) contentReference(ctx context.Context, p Principal, id, key str
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emitScoped(tx, p, action, h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
+		if e = s.emitScoped(ctx, tx, p, action, h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -595,7 +595,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 				return nil, e
 			}
 		}
-		if e := s.emitScoped(tx, p, "storage.content.released", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
+		if e := s.emitScoped(ctx, tx, p, "storage.content.released", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -656,7 +656,7 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, b
 			object = g.ObjectID
 			revision = h.Revision
 			if review && recordReviewAudit {
-				return s.emitScoped(tx, p, "storage.content.reviewed", id, h.Revision, "success", g.Protection.Scope)
+				return s.emitScoped(ctx, tx, p, "storage.content.reviewed", id, h.Revision, "success", g.Protection.Scope)
 			}
 			return nil
 		})
@@ -770,7 +770,7 @@ func (s *Service) cleanupContentGroup(ctx context.Context, actor Principal, id s
 				return e
 			}
 			objectDeleted = true
-			return s.emit(tx, actor, "storage.object.deleting", o.ID, o.Revision)
+			return s.emit(ctx, tx, actor, "storage.object.deleting", o.ID, o.Revision)
 		}
 		if e != nil {
 			return e
@@ -806,7 +806,7 @@ func (s *Service) cleanupContentGroup(ctx context.Context, actor Principal, id s
 					return e
 				}
 			}
-			if e = s.emit(tx, actor, "storage.object.deleting", o.ID, o.Revision); e != nil {
+			if e = s.emit(ctx, tx, actor, "storage.object.deleting", o.ID, o.Revision); e != nil {
 				return e
 			}
 		} else if o.State == "deleting" && remaining == 0 {
@@ -869,7 +869,7 @@ func (s *Service) expireContentHandles(ctx context.Context, p Principal, limit i
 					return e
 				}
 			}
-			if e = s.emitScoped(tx, p, "storage.content.expired", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
+			if e = s.emitScoped(ctx, tx, p, "storage.content.expired", h.ID, h.Revision, "success", g.Protection.Scope); e != nil {
 				return e
 			}
 		}

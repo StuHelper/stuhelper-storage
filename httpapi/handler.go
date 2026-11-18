@@ -128,6 +128,9 @@ func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoi
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 		defer cancel()
+		if tp := r.Header.Get("Traceparent"); tp != "" {
+			ctx = storage.WithTraceParent(ctx, tp)
+		}
 		controller := http.NewResponseController(w)
 		deadline, _ := ctx.Deadline()
 		_ = controller.SetReadDeadline(deadline)

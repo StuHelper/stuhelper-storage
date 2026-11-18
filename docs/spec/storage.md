@@ -28,6 +28,10 @@ OpenAPI 位于 contracts/storage.openapi.json，Go 与 TypeScript SDK 由固定�
 
 postgres/schema.sql 为首版迁移，由迁移身份执行。运行身份仅获 storage schema 必要表权限，audit 只追加且 audit_retention 只读。审计与 CloudEvents outbox 同事务提交；outbox 按自增序号保序并支持游标与受阻主题排除。
 
+事件可携带 traceparent 和学校范围 schoolid，事务提交时通过 pg_notify 唤醒 relay。
+
+服务、数据库、BHpan 连接层与托管层支持注入可选 Observer 记录脱敏操作、对象标识、错误类别与 HTTP 状态码，过滤非安全字符，严禁传入原始错误、URL 或凭据。RuntimeMetrics 只读导出本地暂存盘预算、传输并发槽占用和限速等待指标。
+
 事件修订按对象或实例递增。任务领取与失败列表使用部分索引，升级时移除包含已完成任务的旧领取索引。
 
 未引用上传在创建满 24 小时后进入删除。幂等响应 24 小时、已投递 outbox 默认 90 天、已完成任务默认 7 天及已完成托管操作默认 30 天由周期维护按单批上限清理；生产上线前仍需完成审计归档与备份恢复演练。
@@ -172,6 +176,7 @@ GET /api/v1/storage/operations 要求独立的 storage.operations.read 全局运
 | 场景 | 预期结果 |
 | --- | --- |
 | STORAGE-34 | 未知上传结果从原对象恢复，不重复写入；无人引用的共享内容到期清理，直接操作物理对象不能绕过引用保护 |
+| STORAGE-40 | 诊断回调仅输出脱敏分类与状态码，实时指标反映暂存与并发水位，Outbox 提交携带追踪上下文并唤醒监听而回滚不发通知 |
 
 ## 公开审计查询
 

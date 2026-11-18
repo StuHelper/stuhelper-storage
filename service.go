@@ -29,6 +29,7 @@ type Config struct {
 	AccountTransfers          int
 	BytesPerSecond            int64
 	AccountBytesPerSecond     int64
+	Observer                  Observer
 }
 type Service struct {
 	repo      Repository
@@ -242,17 +243,14 @@ func (s *Service) mutation(ctx context.Context, p Principal, action, id, key str
 		return json.Unmarshal(encoded, out)
 	})
 }
-func (s *Service) emit(tx Transaction, p Principal, kind, id string, revision int64) error {
-	return s.emitScoped(tx, p, kind, id, revision, "success", "*")
+func (s *Service) emit(ctx context.Context, tx Transaction, p Principal, kind, id string, revision int64) error {
+	return s.emitScoped(ctx, tx, p, kind, id, revision, "success", "*")
 }
-func (s *Service) emitScoped(tx Transaction, p Principal, kind, id string, revision int64, result, school string) error {
-	if result == "" {
-		result = "success"
-	}
+func (s *Service) emitScoped(ctx context.Context, tx Transaction, p Principal, kind, id string, revision int64, result, school string) error {
 	if school == "" {
 		school = "*"
 	}
-	return tx.Event(Event{ID: newID(), Type: kind, ObjectID: id, Revision: revision, Time: s.now(), Actor: p, AuditResult: result, AuditSchool: school})
+	return tx.Event(Event{ID: newID(), Type: kind, ObjectID: id, Revision: revision, Time: s.now(), Actor: p, TraceParent: TraceParentFromContext(ctx), SchoolID: eventSchoolID(Protection{Scope: school}), AuditResult: result, AuditSchool: school})
 }
 
 func validateInstance(v Instance, now time.Time) bool {
@@ -335,7 +333,7 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 		if err := tx.SaveInstance(v); err != nil {
 			return nil, err
 		}
-		return v, s.emit(tx, p, "storage.instance.registered", v.ID, v.Revision)
+		return v, s.emit(ctx, tx, p, "storage.instance.registered", v.ID, v.Revision)
 	}, &result)
 	return result, err
 }
@@ -421,7 +419,7 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 		if err := tx.SaveInstance(v); err != nil {
 			return nil, err
 		}
-		return v, s.emit(tx, p, "storage.instance.updated", v.ID, v.Revision)
+		return v, s.emit(ctx, tx, p, "storage.instance.updated", v.ID, v.Revision)
 	}, &result)
 	return result, err
 }
@@ -511,7 +509,7 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emitScoped(tx, p, "storage.object.created", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
+		if err := s.emitScoped(ctx, tx, p, "storage.object.created", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -660,7 +658,7 @@ func (s *Service) Reference(ctx context.Context, p Principal, id, key string, re
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emitScoped(tx, p, action, o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
+		if err := s.emitScoped(ctx, tx, p, action, o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -720,7 +718,7 @@ func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string,
 				return nil, err
 			}
 		}
-		if err := s.emitScoped(tx, p, "storage.object.deleting", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
+		if err := s.emitScoped(ctx, tx, p, "storage.object.deleting", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -804,7 +802,7 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emitScoped(tx, p, "storage.protection.changed", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
+		if err := s.emitScoped(ctx, tx, p, "storage.protection.changed", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)

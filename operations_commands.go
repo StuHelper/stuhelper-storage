@@ -83,7 +83,7 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 		if err = tx.SaveInstance(i); err != nil {
 			return nil, err
 		}
-		if err = s.emit(tx, p, "storage.instance."+command.Action, i.ID, i.Revision); err != nil {
+		if err = s.emit(ctx, tx, p, "storage.instance."+command.Action, i.ID, i.Revision); err != nil {
 			return nil, err
 		}
 		return instanceHealth(i, s.now()), nil
@@ -182,7 +182,7 @@ func (s *Service) RetryJob(ctx context.Context, p Principal, objectID, jobID, ke
 		if err = s.queue(tx, j); err != nil {
 			return nil, err
 		}
-		if err = tx.Event(Event{ID: newID(), Type: "storage.job.retried", ObjectID: object.ID, JobID: j.ID, Revision: object.Revision, Time: s.now(), Actor: p, AuditResult: "success", AuditSchool: object.Protection.Scope}); err != nil {
+		if err = tx.Event(Event{ID: newID(), Type: "storage.job.retried", ObjectID: object.ID, JobID: j.ID, Revision: object.Revision, Time: s.now(), Actor: p, TraceParent: TraceParentFromContext(ctx), SchoolID: eventSchoolID(object.Protection), AuditResult: "success", AuditSchool: object.Protection.Scope}); err != nil {
 			return nil, err
 		}
 		return jobFailure(j), nil

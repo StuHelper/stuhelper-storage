@@ -110,6 +110,7 @@ type Config struct {
 	PublicScopes []string
 	Clock        func() time.Time
 	Timeout      time.Duration
+	Observer     storage.Observer
 }
 type Service struct {
 	repo     Repository

@@ -47,7 +47,7 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 	identity, err := client.Identity(ctx)
 	if err != nil {
 		releaseRef()
-		return safe(err)
+		return p.safe("identity", err)
 	}
 	if accountDomain(identity.ID) != i.AccountDomain {
 		releaseRef()
@@ -56,7 +56,7 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 	libraries, err := client.Libraries(ctx)
 	if err != nil {
 		releaseRef()
-		return safe(err)
+		return p.safe("libraries", err)
 	}
 	library := ""
 	for _, l := range libraries {
@@ -75,7 +75,7 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 	dir, err := client.List(ctx, library)
 	if err != nil {
 		releaseRef()
-		return safe(err)
+		return p.safe("list", err)
 	}
 	found := false
 	for _, entry := range dir.Directories {
@@ -95,7 +95,7 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 		return storage.ErrStale
 	}
 	sessionCtx, cancel := context.WithDeadline(context.Background(), i.ExpiresAt)
-	s := &session{client: client, root: i.Root, library: library, account: i.AccountDomain, ref: i.CredentialRef, revision: i.CredentialRevision, expires: i.ExpiresAt, ctx: sessionCtx, cancel: cancel, shards: map[string]string{}}
+	s := &session{pool: p, client: client, root: i.Root, library: library, account: i.AccountDomain, ref: i.CredentialRef, revision: i.CredentialRevision, expires: i.ExpiresAt, ctx: sessionCtx, cancel: cancel, shards: map[string]string{}}
 	old = p.sessions[i.CredentialRef]
 	p.sessions[i.CredentialRef] = s
 	s.timer = time.AfterFunc(time.Until(s.expires), func() { p.expire(s) })

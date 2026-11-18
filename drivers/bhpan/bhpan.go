@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	storage "github.com/StuHelper/stuhelper-storage"
@@ -37,6 +38,7 @@ type Client interface {
 }
 
 type session struct {
+	pool                        *Pool
 	client                      Client
 	root, library, account, ref string
 	revision                    int64
@@ -64,6 +66,7 @@ type Pool struct {
 	provisioning map[string]*provisionOperation
 	inFlight     map[string]int
 	closed       bool
+	observer     atomic.Pointer[storage.Observer]
 }
 
 func NewPool() *Pool {
@@ -74,6 +77,15 @@ func NewPool() *Pool {
 		provisioning: map[string]*provisionOperation{},
 		inFlight:     map[string]int{},
 	}
+}
+
+// SetObserver installs or clears the sanitized diagnostic observer for provider errors.
+func (p *Pool) SetObserver(obs storage.Observer) {
+	if obs == nil {
+		p.observer.Store(nil)
+		return
+	}
+	p.observer.Store(&obs)
 }
 
 var token = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
@@ -137,7 +149,7 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	p.inFlight[ref]++
 	p.mu.Unlock()
 
-	root, library, account, err := provisionRemote(opCtx, client)
+	root, library, account, err := p.provisionRemote(opCtx, client)
 
 	p.mu.Lock()
 	delete(p.provisioning, ref)
@@ -158,24 +170,24 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	}
 	opCancel()
 	sessionCtx, cancel := context.WithDeadline(context.Background(), expires)
-	s := &session{client: client, root: root, library: library, account: account, ref: ref, revision: revision, expires: expires, ctx: sessionCtx, cancel: cancel, shards: map[string]string{}}
+	s := &session{pool: p, client: client, root: root, library: library, account: account, ref: ref, revision: revision, expires: expires, ctx: sessionCtx, cancel: cancel, shards: map[string]string{}}
 	p.sessions[ref] = s
 	s.timer = time.AfterFunc(time.Until(expires), func() { p.expire(s) })
 	p.mu.Unlock()
 	return storage.Instance{Adapter: "bhpan", AccountDomain: s.account, Root: root, CredentialRef: ref, CredentialRevision: revision, ExpiresAt: expires}, nil
 }
 
-func provisionRemote(ctx context.Context, client Client) (string, string, string, error) {
+func (p *Pool) provisionRemote(ctx context.Context, client Client) (string, string, string, error) {
 	identity, err := client.Identity(ctx)
 	if err != nil {
-		return "", "", "", safe(err)
+		return "", "", "", p.safe("identity", err)
 	}
 	if identity.ID == "" {
 		return "", "", "", storage.ErrDenied
 	}
 	libraries, err := client.Libraries(ctx)
 	if err != nil {
-		return "", "", "", safe(err)
+		return "", "", "", p.safe("libraries", err)
 	}
 	library := ""
 	for _, item := range libraries {
@@ -195,7 +207,7 @@ func provisionRemote(ctx context.Context, client Client) (string, string, string
 	}
 	root, err := client.CreateDirectory(ctx, library, "stuhelper-storage-"+hex.EncodeToString(nonce[:]))
 	if err != nil {
-		return "", "", "", safe(err)
+		return "", "", "", p.safe("create-directory", err)
 	}
 	if !child(library, root) {
 		return "", "", "", storage.ErrUnknown
@@ -289,7 +301,7 @@ func (s *session) checkContext(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
-func (s *session) safeErr(ctx context.Context, err error) error {
+func (s *session) safeErr(ctx context.Context, op string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -302,7 +314,7 @@ func (s *session) safeErr(ctx context.Context, err error) error {
 		}
 		return err
 	}
-	return safe(err)
+	return s.pool.safe(op, err)
 }
 func (s *session) cacheShards(dirs []protocol.Entry) error {
 	seen := map[string]string{}
@@ -364,7 +376,7 @@ func (s *session) ensureShard(ctx context.Context, opCtx context.Context, prefix
 			return s.rememberParent(prefix, s.root), nil
 		}
 		if listErr != nil {
-			return "", s.safeErr(ctx, listErr)
+			return "", s.safeErr(ctx, "list", listErr)
 		}
 		if cacheErr := s.cacheShards(dir.Directories); cacheErr != nil {
 			return "", cacheErr
@@ -373,7 +385,7 @@ func (s *session) ensureShard(ctx context.Context, opCtx context.Context, prefix
 			return id, nil
 		}
 	}
-	return "", s.safeErr(ctx, err)
+	return "", s.safeErr(ctx, "create-directory", err)
 }
 
 func (p *Pool) Verify(ctx context.Context, i storage.Instance) (storage.InstanceEvidence, error) {
@@ -385,14 +397,14 @@ func (p *Pool) Verify(ctx context.Context, i storage.Instance) (storage.Instance
 	defer done()
 	identity, err := s.client.Identity(opCtx)
 	if err != nil {
-		return storage.InstanceEvidence{}, s.safeErr(ctx, err)
+		return storage.InstanceEvidence{}, s.safeErr(ctx, "identity", err)
 	}
 	if accountDomain(identity.ID) != s.account {
 		return storage.InstanceEvidence{}, storage.ErrDenied
 	}
 	dir, err := s.client.List(opCtx, s.library)
 	if err != nil {
-		return storage.InstanceEvidence{}, s.safeErr(ctx, err)
+		return storage.InstanceEvidence{}, s.safeErr(ctx, "list", err)
 	}
 	found := false
 	for _, e := range dir.Directories {
@@ -405,7 +417,7 @@ func (p *Pool) Verify(ctx context.Context, i storage.Instance) (storage.Instance
 	}
 	quota, err := s.client.Quota(opCtx)
 	if err != nil {
-		return storage.InstanceEvidence{}, s.safeErr(ctx, err)
+		return storage.InstanceEvidence{}, s.safeErr(ctx, "quota", err)
 	}
 	return storage.InstanceEvidence{AccountDomain: s.account, ProviderFree: quota.Available(), VerifiedAt: time.Now()}, nil
 }
@@ -434,7 +446,7 @@ func (p *Pool) Find(ctx context.Context, i storage.Instance, intent string, expe
 		}
 		m, err := s.client.FileInfo(opCtx, leaf(expected.ID))
 		if err != nil {
-			return storage.Locator{}, s.safeErr(ctx, err)
+			return storage.Locator{}, s.safeErr(ctx, "file-info", err)
 		}
 		if m.ObjectID != leaf(expected.ID) {
 			return storage.Locator{}, storage.ErrIntegrity
@@ -449,7 +461,7 @@ func (p *Pool) Find(ctx context.Context, i storage.Instance, intent string, expe
 	// layouts even when the session already knows a shard for this prefix.
 	dir, err := s.client.List(opCtx, s.root)
 	if err != nil {
-		return out, s.safeErr(ctx, err)
+		return out, s.safeErr(ctx, "list", err)
 	}
 	if err := s.cacheShards(dir.Directories); err != nil {
 		return out, err
@@ -472,7 +484,7 @@ func (p *Pool) Find(ctx context.Context, i storage.Instance, intent string, expe
 	if shard := s.lookupShard(prefix); shard != "" && shard != s.root {
 		dir, err := s.client.List(opCtx, shard)
 		if err != nil {
-			return storage.Locator{}, s.safeErr(ctx, err)
+			return storage.Locator{}, s.safeErr(ctx, "list", err)
 		}
 		if err := match(shard, dir.Files); err != nil {
 			return storage.Locator{}, err
@@ -522,7 +534,7 @@ func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent st
 		}
 	}
 	if err != nil {
-		return remote, s.safeErr(ctx, err)
+		return remote, s.safeErr(ctx, "begin-upload", err)
 	}
 	if !child(shard, u.DocumentID) {
 		return remote, storage.ErrUnknown
@@ -531,7 +543,7 @@ func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent st
 		return remote, err
 	}
 	if _, err = s.client.WriteUpload(opCtx, u, src); err != nil {
-		return remote, s.safeErr(ctx, err)
+		return remote, s.safeErr(ctx, "write-upload", err)
 	}
 	// Recheck object, policy, instance and lease before metadata finalization.
 	if err := checkpoint(remote); err != nil {
@@ -541,7 +553,7 @@ func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent st
 		return remote, err
 	}
 	if err = s.client.FinishUpload(opCtx, u.DocumentID, u.Revision); err != nil {
-		return remote, s.safeErr(ctx, err)
+		return remote, s.safeErr(ctx, "finish-upload", err)
 	}
 	return remote, nil
 }
@@ -557,13 +569,13 @@ func (p *Pool) Read(ctx context.Context, i storage.Instance, r storage.Locator, 
 	}
 	m, err := s.client.FileInfo(opCtx, leaf(r.ID))
 	if err != nil {
-		return 0, s.safeErr(ctx, err)
+		return 0, s.safeErr(ctx, "file-info", err)
 	}
 	if m.ObjectID != leaf(r.ID) || m.DocumentID != r.ID || (r.Revision != "" && m.Revision != r.Revision) {
 		return 0, storage.ErrIntegrity
 	}
 	n, err := s.client.Download(opCtx, r.ID, dst)
-	return n, s.safeErr(ctx, err)
+	return n, s.safeErr(ctx, "download", err)
 }
 func (s *session) recycled(ctx context.Context, opCtx context.Context, id string) (bool, error) {
 	// Bounded metadata scan. A full bin beyond this bound remains unknown and
@@ -571,7 +583,7 @@ func (s *session) recycled(ctx context.Context, opCtx context.Context, id string
 	for start := 0; start < 10000; start += 1000 {
 		dir, err := s.client.RecycleBin(opCtx, s.library, start, 1000)
 		if err != nil {
-			return false, s.safeErr(ctx, err)
+			return false, s.safeErr(ctx, "recycle-bin", err)
 		}
 		for _, e := range dir.Files {
 			if e.ID == id {
@@ -599,21 +611,21 @@ func (p *Pool) Remove(ctx context.Context, i storage.Instance, r storage.Locator
 		return nil
 	}
 	if err != nil {
-		return s.safeErr(ctx, err)
+		return s.safeErr(ctx, "file-info", err)
 	}
 	if m.ObjectID != leaf(r.ID) {
 		return storage.ErrIntegrity
 	}
 	if m.DocumentID == r.ID {
 		if err = s.client.Delete(opCtx, r.ID); err != nil {
-			return s.safeErr(ctx, err)
+			return s.safeErr(ctx, "delete", err)
 		}
 		m, err = s.client.FileInfo(opCtx, leaf(r.ID))
 		if errors.Is(err, protocol.ErrNotFound) {
 			return nil
 		}
 		if err != nil {
-			return s.safeErr(ctx, err)
+			return s.safeErr(ctx, "file-info", err)
 		}
 	}
 	confirmed, err := s.recycled(ctx, opCtx, m.DocumentID)
@@ -627,16 +639,69 @@ func (p *Pool) Remove(ctx context.Context, i storage.Instance, r storage.Locator
 		return err
 	}
 	if err = s.client.Purge(opCtx, m.DocumentID); err != nil {
-		return s.safeErr(ctx, err)
+		return s.safeErr(ctx, "purge", err)
 	}
 	_, err = s.client.FileInfo(opCtx, leaf(r.ID))
 	if errors.Is(err, protocol.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
-		return s.safeErr(ctx, err)
+		return s.safeErr(ctx, "file-info", err)
 	}
 	return storage.ErrUnknown
+}
+func (p *Pool) safe(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if p != nil && !errors.Is(err, protocol.ErrNotFound) {
+		if obsPtr := p.observer.Load(); obsPtr != nil && *obsPtr != nil {
+			operation := op
+			status := 0
+			var pe *protocol.Error
+			if errors.As(err, &pe) {
+				if pe.Operation != "" {
+					operation = pe.Operation
+				}
+				status = pe.Status
+			}
+			storage.EmitDiagnostic(*obsPtr, storage.Diagnostic{
+				Component:  "bhpan",
+				Operation:  operation,
+				Category:   bhpanCategory(err),
+				HTTPStatus: status,
+			})
+		}
+	}
+	return safe(err)
+}
+func bhpanCategory(err error) string {
+	switch {
+	case errors.Is(err, protocol.ErrSession):
+		return "bhpan_session"
+	case errors.Is(err, protocol.ErrChallenge):
+		return "bhpan_challenge"
+	case errors.Is(err, protocol.ErrCredentials):
+		return "bhpan_credentials"
+	case errors.Is(err, protocol.ErrPermission):
+		return "bhpan_permission"
+	case errors.Is(err, protocol.ErrInput):
+		return "bhpan_invalid_input"
+	case errors.Is(err, protocol.ErrConflict):
+		return "bhpan_conflict"
+	case errors.Is(err, protocol.ErrProtocol):
+		return "bhpan_protocol"
+	case errors.Is(err, protocol.ErrDestination):
+		return "bhpan_untrusted_destination"
+	case errors.Is(err, protocol.ErrRejected):
+		return "bhpan_rejected"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "bhpan_unavailable"
+	}
 }
 func safe(err error) error {
 	if err == nil {

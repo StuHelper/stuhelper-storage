@@ -35,7 +35,7 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 				if e := s.releaseContentGroup(tx, cancelledGroup); e != nil {
 					return nil, e
 				}
-				if e := s.emitScoped(tx, p, "storage.content.protection.cancelled", id, h.Revision, "success", g.Protection.Scope); e != nil {
+				if e := s.emitScoped(ctx, tx, p, "storage.content.protection.cancelled", id, h.Revision, "success", g.Protection.Scope); e != nil {
 					return nil, e
 				}
 			}
@@ -52,7 +52,7 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emitScoped(tx, p, "storage.content.protection.requested", id, h.Revision, "success", g.Protection.Scope); e != nil {
+		if e = s.emitScoped(ctx, tx, p, "storage.content.protection.requested", id, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -236,7 +236,7 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id, pendin
 				return e
 			}
 		}
-		return s.emitScoped(tx, p, "storage.content.reused", id, current.Revision, "success", target.Protection.Scope)
+		return s.emitScoped(ctx, tx, p, "storage.content.reused", id, current.Revision, "success", target.Protection.Scope)
 	})
 	if err != nil {
 		return err

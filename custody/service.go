@@ -170,7 +170,7 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 			return e
 		}
 		out = b.View
-		return s.event(tx, p, b, "requested", "success")
+		return s.event(ctx, tx, p, b, "requested", "success")
 	})
 	if e != nil {
 		return out, e
@@ -418,6 +418,15 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	finish, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	resultErr := e
+	if resultErr != nil {
+		storage.EmitDiagnostic(s.cfg.Observer, storage.Diagnostic{
+			Component: "custody",
+			Operation: "execute",
+			ObjectID:  target,
+			JobID:     op.ID,
+			Category:  safeCode(resultErr),
+		})
+	}
 	e = s.repo.Transaction(finish, func(tx Tx) error {
 		latest, err := tx.Operation(op.ID)
 		if err != nil {
@@ -467,16 +476,16 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		case errors.Is(resultErr, storage.ErrDenied):
 			auditResult = "denied"
 		}
-		return s.event(tx, p, b, b.State, auditResult)
+		return s.event(ctx, tx, p, b, b.State, auditResult)
 	})
 	return out, e
 }
-func (s *Service) event(tx Tx, p storage.Principal, b Binding, kind, result string) error {
+func (s *Service) event(ctx context.Context, tx Tx, p storage.Principal, b Binding, kind, result string) error {
 	var nonce [16]byte
 	if _, e := rand.Read(nonce[:]); e != nil {
 		return storage.ErrUnavailable
 	}
-	return tx.Event(storage.Event{ID: hex.EncodeToString(nonce[:]), Type: "storage.custody." + kind, ObjectID: b.ID, Revision: b.Revision, Time: s.cfg.Clock(), Actor: p, AuditResult: result, AuditSchool: "*"})
+	return tx.Event(storage.Event{ID: hex.EncodeToString(nonce[:]), Type: "storage.custody." + kind, ObjectID: b.ID, Revision: b.Revision, Time: s.cfg.Clock(), Actor: p, TraceParent: storage.TraceParentFromContext(ctx), AuditResult: result, AuditSchool: "*"})
 }
 func safeCode(e error) string {
 	switch {

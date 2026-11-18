@@ -12,14 +12,14 @@ func (r *Repository) CheckRuntime(ctx context.Context) error {
 	var allowed bool
 	err := r.DB.QueryRowContext(ctx, `SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole FROM pg_roles WHERE rolname=current_user`).Scan(&allowed)
 	if err != nil {
-		return safe(err)
+		return r.safe("check_runtime", err)
 	}
 	if !allowed {
 		return storage.ErrDenied
 	}
 	err = r.DB.QueryRowContext(ctx, `SELECT has_schema_privilege(current_user,'storage','USAGE') AND NOT has_schema_privilege(current_user,'storage','CREATE') AND NOT has_table_privilege(current_user,'storage.audit','UPDATE') AND NOT has_table_privilege(current_user,'storage.audit','DELETE') AND NOT has_table_privilege(current_user,'storage.audit','TRUNCATE') AND has_table_privilege(current_user,'storage.audit_retention','SELECT') AND NOT has_table_privilege(current_user,'storage.audit_retention','INSERT') AND NOT has_table_privilege(current_user,'storage.audit_retention','UPDATE') AND NOT has_table_privilege(current_user,'storage.audit_retention','DELETE') AND NOT has_table_privilege(current_user,'storage.audit_retention','TRUNCATE')`).Scan(&allowed)
 	if err != nil {
-		return safe(err)
+		return r.safe("check_runtime", err)
 	}
 	if !allowed {
 		return storage.ErrDenied
@@ -33,7 +33,7 @@ func (r *Repository) CheckRuntime(ctx context.Context) error {
 		for _, privilege := range strings.Split(privileges, ",") {
 			err = r.DB.QueryRowContext(ctx, `SELECT has_table_privilege(current_user,$1,$2)`, "storage."+table, privilege).Scan(&allowed)
 			if err != nil {
-				return safe(err)
+				return r.safe("check_runtime", err)
 			}
 			if !allowed {
 				return storage.ErrDenied
