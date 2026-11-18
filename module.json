@@ -103,7 +103,8 @@
     ],
     "STORAGE-23": [
       "operations_commands_test.go#TestOperatorInstanceCommandsFenceReplayAndPreserveCustody",
-      "operations_commands_test.go#TestOperatorCommandHTTPContract"
+      "operations_commands_test.go#TestOperatorCommandHTTPContract",
+      "operations_commands_test.go#TestOperatorCommandCannotBypassContributorConsent"
     ],
     "STORAGE-24": [
       "operations_commands_test.go#TestOperatorRetryPreservesUnknownWriteAndIsIdempotent",
@@ -112,10 +113,12 @@
     ],
     "STORAGE-25": [
       "contribution_test.go#TestContributionControlFencesOwnershipReplayAndConsentExpiry",
-      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup"
+      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup",
+      "contribution_test.go#TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone"
     ],
     "STORAGE-26": [
-      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe"
+      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe",
+      "contribution_test.go#TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone"
     ],
     "STORAGE-27": [
       "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation",

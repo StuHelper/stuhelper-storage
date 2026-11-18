@@ -46,6 +46,9 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 				return nil, ErrDenied
 			}
 			if command.Action == "resume" {
+				if i.Ownership == "contributor" && (i.ContributionControl == nil || i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(s.now())) {
+					return nil, ErrDenied
+				}
 				if i.State != "paused" {
 					return nil, ErrConflict
 				}
@@ -62,6 +65,9 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 			}
 			i.State, i.Authorized = "revoked", false
 		case "quota":
+			if i.Ownership == "contributor" && i.ContributionControl == nil && *command.LimitBytes > 0 {
+				return nil, ErrDenied
+			}
 			if i.ContributionControl != nil && *command.LimitBytes > i.ContributionControl.LimitBytes {
 				return nil, ErrDenied
 			}
