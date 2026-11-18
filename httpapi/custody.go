@@ -38,7 +38,7 @@ func NewCustody(s *custody.Service, a Authenticator) (http.Handler, error) {
 				p, e = a.Authenticate(r)
 				if e != nil || !p.Valid() {
 					if errors.Is(e, storage.ErrUnavailable) {
-						respondError(w, e)
+						problem(w, 503, "identity_unavailable")
 					} else {
 						problem(w, 401, "authentication_required")
 					}

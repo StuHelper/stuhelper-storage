@@ -29,39 +29,52 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 	p.mu.Lock()
 	old := p.sessions[i.CredentialRef]
 	_, tracked := p.versions[i.CredentialRef]
-	if p.closed || (!tracked && len(p.versions) >= 100) || i.CredentialRevision <= p.revoked[i.CredentialRef] || old != nil && (old.revision > i.CredentialRevision || old.root != i.Root || old.account != i.AccountDomain) {
+	if p.closed || p.provisioning[i.CredentialRef] != nil || (!tracked && len(p.versions) >= 100) || i.CredentialRevision <= p.revoked[i.CredentialRef] || old != nil && (old.revision > i.CredentialRevision || old.root != i.Root || old.account != i.AccountDomain) {
 		p.mu.Unlock()
 		return storage.ErrDenied
 	}
 	p.versions[i.CredentialRef]++
 	version := p.versions[i.CredentialRef]
+	p.inFlight[i.CredentialRef]++
 	p.mu.Unlock()
+	releaseRef := func() {
+		p.mu.Lock()
+		p.inFlight[i.CredentialRef]--
+		p.cleanupRefLocked(i.CredentialRef)
+		p.mu.Unlock()
+	}
 
 	identity, err := client.Identity(ctx)
 	if err != nil {
+		releaseRef()
 		return p.safe("identity", err)
 	}
 	if accountDomain(identity.ID) != i.AccountDomain {
+		releaseRef()
 		return storage.ErrDenied
 	}
 	libraries, err := client.Libraries(ctx)
 	if err != nil {
+		releaseRef()
 		return p.safe("libraries", err)
 	}
 	library := ""
 	for _, l := range libraries {
 		if l.Type == "user_doc_lib" && child(l.ID, i.Root) {
 			if library != "" {
+				releaseRef()
 				return storage.ErrDenied
 			}
 			library = l.ID
 		}
 	}
 	if library == "" {
+		releaseRef()
 		return storage.ErrDenied
 	}
 	dir, err := client.List(ctx, library)
 	if err != nil {
+		releaseRef()
 		return p.safe("list", err)
 	}
 	found := false
@@ -71,15 +84,18 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 		}
 	}
 	if !found {
+		releaseRef()
 		return storage.ErrDenied
 	}
 	p.mu.Lock()
-	if ctx.Err() != nil || p.closed || p.versions[i.CredentialRef] != version || !i.ExpiresAt.After(time.Now()) {
+	p.inFlight[i.CredentialRef]--
+	if ctx.Err() != nil || p.closed || i.CredentialRevision <= p.revoked[i.CredentialRef] || p.versions[i.CredentialRef] != version || !i.ExpiresAt.After(time.Now()) {
+		p.cleanupRefLocked(i.CredentialRef)
 		p.mu.Unlock()
 		return storage.ErrStale
 	}
 	sessionCtx, cancel := context.WithDeadline(context.Background(), i.ExpiresAt)
-	s := &session{pool: p, client: client, root: i.Root, library: library, account: i.AccountDomain, ref: i.CredentialRef, revision: i.CredentialRevision, expires: i.ExpiresAt, ctx: sessionCtx, cancel: cancel}
+	s := &session{pool: p, client: client, root: i.Root, library: library, account: i.AccountDomain, ref: i.CredentialRef, revision: i.CredentialRevision, expires: i.ExpiresAt, ctx: sessionCtx, cancel: cancel, shards: map[string]string{}}
 	old = p.sessions[i.CredentialRef]
 	p.sessions[i.CredentialRef] = s
 	s.timer = time.AfterFunc(time.Until(s.expires), func() { p.expire(s) })
