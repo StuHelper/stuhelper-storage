@@ -441,7 +441,11 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 				if existing.Owner != p || existing.CreationHash != o.CreationHash {
 					return nil, ErrConflict
 				}
-				if err := s.authorize(ctx, p, "storage.objects.read", existing.ID, existing.Protection); err != nil {
+				action := "storage.objects.read"
+				if r.ContentGroup != "" && existing.ContentGroup == r.ContentGroup {
+					action = "storage.objects.create"
+				}
+				if err := s.authorize(ctx, p, action, existing.ID, existing.Protection); err != nil {
 					return nil, err
 				}
 				return s.status(tx, existing)
@@ -523,8 +527,11 @@ func (s *Service) statusSnapshot(tx Transaction, o Object) (Status, error) {
 	return s.statusFromLoaded(o, replicas, tx.InstanceSnapshot, s.now())
 }
 func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, error) {
+	return s.statusWithAction(ctx, p, id, "storage.objects.read")
+}
+func (s *Service) statusWithAction(ctx context.Context, p Principal, id, action string) (Status, error) {
 	if contentID(id) {
-		return s.contentStatus(ctx, p, id)
+		return s.contentStatusAction(ctx, p, id, action)
 	}
 	if !validID(id) {
 		return Status{}, ErrInput
@@ -535,7 +542,7 @@ func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, e
 		if err != nil {
 			return err
 		}
-		if err := s.authorize(ctx, p, "storage.objects.read", id, o.Protection); err != nil {
+		if err := s.authorize(ctx, p, action, id, o.Protection); err != nil {
 			return err
 		}
 		out, err = s.statusSnapshot(tx, o)

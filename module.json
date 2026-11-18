@@ -37,7 +37,9 @@
       "integration_test.go#TestOutboxUpgradePreservesPendingRevisions"
     ],
     "STORAGE-08": [
-      "integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary"
+      "integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary",
+      "contracts_http_test.go#TestHTTPChunkedMaxBytesAuthUnavailableAndDuplicateIdempotencyHeader",
+      "contracts_http_test.go#TestLeastPrivilegeCreateDownloadAndExpiredConsentRetryRejection"
     ],
     "STORAGE-09": [
       "integration_test.go#TestDrainWaitsForVerifiedReplacement"
@@ -114,7 +116,8 @@
     "STORAGE-24": [
       "operations_commands_test.go#TestOperatorRetryPreservesUnknownWriteAndIsIdempotent",
       "operations_commands_test.go#TestOperatorRetryRejectsRevocationSupersessionAndQueueOverflow",
-      "operations_commands_test.go#TestOperatorRetryRecoversTransientVerificationFailure"
+      "operations_commands_test.go#TestOperatorRetryRecoversTransientVerificationFailure",
+      "contracts_http_test.go#TestLeastPrivilegeCreateDownloadAndExpiredConsentRetryRejection"
     ],
     "STORAGE-25": [
       "contribution_test.go#TestContributionControlFencesOwnershipReplayAndConsentExpiry",
@@ -127,7 +130,8 @@
     ],
     "STORAGE-27": [
       "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation",
-      "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses"
+      "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses",
+      "contracts_http_test.go#TestCustodyBrowserSDKClassifies404AsNotFound"
     ],
     "STORAGE-28": [
       "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance",
