@@ -1765,6 +1765,99 @@
         "description": "Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization."
       }
     },
+    "/api/v1/storage/contributions/summary": {
+      "get": {
+        "operationId": "summarizeContributions",
+        "description": "Sanitized community contribution capacity summary requiring dedicated storage.contributions.summary permission. Aggregates declared vs verified available contributor bytes from the ledger without probing providers or exposing per-instance identifiers.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/storage/contributions/{id}": {
       "get": {
         "operationId": "inspectContributionInstance",
@@ -3505,6 +3598,63 @@
             "minimum": 0
           },
           "authorization_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ContributionSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "declared_bytes",
+          "available_bytes",
+          "used_bytes",
+          "reserved_bytes",
+          "active_instances",
+          "registered_instances",
+          "status",
+          "observed_at"
+        ],
+        "properties": {
+          "declared_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "available_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reserved_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "active_instances": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "registered_instances": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "healthy",
+              "degraded",
+              "unavailable"
+            ]
+          },
+          "observed_at": {
             "type": "string",
             "format": "date-time"
           }

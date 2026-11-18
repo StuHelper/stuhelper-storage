@@ -44,6 +44,9 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 		}
 		return s.ListContributionCandidates(r.Context(), p, r.URL.Query().Get("owner_domain"), n, r.URL.Query().Get("after"))
 	})
+	h.mount(mux, "GET /api/v1/storage/contributions/summary", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+		return h.s.SummarizeContributions(r.Context(), p)
+	})
 	h.mount(mux, "GET /api/v1/storage/contributions/{id}", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 		return h.s.InspectContribution(r.Context(), p, r.PathValue("id"), r.URL.Query().Get("owner_domain"))
 	})

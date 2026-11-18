@@ -42,6 +42,30 @@ func (e ContributionControlState) Valid() bool {
 	}
 }
 
+// Defines values for ContributionSummaryStatus.
+const (
+	Degraded    ContributionSummaryStatus = "degraded"
+	Healthy     ContributionSummaryStatus = "healthy"
+	Idle        ContributionSummaryStatus = "idle"
+	Unavailable ContributionSummaryStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the ContributionSummaryStatus enum.
+func (e ContributionSummaryStatus) Valid() bool {
+	switch e {
+	case Degraded:
+		return true
+	case Healthy:
+		return true
+	case Idle:
+		return true
+	case Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CustodyBindingLastError.
 const (
 	CustodyBindingLastErrorAttemptsExhausted     CustodyBindingLastError = "attempts_exhausted"
@@ -326,6 +350,21 @@ type ContributionSnapshot struct {
 	State                  string               `json:"state"`
 	UsedBytes              int64                `json:"used_bytes"`
 }
+
+// ContributionSummary defines model for ContributionSummary.
+type ContributionSummary struct {
+	ActiveInstances     int                       `json:"active_instances"`
+	AvailableBytes      int64                     `json:"available_bytes"`
+	DeclaredBytes       int64                     `json:"declared_bytes"`
+	ObservedAt          time.Time                 `json:"observed_at"`
+	RegisteredInstances int                       `json:"registered_instances"`
+	ReservedBytes       int64                     `json:"reserved_bytes"`
+	Status              ContributionSummaryStatus `json:"status"`
+	UsedBytes           int64                     `json:"used_bytes"`
+}
+
+// ContributionSummaryStatus defines model for ContributionSummary.Status.
+type ContributionSummaryStatus string
 
 // CreateObject defines model for CreateObject.
 type CreateObject struct {
@@ -833,6 +872,11 @@ type ClientInterface interface {
 	// Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
 	ListContributionCandidates(ctx context.Context, params *ListContributionCandidatesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SummarizeContributions performs a GET /api/v1/storage/contributions/summary (the `SummarizeContributions` operationId) request.
+	//
+	// Sanitized community contribution capacity summary requiring dedicated storage.contributions.summary permission. Aggregates declared vs verified available contributor bytes from the ledger without probing providers or exposing per-instance identifiers.
+	SummarizeContributions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InspectContributionInstance performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
 	//
 	// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
@@ -1030,6 +1074,21 @@ type ClientInterface interface {
 // Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
 func (c *Client) ListContributionCandidates(ctx context.Context, params *ListContributionCandidatesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListContributionCandidatesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SummarizeContributions performs a GET /api/v1/storage/contributions/summary (the `SummarizeContributions` operationId) request.
+//
+// Sanitized community contribution capacity summary requiring dedicated storage.contributions.summary permission. Aggregates declared vs verified available contributor bytes from the ledger without probing providers or exposing per-instance identifiers.
+func (c *Client) SummarizeContributions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSummarizeContributionsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -1695,6 +1754,33 @@ func NewListContributionCandidatesRequest(server string, params *ListContributio
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSummarizeContributionsRequest constructs an http.Request for the SummarizeContributions method
+func NewSummarizeContributionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/contributions/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -3094,6 +3180,13 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	ListContributionCandidatesWithResponse(ctx context.Context, params *ListContributionCandidatesParams, reqEditors ...RequestEditorFn) (*ListContributionCandidatesResponse, error)
 
+	// SummarizeContributionsWithResponse performs a GET /api/v1/storage/contributions/summary (the `SummarizeContributions` operationId) request.
+	//
+	// Sanitized community contribution capacity summary requiring dedicated storage.contributions.summary permission. Aggregates declared vs verified available contributor bytes from the ledger without probing providers or exposing per-instance identifiers.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SummarizeContributionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*SummarizeContributionsResponse, error)
+
 	// InspectContributionInstanceWithResponse performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
 	//
 	// Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
@@ -3420,6 +3513,96 @@ func (r ListContributionCandidatesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListContributionCandidatesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SummarizeContributionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributionSummary
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON200() *ContributionSummary {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SummarizeContributionsResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SummarizeContributionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SummarizeContributionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SummarizeContributionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SummarizeContributionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5290,6 +5473,19 @@ func (c *ClientWithResponses) ListContributionCandidatesWithResponse(ctx context
 	return ParseListContributionCandidatesResponse(rsp)
 }
 
+// SummarizeContributionsWithResponse performs a GET /api/v1/storage/contributions/summary (the `SummarizeContributions` operationId) request.
+//
+// Sanitized community contribution capacity summary requiring dedicated storage.contributions.summary permission. Aggregates declared vs verified available contributor bytes from the ledger without probing providers or exposing per-instance identifiers.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SummarizeContributionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*SummarizeContributionsResponse, error) {
+	rsp, err := c.SummarizeContributions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSummarizeContributionsResponse(rsp)
+}
+
 // InspectContributionInstanceWithResponse performs a GET /api/v1/storage/contributions/{id} (the `InspectContributionInstance` operationId) request.
 //
 // Dedicated contribution service read grant, expected owner domain and contributor ownership required. Ledger only, no credentials or supplier calls.
@@ -5787,6 +5983,81 @@ func ParseListContributionCandidatesResponse(rsp *http.Response) (*ListContribut
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ContributionCandidates
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSummarizeContributionsResponse parses an HTTP response from a SummarizeContributionsWithResponse call
+func ParseSummarizeContributionsResponse(rsp *http.Response) (*SummarizeContributionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SummarizeContributionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributionSummary
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

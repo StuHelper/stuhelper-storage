@@ -16,6 +16,72 @@ type ContributionCandidates struct {
 	NextCursor string                  `json:"next_cursor"`
 }
 
+type ContributionSummary struct {
+	DeclaredBytes       int64     `json:"declared_bytes"`
+	AvailableBytes      int64     `json:"available_bytes"`
+	UsedBytes           int64     `json:"used_bytes"`
+	ReservedBytes       int64     `json:"reserved_bytes"`
+	ActiveInstances     int       `json:"active_instances"`
+	RegisteredInstances int       `json:"registered_instances"`
+	Status              string    `json:"status"`
+	ObservedAt          time.Time `json:"observed_at"`
+}
+
+// SummarizeContributions aggregates community contributor capacity from the
+// ledger without probing providers or exposing per-instance identifiers.
+func (s *Service) SummarizeContributions(ctx context.Context, p Principal) (ContributionSummary, error) {
+	out := ContributionSummary{Status: "idle"}
+	if err := s.authorize(ctx, p, "storage.contributions.summary", "", Protection{}); err != nil {
+		return out, err
+	}
+	err := s.repo.Transaction(ctx, func(tx Transaction) error {
+		now := s.now()
+		out = ContributionSummary{Status: "idle", ObservedAt: now}
+		for page, after := 0, ""; page < 1000; page++ {
+			instances, err := tx.Instances(100, after)
+			if err != nil {
+				return err
+			}
+			for _, i := range instances {
+				if i.Ownership != "contributor" {
+					continue
+				}
+				out.UsedBytes += i.Used
+				out.ReservedBytes += i.Reserved
+				ctrl := i.ContributionControl
+				if ctrl == nil || ctrl.State == "revoked" {
+					continue
+				}
+				out.RegisteredInstances++
+				if ctrl.State != "draining" && ctrl.Until.After(now) {
+					out.DeclaredBytes += ctrl.LimitBytes
+				}
+				h := instanceHealth(i, now)
+				if h.Reason == "" || h.Reason == "capacity_exhausted" {
+					out.ActiveInstances++
+					out.AvailableBytes += h.AvailableBytes
+				}
+			}
+			if len(instances) < 100 {
+				break
+			}
+			after = instances[len(instances)-1].ID
+		}
+		switch {
+		case out.RegisteredInstances == 0:
+			out.Status = "idle"
+		case out.ActiveInstances == out.RegisteredInstances && out.AvailableBytes > 0:
+			out.Status = "healthy"
+		case out.ActiveInstances > 0:
+			out.Status = "degraded"
+		default:
+			out.Status = "unavailable"
+		}
+		return s.authorize(ctx, p, "storage.contributions.summary", "", Protection{})
+	})
+	return out, err
+}
+
 func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, owner string, n int, after string) (ContributionCandidates, error) {
 	out := ContributionCandidates{Items: []ContributionCandidate{}}
 	if !validID(owner) || n < 1 || n > 100 || (after != "" && !validID(after)) {

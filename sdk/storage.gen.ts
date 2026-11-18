@@ -183,6 +183,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/contributions/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Sanitized community contribution capacity summary requiring dedicated storage.contributions.summary permission. Aggregates declared vs verified available contributor bytes from the ledger without probing providers or exposing per-instance identifiers. */
+        get: operations["summarizeContributions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/storage/contributions/{id}": {
         parameters: {
             query?: never;
@@ -625,6 +642,22 @@ export interface components {
             available_bytes: number;
             /** Format: date-time */
             authorization_expires_at: string;
+        };
+        ContributionSummary: {
+            /** Format: int64 */
+            declared_bytes: number;
+            /** Format: int64 */
+            available_bytes: number;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int64 */
+            reserved_bytes: number;
+            active_instances: number;
+            registered_instances: number;
+            /** @enum {string} */
+            status: "idle" | "healthy" | "degraded" | "unavailable";
+            /** Format: date-time */
+            observed_at: string;
         };
         ContributionCandidates: {
             items: components["schemas"]["ContributionCandidate"][];
@@ -1960,6 +1993,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobFailure"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    summarizeContributions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionSummary"];
                 };
             };
             /** @description Stable sanitized error */
