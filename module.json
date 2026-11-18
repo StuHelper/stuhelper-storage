@@ -86,7 +86,8 @@
     ],
     "STORAGE-21": [
       "operations_test.go#TestOperationsAuthorizationCapacityFailuresAndPagination",
-      "operations_test.go#TestSupersededVerificationIsNotAnActionableBlockage"
+      "operations_test.go#TestSupersededVerificationIsNotAnActionableBlockage",
+      "operations_test.go#TestOperationsReadSnapshotDoesNotBlockOrDeadlockConcurrentWrites"
     ],
     "STORAGE-22": [
       "media_boundary_test.go#TestStableClientKeySurvivesReplayExpiryAndDeletion",
@@ -126,7 +127,8 @@
       "executor/executor_test.go#TestConfiguredQuotaRefreshWindowAndAuthorization",
       "executor/maintenance_test.go#TestLongMaintenanceSweepVisitsAllPagesAndDueAccounts",
       "executor/maintenance_test.go#TestLongMaintenanceSweepStopsInFlightPage",
-      "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor"
+      "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor",
+      "operations_test.go#TestReconcileSkipsTombstonesAndHealthyObjectInstanceLocks"
     ],
     "STORAGE-31": [
       "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission"

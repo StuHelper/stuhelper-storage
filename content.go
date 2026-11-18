@@ -84,6 +84,12 @@ func (s *Service) contentGroup(tx Transaction, p Principal, r CreateRequest) (Co
 	return g, tx.SaveContentGroup(g)
 }
 func (s *Service) contentView(tx Transaction, h ContentHandle, g ContentGroup) (Status, error) {
+	return s.contentViewWith(tx, h, g, tx.Object, s.status)
+}
+func (s *Service) contentViewSnapshot(tx Transaction, h ContentHandle, g ContentGroup) (Status, error) {
+	return s.contentViewWith(tx, h, g, tx.ObjectSnapshot, s.statusSnapshot)
+}
+func (s *Service) contentViewWith(tx Transaction, h ContentHandle, g ContentGroup, readObj func(string) (Object, error), statusFn func(Transaction, Object) (Status, error)) (Status, error) {
 	out := Status{ID: h.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy, Revision: h.Revision, State: "pending", Published: h.Published, Desired: g.Policy.Target}
 	if h.State != "active" {
 		out.State = "deleted"
@@ -101,7 +107,7 @@ func (s *Service) contentView(tx Transaction, h ContentHandle, g ContentGroup) (
 			if group.State != "deleting" {
 				continue
 			}
-			object, e := tx.Object(group.ObjectID)
+			object, e := readObj(group.ObjectID)
 			if errors.Is(e, ErrNotFound) {
 				out.State = "deleting"
 				continue
@@ -118,14 +124,14 @@ func (s *Service) contentView(tx Transaction, h ContentHandle, g ContentGroup) (
 	if !h.Verified {
 		return out, nil
 	}
-	o, err := tx.Object(g.ObjectID)
+	o, err := readObj(g.ObjectID)
 	if errors.Is(err, ErrNotFound) {
 		return out, nil
 	}
 	if err != nil {
 		return out, err
 	}
-	st, err := s.status(tx, o)
+	st, err := statusFn(tx, o)
 	if err != nil {
 		return out, err
 	}
@@ -147,13 +153,26 @@ func (s *Service) contentStatus(ctx context.Context, p Principal, id string) (St
 	return s.contentStatusAction(ctx, p, id, "storage.objects.read")
 }
 func (s *Service) contentStatusAction(ctx context.Context, p Principal, id, action string) (Status, error) {
+	if !validID(id) {
+		return Status{}, ErrInput
+	}
 	var out Status
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		h, g, e := s.contentGuard(ctx, tx, p, action, id)
+	err := s.readTx(ctx, func(tx Transaction) error {
+		h, e := tx.ContentHandle(id)
 		if e != nil {
 			return e
 		}
-		out, e = s.contentView(tx, h, g)
+		g, e := tx.ContentGroup(h.GroupID)
+		if e != nil {
+			return e
+		}
+		if h.Owner != p {
+			return ErrDenied
+		}
+		if e = s.authorize(ctx, p, action, id, g.Protection); e != nil {
+			return e
+		}
+		out, e = s.contentViewSnapshot(tx, h, g)
 		return e
 	})
 	return out, err

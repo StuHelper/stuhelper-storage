@@ -292,6 +292,13 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 	return result, err
 }
 
+func (s *Service) readTx(ctx context.Context, f func(Transaction) error) error {
+	if rr, ok := s.repo.(ReadRepository); ok {
+		return rr.ReadTransaction(ctx, f)
+	}
+	return s.repo.Transaction(ctx, f)
+}
+
 func (s *Service) Instances(ctx context.Context, p Principal, limit int, after string) ([]Instance, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrInput
@@ -300,7 +307,7 @@ func (s *Service) Instances(ctx context.Context, p Principal, limit int, after s
 		return nil, err
 	}
 	var out []Instance
-	err := s.repo.Transaction(ctx, func(tx Transaction) error { var err error; out, err = tx.Instances(limit, after); return err })
+	err := s.readTx(ctx, func(tx Transaction) error { var err error; out, err = tx.Instances(limit, after); return err })
 	return out, err
 }
 
@@ -386,23 +393,19 @@ func (s *Service) objectGuard(ctx context.Context, tx Transaction, p Principal, 
 	}
 	return o, s.authorize(ctx, p, action, id, o.Protection)
 }
-func (s *Service) status(tx Transaction, o Object) (Status, error) {
-	replicas, err := tx.Replicas(o.ID)
-	if err != nil {
-		return Status{}, err
-	}
+func (s *Service) statusFromLoaded(o Object, replicas []Replica, lookup func(string) (Instance, error), now time.Time) (Status, error) {
 	count := 0
 	accounts := map[string]bool{}
 	owners := map[string]bool{}
 	for _, r := range replicas {
-		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) {
+		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(now.Add(-s.cfg.VerificationAge)) {
 			continue
 		}
-		i, err := tx.Instance(r.InstanceID)
+		i, err := lookup(r.InstanceID)
 		if err != nil {
 			return Status{}, err
 		}
-		if !i.Allows(o.Protection, s.now()) || r.CredentialRevision != i.CredentialRevision || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
+		if !i.Allows(o.Protection, now) || r.CredentialRevision != i.CredentialRevision || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
 			continue
 		}
 		accounts[i.AccountDomain] = true
@@ -425,17 +428,37 @@ func (s *Service) status(tx Transaction, o Object) (Status, error) {
 	}
 	return Status{o.ID, o.Size, o.SHA256, o.Protection, o.Policy, o.Revision, state, o.Published, count, o.Policy.Target}, nil
 }
+func (s *Service) status(tx Transaction, o Object) (Status, error) {
+	replicas, err := tx.Replicas(o.ID)
+	if err != nil {
+		return Status{}, err
+	}
+	return s.statusFromLoaded(o, replicas, tx.Instance, s.now())
+}
+func (s *Service) statusSnapshot(tx Transaction, o Object) (Status, error) {
+	replicas, err := tx.Replicas(o.ID)
+	if err != nil {
+		return Status{}, err
+	}
+	return s.statusFromLoaded(o, replicas, tx.InstanceSnapshot, s.now())
+}
 func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, error) {
 	if contentID(id) {
 		return s.contentStatus(ctx, p, id)
 	}
+	if !validID(id) {
+		return Status{}, ErrInput
+	}
 	var out Status
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		o, err := s.objectGuard(ctx, tx, p, "storage.objects.read", id)
+	err := s.readTx(ctx, func(tx Transaction) error {
+		o, err := tx.ObjectSnapshot(id)
 		if err != nil {
 			return err
 		}
-		out, err = s.status(tx, o)
+		if err := s.authorize(ctx, p, "storage.objects.read", id, o.Protection); err != nil {
+			return err
+		}
+		out, err = s.statusSnapshot(tx, o)
 		return err
 	})
 	return out, err

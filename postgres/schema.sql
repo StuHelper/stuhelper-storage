@@ -37,8 +37,11 @@ CREATE TABLE IF NOT EXISTS storage.jobs (
     lease_until timestamptz NOT NULL,
     data jsonb NOT NULL
 );
+CREATE INDEX IF NOT EXISTS objects_reconcile ON storage.objects(id) WHERE data->>'state'<>'deleted';
 CREATE INDEX IF NOT EXISTS replicas_instance ON storage.replicas(instance_id);
 CREATE INDEX IF NOT EXISTS jobs_claim ON storage.jobs(state,available_at,lease_until);
+CREATE INDEX IF NOT EXISTS jobs_active_claim ON storage.jobs(state,available_at,lease_until) WHERE state IN ('pending','running','blocked');
+CREATE INDEX IF NOT EXISTS jobs_failed ON storage.jobs(id) WHERE state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'';
 CREATE TABLE IF NOT EXISTS storage.idempotency (
     key text PRIMARY KEY,
     data jsonb NOT NULL
