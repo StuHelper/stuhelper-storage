@@ -36,7 +36,7 @@ func (t *custodyTx) SaveBinding(b custody.Binding) error {
 		return storage.ErrInput
 	}
 	_, e = t.tx.ExecContext(t.ctx, `INSERT INTO storage.custody_bindings(id,owner_issuer,owner_subject,account_domain,data) VALUES($1,$2,$3,NULLIF($4,''),$5) ON CONFLICT(id) DO UPDATE SET account_domain=EXCLUDED.account_domain,data=EXCLUDED.data WHERE storage.custody_bindings.owner_issuer=EXCLUDED.owner_issuer AND storage.custody_bindings.owner_subject=EXCLUDED.owner_subject`, b.ID, b.Owner.Issuer, b.Owner.Subject, b.AccountDomain, data)
-	return safe(e)
+	return t.safe("save_binding", e)
 }
 func (t *custodyTx) SaveOperation(o custody.Operation) error {
 	data, e := json.Marshal(o)
@@ -44,7 +44,7 @@ func (t *custodyTx) SaveOperation(o custody.Operation) error {
 		return storage.ErrInput
 	}
 	_, e = t.tx.ExecContext(t.ctx, `INSERT INTO storage.custody_operations(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data`, o.ID, data)
-	return safe(e)
+	return t.safe("save_operation", e)
 }
 func (t *custodyTx) List(p storage.Principal, n int, after string) ([]custody.Binding, error) {
 	if !p.Valid() {
@@ -60,16 +60,16 @@ func (t *custodyTx) Count(p storage.Principal) (int, error) {
 	} else {
 		e = t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM storage.custody_bindings WHERE owner_issuer=$1 AND owner_subject=$2`, p.Issuer, p.Subject).Scan(&n)
 	}
-	return n, safe(e)
+	return n, t.safe("custody_count", e)
 }
 func (t *custodyTx) OperationCount() (int, error) {
 	var n int
 	e := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM storage.custody_operations`).Scan(&n)
-	return n, safe(e)
+	return n, t.safe("custody_operation_count", e)
 }
 
 func (t *custodyTx) RecentAttempts(p storage.Principal, since time.Time) (int, error) {
 	var n int
 	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(sum((data->>'Attempts')::int),0) FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3`, p.Issuer, p.Subject, since).Scan(&n)
-	return n, safe(e)
+	return n, t.safe("custody_recent_attempts", e)
 }

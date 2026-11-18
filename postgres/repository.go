@@ -18,10 +18,14 @@ import (
 //go:embed schema.sql
 var Schema string
 
-type Repository struct{ DB *sql.DB }
+type Repository struct {
+	DB       *sql.DB
+	Observer storage.Observer
+}
 type transaction struct {
 	tx  *sql.Tx
 	ctx context.Context
+	obs storage.Observer
 }
 
 func (t *transaction) JobSnapshot(id string) (storage.Job, error) {
@@ -31,14 +35,35 @@ func (t *transaction) JobSnapshot(id string) (storage.Job, error) {
 func (t *transaction) InstanceReplicas(id string) (int64, error) {
 	var count int64
 	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM storage.replicas WHERE instance_id=$1 AND data->>'state'<>'deleted'`, id).Scan(&count)
-	return count, safe(err)
+	return count, t.safe("instance_replicas", err)
 }
 
 func (t *transaction) ActiveWrites(replicaID string, now time.Time) (bool, error) {
 	var active bool
 	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.jobs WHERE data->>'replica_id'=$1 AND data->>'kind' IN ('ingest','replicate') AND state='running' AND lease_until>$2)`, replicaID, now).Scan(&active)
-	return active, safe(err)
+	return active, t.safe("active_writes", err)
 }
+
+func observeDB(obs storage.Observer, op string, err error) error {
+	if err == nil || errors.Is(err, sql.ErrNoRows) {
+		return safe(err)
+	}
+	category := "db_unavailable"
+	var pg *pgconn.PgError
+	switch {
+	case errors.As(err, &pg) && len(pg.Code) == 5:
+		category = "sqlstate_" + pg.Code
+	case errors.Is(err, context.DeadlineExceeded):
+		category = "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		category = "canceled"
+	}
+	storage.EmitDiagnostic(obs, storage.Diagnostic{Component: "postgres", Operation: op, Category: category})
+	return safe(err)
+}
+
+func (r *Repository) safe(op string, err error) error  { return observeDB(r.Observer, op, err) }
+func (t *transaction) safe(op string, err error) error { return observeDB(t.obs, op, err) }
 
 func safe(err error) error {
 	if err == nil {
@@ -59,25 +84,26 @@ func safe(err error) error {
 func (r *Repository) Transaction(ctx context.Context, f func(storage.Transaction) error) error {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return safe(err)
+		return r.safe("tx_begin", err)
 	}
 	defer tx.Rollback()
-	if err = f(&transaction{tx, ctx}); err != nil {
+	if err = f(&transaction{tx, ctx, r.Observer}); err != nil {
 		return err
 	}
-	return safe(tx.Commit())
+	return r.safe("tx_commit", tx.Commit())
 }
 func (t *transaction) Lock(key string) error {
 	_, err := t.tx.ExecContext(t.ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "stuhelper-storage:"+key)
-	return safe(err)
+	return t.safe("advisory_lock", err)
 }
 func read[T any](t *transaction, query string, args ...any) (T, error) {
 	var out T
 	var b []byte
 	if err := t.tx.QueryRowContext(t.ctx, query, args...).Scan(&b); err != nil {
-		return out, safe(err)
+		return out, t.safe("read", err)
 	}
 	if json.Unmarshal(b, &out) != nil {
+		storage.EmitDiagnostic(t.obs, storage.Diagnostic{Component: "postgres", Operation: "read_decode", Category: "decode_failed"})
 		return out, storage.ErrUnavailable
 	}
 	return out, nil
@@ -85,19 +111,23 @@ func read[T any](t *transaction, query string, args ...any) (T, error) {
 func list[T any](t *transaction, query string, args ...any) ([]T, error) {
 	rows, err := t.tx.QueryContext(t.ctx, query, args...)
 	if err != nil {
-		return nil, safe(err)
+		return nil, t.safe("list", err)
 	}
 	defer rows.Close()
 	out := make([]T, 0)
 	for rows.Next() {
 		var b []byte
 		var item T
-		if rows.Scan(&b) != nil || json.Unmarshal(b, &item) != nil {
+		if scanErr := rows.Scan(&b); scanErr != nil {
+			return nil, t.safe("list_scan", scanErr)
+		}
+		if json.Unmarshal(b, &item) != nil {
+			storage.EmitDiagnostic(t.obs, storage.Diagnostic{Component: "postgres", Operation: "list_decode", Category: "decode_failed"})
 			return nil, storage.ErrUnavailable
 		}
 		out = append(out, item)
 	}
-	return out, safe(rows.Err())
+	return out, t.safe("list_rows", rows.Err())
 }
 func (t *transaction) save(query string, item any, args ...any) error {
 	b, err := json.Marshal(item)
@@ -106,7 +136,7 @@ func (t *transaction) save(query string, item any, args ...any) error {
 	}
 	args = append(args, string(b))
 	_, err = t.tx.ExecContext(t.ctx, query, args...)
-	return safe(err)
+	return t.safe("save", err)
 }
 func (t *transaction) Instance(id string) (storage.Instance, error) {
 	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1 FOR UPDATE`, id)
@@ -144,12 +174,12 @@ func (t *transaction) SaveJob(v storage.Job) error {
 func (t *transaction) OutstandingJobs(exclude string, limit int) (int, error) {
 	var count int
 	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM (SELECT 1 FROM storage.jobs WHERE id<>$1 AND state IN ('pending','running') LIMIT $2) bounded`, exclude, limit).Scan(&count)
-	return count, safe(err)
+	return count, t.safe("outstanding_jobs", err)
 }
 func (t *transaction) JobTotals() (storage.JobTotals, error) {
 	var out storage.JobTotals
 	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FILTER (WHERE state='pending'),count(*) FILTER (WHERE state='running'),count(*) FILTER (WHERE state='blocked') FROM storage.jobs`).Scan(&out.Pending, &out.Running, &out.Blocked)
-	return out, safe(err)
+	return out, t.safe("job_totals", err)
 }
 func (t *transaction) FailedJobs(limit int, after string) ([]storage.Job, error) {
 	return list[storage.Job](t, `SELECT data FROM storage.jobs WHERE id>$1 AND state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'' ORDER BY id LIMIT $2`, after, limit)
@@ -173,17 +203,21 @@ func (t *transaction) Event(v storage.Event) error {
 	v.DataContentType = "application/json"
 	var revision int64
 	if err := t.tx.QueryRowContext(t.ctx, `INSERT INTO storage.event_streams(subject,revision) VALUES($1,1) ON CONFLICT(subject) DO UPDATE SET revision=storage.event_streams.revision+1 RETURNING revision`, v.Subject).Scan(&revision); err != nil {
-		return safe(err)
+		return t.safe("event_stream", err)
 	}
 	v.Data = storage.EventData{Revision: revision, PolicyRevision: v.Revision, ObjectID: v.ObjectID, JobID: v.JobID}
 	v.Type += ".v1"
 	if err := t.save(`INSERT INTO storage.outbox(id,data) VALUES($1,$2)`, v, v.ID); err != nil {
 		return err
 	}
-	return t.save(`INSERT INTO storage.audit(id,reason,result,data) VALUES($1,'','unknown',$2)`, struct {
+	if err := t.save(`INSERT INTO storage.audit(id,reason,result,data) VALUES($1,'','unknown',$2)`, struct {
 		Event storage.Event     `json:"event"`
 		Actor storage.Principal `json:"actor"`
-	}{v, v.Actor}, v.ID)
+	}{v, v.Actor}, v.ID); err != nil {
+		return err
+	}
+	_, err := t.tx.ExecContext(t.ctx, `SELECT pg_notify('storage_outbox', $1)`, v.Subject)
+	return t.safe("outbox_notify", err)
 }
 func (r *Repository) Claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (storage.Job, error) {
 	var result storage.Job
@@ -220,5 +254,5 @@ func (r *Repository) PendingEvents(ctx context.Context, limit int) ([]storage.Ev
 }
 func (r *Repository) AcknowledgeEvent(ctx context.Context, id string) error {
 	_, err := r.DB.ExecContext(ctx, `UPDATE storage.outbox SET delivered=true WHERE id=$1`, id)
-	return safe(err)
+	return r.safe("acknowledge_event", err)
 }

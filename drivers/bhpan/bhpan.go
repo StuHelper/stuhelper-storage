@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	storage "github.com/StuHelper/stuhelper-storage"
@@ -37,6 +38,7 @@ type Client interface {
 }
 
 type session struct {
+	pool                        *Pool
 	client                      Client
 	root, library, account, ref string
 	revision                    int64
@@ -55,10 +57,20 @@ type Pool struct {
 	versions map[string]uint64
 	revoked  map[string]int64
 	closed   bool
+	observer atomic.Pointer[storage.Observer]
 }
 
 func NewPool() *Pool {
 	return &Pool{sessions: map[string]*session{}, versions: map[string]uint64{}, revoked: map[string]int64{}}
+}
+
+// SetObserver installs or clears the sanitized diagnostic observer for provider errors.
+func (p *Pool) SetObserver(obs storage.Observer) {
+	if obs == nil {
+		p.observer.Store(nil)
+		return
+	}
+	p.observer.Store(&obs)
 }
 
 var token = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
@@ -96,14 +108,14 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	}
 	identity, err := client.Identity(ctx)
 	if err != nil {
-		return storage.Instance{}, safe(err)
+		return storage.Instance{}, p.safe("identity", err)
 	}
 	if identity.ID == "" {
 		return storage.Instance{}, storage.ErrDenied
 	}
 	libraries, err := client.Libraries(ctx)
 	if err != nil {
-		return storage.Instance{}, safe(err)
+		return storage.Instance{}, p.safe("libraries", err)
 	}
 	library := ""
 	for _, item := range libraries {
@@ -123,13 +135,13 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	}
 	root, err := client.CreateDirectory(ctx, library, "stuhelper-storage-"+hex.EncodeToString(nonce[:]))
 	if err != nil {
-		return storage.Instance{}, safe(err)
+		return storage.Instance{}, p.safe("create-directory", err)
 	}
 	if !child(library, root) {
 		return storage.Instance{}, storage.ErrUnknown
 	}
 	sessionCtx, cancel := context.WithDeadline(context.Background(), expires)
-	s := &session{client: client, root: root, library: library, account: accountDomain(identity.ID), ref: ref, revision: revision, expires: expires, ctx: sessionCtx, cancel: cancel}
+	s := &session{pool: p, client: client, root: root, library: library, account: accountDomain(identity.ID), ref: ref, revision: revision, expires: expires, ctx: sessionCtx, cancel: cancel}
 	p.sessions[ref] = s
 	p.versions[ref]++
 	s.timer = time.AfterFunc(time.Until(expires), func() { p.expire(s) })
@@ -211,14 +223,14 @@ func (p *Pool) Verify(ctx context.Context, i storage.Instance) (storage.Instance
 	defer done()
 	identity, err := s.client.Identity(ctx)
 	if err != nil {
-		return storage.InstanceEvidence{}, safe(err)
+		return storage.InstanceEvidence{}, p.safe("identity", err)
 	}
 	if accountDomain(identity.ID) != s.account {
 		return storage.InstanceEvidence{}, storage.ErrDenied
 	}
 	dir, err := s.client.List(ctx, s.library)
 	if err != nil {
-		return storage.InstanceEvidence{}, safe(err)
+		return storage.InstanceEvidence{}, p.safe("list", err)
 	}
 	found := false
 	for _, e := range dir.Directories {
@@ -231,7 +243,7 @@ func (p *Pool) Verify(ctx context.Context, i storage.Instance) (storage.Instance
 	}
 	quota, err := s.client.Quota(ctx)
 	if err != nil {
-		return storage.InstanceEvidence{}, safe(err)
+		return storage.InstanceEvidence{}, p.safe("quota", err)
 	}
 	return storage.InstanceEvidence{AccountDomain: s.account, ProviderFree: quota.Available(), VerifiedAt: time.Now()}, nil
 }
@@ -260,7 +272,7 @@ func (p *Pool) Find(ctx context.Context, i storage.Instance, intent string, expe
 		}
 		m, err := s.client.FileInfo(ctx, leaf(expected.ID))
 		if err != nil {
-			return storage.Locator{}, safe(err)
+			return storage.Locator{}, p.safe("file-info", err)
 		}
 		if m.ObjectID != leaf(expected.ID) {
 			return storage.Locator{}, storage.ErrIntegrity
@@ -271,7 +283,7 @@ func (p *Pool) Find(ctx context.Context, i storage.Instance, intent string, expe
 	}
 	dir, err := s.client.List(ctx, s.root)
 	if err != nil {
-		return storage.Locator{}, safe(err)
+		return storage.Locator{}, p.safe("list", err)
 	}
 	var out storage.Locator
 	for _, e := range dir.Files {
@@ -307,7 +319,7 @@ func (p *Pool) Write(ctx context.Context, i storage.Instance, intent string, siz
 		}
 	}
 	if err != nil {
-		return remote, safe(err)
+		return remote, p.safe("begin-upload", err)
 	}
 	if !child(s.root, u.DocumentID) {
 		return remote, storage.ErrUnknown
@@ -316,7 +328,7 @@ func (p *Pool) Write(ctx context.Context, i storage.Instance, intent string, siz
 		return remote, storage.ErrDenied
 	}
 	if _, err = s.client.WriteUpload(ctx, u, src); err != nil {
-		return remote, safe(err)
+		return remote, p.safe("write-upload", err)
 	}
 	// Recheck object, policy, instance and lease before metadata finalization.
 	if err := checkpoint(remote); err != nil {
@@ -326,7 +338,7 @@ func (p *Pool) Write(ctx context.Context, i storage.Instance, intent string, siz
 		return remote, storage.ErrDenied
 	}
 	if err = s.client.FinishUpload(ctx, u.DocumentID, u.Revision); err != nil {
-		return remote, safe(err)
+		return remote, p.safe("finish-upload", err)
 	}
 	return remote, nil
 }
@@ -342,13 +354,13 @@ func (p *Pool) Read(ctx context.Context, i storage.Instance, r storage.Locator, 
 	}
 	m, err := s.client.FileInfo(ctx, leaf(r.ID))
 	if err != nil {
-		return 0, safe(err)
+		return 0, p.safe("file-info", err)
 	}
 	if m.ObjectID != leaf(r.ID) || m.DocumentID != r.ID || (r.Revision != "" && m.Revision != r.Revision) {
 		return 0, storage.ErrIntegrity
 	}
 	n, err := s.client.Download(ctx, r.ID, dst)
-	return n, safe(err)
+	return n, p.safe("download", err)
 }
 func (s *session) recycled(ctx context.Context, id string) (bool, error) {
 	// Bounded metadata scan. A full bin beyond this bound remains unknown and
@@ -356,7 +368,7 @@ func (s *session) recycled(ctx context.Context, id string) (bool, error) {
 	for start := 0; start < 10000; start += 1000 {
 		dir, err := s.client.RecycleBin(ctx, s.library, start, 1000)
 		if err != nil {
-			return false, safe(err)
+			return false, s.pool.safe("recycle-bin", err)
 		}
 		for _, e := range dir.Files {
 			if e.ID == id {
@@ -384,21 +396,21 @@ func (p *Pool) Remove(ctx context.Context, i storage.Instance, r storage.Locator
 		return nil
 	}
 	if err != nil {
-		return safe(err)
+		return p.safe("file-info", err)
 	}
 	if m.ObjectID != leaf(r.ID) {
 		return storage.ErrIntegrity
 	}
 	if m.DocumentID == r.ID {
 		if err = s.client.Delete(ctx, r.ID); err != nil {
-			return safe(err)
+			return p.safe("delete", err)
 		}
 		m, err = s.client.FileInfo(ctx, leaf(r.ID))
 		if errors.Is(err, protocol.ErrNotFound) {
 			return nil
 		}
 		if err != nil {
-			return safe(err)
+			return p.safe("file-info", err)
 		}
 	}
 	confirmed, err := s.recycled(ctx, m.DocumentID)
@@ -412,16 +424,69 @@ func (p *Pool) Remove(ctx context.Context, i storage.Instance, r storage.Locator
 		return storage.ErrDenied
 	}
 	if err = s.client.Purge(ctx, m.DocumentID); err != nil {
-		return safe(err)
+		return p.safe("purge", err)
 	}
 	_, err = s.client.FileInfo(ctx, leaf(r.ID))
 	if errors.Is(err, protocol.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
-		return safe(err)
+		return p.safe("file-info", err)
 	}
 	return storage.ErrUnknown
+}
+func (p *Pool) safe(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if p != nil && !errors.Is(err, protocol.ErrNotFound) {
+		if obsPtr := p.observer.Load(); obsPtr != nil && *obsPtr != nil {
+			operation := op
+			status := 0
+			var pe *protocol.Error
+			if errors.As(err, &pe) {
+				if pe.Operation != "" {
+					operation = pe.Operation
+				}
+				status = pe.Status
+			}
+			storage.EmitDiagnostic(*obsPtr, storage.Diagnostic{
+				Component:  "bhpan",
+				Operation:  operation,
+				Category:   bhpanCategory(err),
+				HTTPStatus: status,
+			})
+		}
+	}
+	return safe(err)
+}
+func bhpanCategory(err error) string {
+	switch {
+	case errors.Is(err, protocol.ErrSession):
+		return "bhpan_session"
+	case errors.Is(err, protocol.ErrChallenge):
+		return "bhpan_challenge"
+	case errors.Is(err, protocol.ErrCredentials):
+		return "bhpan_credentials"
+	case errors.Is(err, protocol.ErrPermission):
+		return "bhpan_permission"
+	case errors.Is(err, protocol.ErrInput):
+		return "bhpan_invalid_input"
+	case errors.Is(err, protocol.ErrConflict):
+		return "bhpan_conflict"
+	case errors.Is(err, protocol.ErrProtocol):
+		return "bhpan_protocol"
+	case errors.Is(err, protocol.ErrDestination):
+		return "bhpan_untrusted_destination"
+	case errors.Is(err, protocol.ErrRejected):
+		return "bhpan_rejected"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "bhpan_unavailable"
+	}
 }
 func safe(err error) error {
 	if err == nil {

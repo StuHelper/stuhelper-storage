@@ -176,7 +176,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				if err := tx.SaveObject(o); err != nil {
 					return err
 				}
-				if err := s.emit(tx, p, "storage.object.expired", o.ID, o.Revision); err != nil {
+				if err := s.emitScoped(ctx, tx, p, "storage.object.expired", o.ID, o.Revision, o.Protection); err != nil {
 					return err
 				}
 			}
@@ -287,6 +287,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			return nil
 		})
 		if err != nil {
+			s.observe("reconcile", snapshot.ID, "", err)
 			result.NextCursor = snapshot.ID
 			return result, err
 		}
@@ -324,6 +325,7 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 	}
 	evidence, err := s.verifier.Verify(ctx, snapshot)
 	if err != nil {
+		s.observe("refresh_instance", id, "", err)
 		return err
 	}
 	if evidence.AccountDomain != snapshot.AccountDomain || evidence.ProviderFree < 0 || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {

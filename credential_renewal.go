@@ -62,7 +62,7 @@ func (s *Service) ReauthorizeInstance(ctx context.Context, p Principal, key stri
 		if e = tx.SaveInstance(current); e != nil {
 			return nil, e
 		}
-		return current, s.emit(tx, p, "storage.instance.reauthorized", current.ID, current.Revision)
+		return current, s.emitInstance(ctx, tx, p, "storage.instance.reauthorized", current.ID, current.Revision)
 	}, &out)
 	return out, e
 }

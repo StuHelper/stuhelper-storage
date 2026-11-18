@@ -128,6 +128,7 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 	defer cancel()
 	err = s.writeReplica(workCtx, job, f)
 	if err != nil {
+		s.observe("ingest", id, job.ID, err)
 		cleanupCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
 		_ = s.failJob(cleanupCtx, job, err)
@@ -184,6 +185,7 @@ func (s *Service) download(ctx context.Context, p Principal, id string, dst io.W
 	}
 	f, err := s.readSource(ctx, o, "")
 	if err != nil {
+		s.observe(action, id, "", err)
 		return err
 	}
 	defer removeTemporary(f)
@@ -303,7 +305,7 @@ func (s *Service) markCorrupt(ctx context.Context, o Object, r Replica) error {
 		if err := tx.SaveReplica(current); err != nil {
 			return err
 		}
-		return s.emit(tx, Principal{}, "storage.replica.corrupt", o.ID, o.Revision)
+		return s.emitScoped(ctx, tx, Principal{}, "storage.replica.corrupt", o.ID, o.Revision, o.Protection)
 	})
 }
 
@@ -472,7 +474,7 @@ func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 		if err := tx.SaveJob(current); err != nil {
 			return err
 		}
-		return s.emit(tx, Principal{}, "storage.replica.verified", o.ID, o.Revision)
+		return s.emitScoped(ctx, tx, Principal{}, "storage.replica.verified", o.ID, o.Revision, o.Protection)
 	})
 }
 
@@ -531,6 +533,7 @@ func (s *Service) RunOne(ctx context.Context, worker string) (bool, error) {
 		err = ErrInput
 	}
 	if err != nil {
+		s.observe("job_"+j.Kind, j.ObjectID, j.ID, err)
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if recordErr := s.failJob(cleanupCtx, j, err); recordErr != nil {
@@ -639,6 +642,6 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 				}
 			}
 		}
-		return s.emit(tx, Principal{}, "storage.replica.deleted", o.ID, o.Revision)
+		return s.emitScoped(ctx, tx, Principal{}, "storage.replica.deleted", o.ID, o.Revision, o.Protection)
 	})
 }

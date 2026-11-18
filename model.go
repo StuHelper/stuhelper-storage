@@ -200,6 +200,8 @@ type Event struct {
 	Source          string    `json:"source"`
 	Subject         string    `json:"subject"`
 	DataContentType string    `json:"datacontenttype"`
+	TraceParent     string    `json:"traceparent,omitempty"`
+	SchoolID        string    `json:"schoolid,omitempty"`
 	Data            EventData `json:"data"`
 	ID              string    `json:"id"`
 	Type            string    `json:"type"`

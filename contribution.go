@@ -181,7 +181,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 		if err = tx.SaveInstance(i); err != nil {
 			return err
 		}
-		if err = s.emit(tx, p, "storage.instance.contribution", id, i.Revision); err != nil {
+		if err = s.emitInstance(ctx, tx, p, "storage.instance.contribution", id, i.Revision); err != nil {
 			return err
 		}
 		out, err = s.contributionSnapshot(tx, i)

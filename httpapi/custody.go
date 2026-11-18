@@ -23,6 +23,9 @@ func NewCustody(s *custody.Service, a Authenticator) (http.Handler, error) {
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 			defer cancel()
+			if tp := r.Header.Get("Traceparent"); tp != "" {
+				ctx = storage.WithTraceParent(ctx, tp)
+			}
 			r = r.WithContext(ctx)
 			deadline, _ := ctx.Deadline()
 			controller := http.NewResponseController(w)

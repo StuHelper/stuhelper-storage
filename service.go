@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	Clock                 func() time.Time
+	Observer              Observer
 	MaxObjectSize         int64
 	TemporaryDirectory    string
 	ParallelTransfers     int
@@ -156,7 +157,22 @@ func (s *Service) mutation(ctx context.Context, p Principal, action, id, key str
 	})
 }
 func (s *Service) emit(tx Transaction, p Principal, kind, id string, revision int64) error {
-	return tx.Event(Event{ID: newID(), Type: kind, ObjectID: id, Revision: revision, Time: s.now(), Actor: p})
+	return s.emitScoped(context.Background(), tx, p, kind, id, revision, Protection{})
+}
+func (s *Service) emitInstance(ctx context.Context, tx Transaction, p Principal, kind, id string, revision int64) error {
+	return s.emitScoped(ctx, tx, p, kind, id, revision, Protection{})
+}
+func (s *Service) emitScoped(ctx context.Context, tx Transaction, p Principal, kind, id string, revision int64, protection Protection) error {
+	return tx.Event(Event{
+		ID:          newID(),
+		Type:        kind,
+		ObjectID:    id,
+		Revision:    revision,
+		Time:        s.now(),
+		Actor:       p,
+		TraceParent: TraceParentFromContext(ctx),
+		SchoolID:    eventSchoolID(protection),
+	})
 }
 
 func validateInstance(v Instance, now time.Time) bool {
@@ -235,7 +251,7 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 		if err := tx.SaveInstance(v); err != nil {
 			return nil, err
 		}
-		return v, s.emit(tx, p, "storage.instance.registered", v.ID, v.Revision)
+		return v, s.emitInstance(ctx, tx, p, "storage.instance.registered", v.ID, v.Revision)
 	}, &result)
 	return result, err
 }
@@ -287,7 +303,7 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 		if err := tx.SaveInstance(v); err != nil {
 			return nil, err
 		}
-		return v, s.emit(tx, p, "storage.instance.updated", v.ID, v.Revision)
+		return v, s.emitInstance(ctx, tx, p, "storage.instance.updated", v.ID, v.Revision)
 	}, &result)
 	return result, err
 }
@@ -366,7 +382,7 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, "storage.object.created", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(ctx, tx, p, "storage.object.created", o.ID, o.Revision, o.Protection); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -496,7 +512,7 @@ func (s *Service) Reference(ctx context.Context, p Principal, id, key string, re
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, action, o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(ctx, tx, p, action, o.ID, o.Revision, o.Protection); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -554,7 +570,7 @@ func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string,
 				return nil, err
 			}
 		}
-		if err := s.emit(tx, p, "storage.object.deleting", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(ctx, tx, p, "storage.object.deleting", o.ID, o.Revision, o.Protection); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)
@@ -638,7 +654,7 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
 		}
-		if err := s.emit(tx, p, "storage.protection.changed", o.ID, o.Revision); err != nil {
+		if err := s.emitScoped(ctx, tx, p, "storage.protection.changed", o.ID, o.Revision, o.Protection); err != nil {
 			return nil, err
 		}
 		return s.status(tx, o)

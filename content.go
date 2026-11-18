@@ -214,7 +214,7 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emit(tx, p, "storage.content.created", h.ID, h.Revision); e != nil {
+		if e = s.emitScoped(ctx, tx, p, "storage.content.created", h.ID, h.Revision, g.Protection); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -400,7 +400,7 @@ func (s *Service) contentReference(ctx context.Context, p Principal, id, key str
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emit(tx, p, action, h.ID, h.Revision); e != nil {
+		if e = s.emitScoped(ctx, tx, p, action, h.ID, h.Revision, g.Protection); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -450,7 +450,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 				return nil, e
 			}
 		}
-		if e := s.emit(tx, p, "storage.content.released", h.ID, h.Revision); e != nil {
+		if e := s.emitScoped(ctx, tx, p, "storage.content.released", h.ID, h.Revision, g.Protection); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -635,7 +635,7 @@ func (s *Service) expireContentHandles(ctx context.Context, p Principal, limit i
 					return e
 				}
 			}
-			if e = s.emit(tx, p, "storage.content.expired", h.ID, h.Revision); e != nil {
+			if e = s.emitScoped(ctx, tx, p, "storage.content.expired", h.ID, h.Revision, g.Protection); e != nil {
 				return e
 			}
 		}
