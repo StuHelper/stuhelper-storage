@@ -125,8 +125,8 @@ func (t *transaction) Instance(id string) (storage.Instance, error) {
 func (t *transaction) InstanceSnapshot(id string) (storage.Instance, error) {
 	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1`, id)
 }
-func (t *transaction) ContributionCandidates(owner string, limit int, after string) ([]storage.Instance, error) {
-	return list[storage.Instance](t, `SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $3`, after, owner, limit)
+func (t *transaction) ContributionCandidates(owner string, now time.Time, limit int, after string) ([]storage.Instance, error) {
+	return list[storage.Instance](t, `SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->>'authorized')::boolean AND (i.data->>'expires_at')::timestamptz>$3 AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $4`, after, owner, now, limit)
 }
 func (t *transaction) Instances(limit int, after string) ([]storage.Instance, error) {
 	return list[storage.Instance](t, `SELECT data FROM storage.instances WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)

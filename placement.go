@@ -224,9 +224,15 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					return err
 				}
 			}
+			remaining := 0
+			for _, r := range replicas {
+				if r.State != "deleted" {
+					remaining++
+				}
+			}
 			if o.State != "deleted" && o.State != "deleting" && o.ContentGroup == "" && len(o.References) == 0 && s.now().Sub(o.CreatedAt) >= 24*time.Hour {
 				o.State = "deleting"
-				if len(replicas) == 0 {
+				if remaining == 0 {
 					o.State = "deleted"
 				}
 				o.Revision++
@@ -283,6 +289,10 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 						return err
 					}
 				}
+			}
+			if o.State == "deleting" && remaining == 0 {
+				o.State = "deleted"
+				return tx.SaveObject(o)
 			}
 			if o.State == "deleting" || o.State == "deleted" {
 				return nil

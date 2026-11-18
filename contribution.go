@@ -25,7 +25,8 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 		return out, e
 	}
 	e := s.readTx(ctx, func(tx Transaction) error {
-		items, e := tx.ContributionCandidates(owner, n+1, after)
+		now := s.now()
+		items, e := tx.ContributionCandidates(owner, now, n+1, after)
 		if e != nil {
 			return e
 		}
@@ -34,14 +35,11 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 			out.NextCursor = items[n-1].ID
 		}
 		for _, i := range items {
-			if !i.Authorized || !i.ExpiresAt.After(s.now()) {
-				continue
-			}
 			i.State = "active" // Compute potential capacity without enabling the instance.
 			if i.Limit == 0 {
 				i.Limit = 1 << 60
 			} // Initial custody has no contribution allocation yet.
-			out.Items = append(out.Items, ContributionCandidate{i.ID, i.Adapter, instanceHealth(i, s.now()).AvailableBytes, i.ExpiresAt})
+			out.Items = append(out.Items, ContributionCandidate{i.ID, i.Adapter, instanceHealth(i, now).AvailableBytes, i.ExpiresAt})
 		}
 		return s.authorize(ctx, p, "storage.contributions.read", "", Protection{})
 	})
@@ -118,6 +116,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 	if err := s.authorize(ctx, p, "storage.contributions.manage", id, Protection{}); err != nil {
 		return out, err
 	}
+	c.Until = c.Until.UTC()
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
 		i, err := tx.Instance(id)
 		if err != nil {
@@ -137,6 +136,8 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 				want, previous := c, *old
 				want.ExpectedRevision = 0
 				previous.ExpectedRevision = 0
+				want.Until = want.Until.UTC()
+				previous.Until = previous.Until.UTC()
 				if requestHash(want) != requestHash(previous) {
 					return ErrConflict
 				}

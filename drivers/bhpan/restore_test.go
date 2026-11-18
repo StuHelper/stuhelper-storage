@@ -100,3 +100,24 @@ func TestRestoreRejectsForeignRootAndRevokedLateResult(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOlderRevocationPreservesNewerCredentialWork(t *testing.T) {
+	ctx := context.Background()
+	p := NewPool()
+	defer p.Close()
+	f := &fake{beforeIdentity: func(ctx context.Context) error { p.Revoke("ordered", 4); return ctx.Err() }}
+	i, err := p.Provision(ctx, "ordered", 5, f, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal("newer provisioning", err)
+	}
+	i.CredentialRevision = 6
+	replacement := restoredClient(i)
+	replacement.beforeList = func() { p.Revoke("ordered", 5) }
+	if err = p.Restore(ctx, i, replacement); err != nil {
+		t.Fatal("newer restore", err)
+	}
+	replacement.beforeList = nil
+	if _, err = p.Verify(ctx, i); err != nil {
+		t.Fatal(err)
+	}
+}
