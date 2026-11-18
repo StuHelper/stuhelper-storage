@@ -531,8 +531,7 @@ func (s *Service) objectGuard(ctx context.Context, tx Transaction, p Principal, 
 }
 func (s *Service) statusFromLoaded(o Object, replicas []Replica, lookup func(string) (Instance, error), now time.Time) (Status, error) {
 	count := 0
-	accounts := map[string]bool{}
-	owners := map[string]bool{}
+	seen := newIndependentSet()
 	for _, r := range replicas {
 		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(now.Add(-s.cfg.VerificationAge)) {
 			continue
@@ -541,13 +540,10 @@ func (s *Service) statusFromLoaded(o Object, replicas []Replica, lookup func(str
 		if err != nil {
 			return Status{}, err
 		}
-		if !i.Allows(o.Protection, now) || r.CredentialRevision != i.CredentialRevision || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
+		if !healthyVerifiedReplica(r, o, i, now, s.cfg.VerificationAge) || seen.seen(i) {
 			continue
 		}
-		accounts[i.AccountDomain] = true
-		if i.Ownership == "contributor" {
-			owners[i.OwnerDomain] = true
-		}
+		seen.add(i)
 		count++
 	}
 	state := o.State

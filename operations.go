@@ -129,30 +129,23 @@ func (s *Service) Operations(ctx context.Context, p Principal, limit int, after,
 					if st.Healthy == 0 {
 						h.Reason = "no_healthy_source"
 					} else {
-						accounts := map[string]bool{}
-						owners := map[string]bool{}
+						seen := newIndependentSet()
 						for _, r := range copies {
 							i, e := lookup(r.InstanceID)
 							if e != nil {
 								return e
 							}
-							if r.State == "healthy" && r.ObjectRevision == o.Revision && r.CredentialRevision == i.CredentialRevision && !r.VerifiedAt.Before(now.Add(-s.cfg.VerificationAge)) && i.Allows(o.Protection, now) {
-								accounts[i.AccountDomain] = true
-								if i.Ownership == "contributor" {
-									owners[i.OwnerDomain] = true
-								}
+							if healthyVerifiedReplica(r, o, i, now, s.cfg.VerificationAge) {
+								seen.add(i)
 							}
 						}
 						for _, i := range instances {
-							if !i.CanWrite(o.Protection, o.Size, now) || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
+							if !i.CanWrite(o.Protection, o.Size, now) || seen.seen(i) {
 								continue
 							}
-							accounts[i.AccountDomain] = true
-							if i.Ownership == "contributor" {
-								owners[i.OwnerDomain] = true
-							}
+							seen.add(i)
 						}
-						if len(accounts) < o.Policy.Target {
+						if len(seen.accounts) < o.Policy.Target {
 							h.Reason = "insufficient_eligible_capacity"
 						}
 					}

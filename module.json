@@ -130,6 +130,7 @@
     ],
     "STORAGE-27": [
       "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation",
+      "custody_test.go#TestCustodyAuthenticationReceivesRouteDeadline",
       "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses",
       "contracts_http_test.go#TestCustodyBrowserSDKClassifies404AsNotFound"
     ],
@@ -188,6 +189,9 @@
     ],
     "STORAGE-40": [
       "observability_test.go#TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify"
+    ],
+    "STORAGE-42": [
+      "bhpan_integration_test.go#TestServiceExecutorAndBHpanPoolRestartAndPopulatedDirectoryIntegration"
     ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",

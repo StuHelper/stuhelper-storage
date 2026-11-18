@@ -7,6 +7,58 @@ import (
 	"time"
 )
 
+type independentSet struct {
+	accounts map[string]bool
+	owners   map[string]bool
+}
+
+func newIndependentSet() independentSet {
+	return independentSet{accounts: map[string]bool{}, owners: map[string]bool{}}
+}
+
+func (m independentSet) seen(i Instance) bool {
+	return m.accounts[i.AccountDomain] || (i.Ownership == "contributor" && m.owners[i.OwnerDomain])
+}
+
+func (m independentSet) add(i Instance) {
+	m.accounts[i.AccountDomain] = true
+	if i.Ownership == "contributor" {
+		m.owners[i.OwnerDomain] = true
+	}
+}
+
+func healthyVerifiedReplica(r Replica, o Object, i Instance, now time.Time, verificationAge time.Duration) bool {
+	return r.State == "healthy" && r.ObjectRevision == o.Revision && r.CredentialRevision == i.CredentialRevision && !r.VerifiedAt.Before(now.Add(-verificationAge)) && i.Allows(o.Protection, now)
+}
+
+func lockCandidateInstances(tx Transaction, replicas []Replica) ([]Instance, map[string]Instance, error) {
+	candidates, err := tx.Instances(100, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	ids := map[string]bool{}
+	for _, i := range candidates {
+		ids[i.ID] = true
+	}
+	for _, r := range replicas {
+		ids[r.InstanceID] = true
+	}
+	ordered := make([]string, 0, len(ids))
+	for id := range ids {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	instances := make(map[string]Instance, len(ordered))
+	for _, id := range ordered {
+		i, err := tx.Instance(id)
+		if err != nil {
+			return nil, nil, err
+		}
+		instances[id] = i
+	}
+	return candidates, instances, nil
+}
+
 // plan locks the bounded candidate set in a stable order before reserving any
 // bytes. Every process shares the same PostgreSQL ledger and uniqueness checks.
 func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error) {
@@ -17,32 +69,11 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := tx.Instances(100, "")
+	candidates, instances, err := lockCandidateInstances(tx, replicas)
 	if err != nil {
 		return nil, err
 	}
-	ids := map[string]bool{}
-	for _, i := range candidates {
-		ids[i.ID] = true
-	}
-	for _, r := range replicas {
-		ids[r.InstanceID] = true
-	}
-	keys := make([]string, 0, len(ids))
-	for id := range ids {
-		keys = append(keys, id)
-	}
-	sort.Strings(keys)
-	instances := map[string]Instance{}
-	for _, id := range keys {
-		i, err := tx.Instance(id)
-		if err != nil {
-			return nil, err
-		}
-		instances[id] = i
-	}
-	accounts := map[string]bool{}
-	owners := map[string]bool{}
+	seen := newIndependentSet()
 	byInstance := map[string]Replica{}
 	count := 0
 	for _, r := range replicas {
@@ -51,10 +82,7 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 		if r.State == "deleted" {
 			continue
 		}
-		accounts[i.AccountDomain] = true
-		if i.Ownership == "contributor" {
-			owners[i.OwnerDomain] = true
-		}
+		seen.add(i)
 		if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(s.now()) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision {
 			count++
 		}
@@ -65,7 +93,7 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 			break
 		}
 		i := instances[candidate.ID]
-		if accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) || !i.CanWrite(o.Protection, o.Size, s.now()) {
+		if seen.seen(i) || !i.CanWrite(o.Protection, o.Size, s.now()) {
 			continue
 		}
 		r, exists := byInstance[i.ID]
@@ -94,10 +122,7 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 		if err := tx.SaveReplica(r); err != nil {
 			return nil, err
 		}
-		accounts[i.AccountDomain] = true
-		if i.Ownership == "contributor" {
-			owners[i.OwnerDomain] = true
-		}
+		seen.add(i)
 		out = append(out, r)
 		count++
 	}

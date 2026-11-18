@@ -631,3 +631,24 @@ func TestCustodyUnknownPreparationKeepsAccountClaim(t *testing.T) {
 		t.Fatalf("recovery state=%s err=%v preparations=%d roots=%d", v.State, err, p.prepareInputs.Load(), p.creates.Load())
 	}
 }
+
+type custodyDeadlineAuth struct{ remaining time.Duration }
+
+func (a *custodyDeadlineAuth) Authenticate(r *http.Request) (storage.Principal, error) {
+	if end, ok := r.Context().Deadline(); ok {
+		a.remaining = time.Until(end)
+	}
+	return storage.Principal{}, storage.ErrDenied
+}
+func TestCustodyAuthenticationReceivesRouteDeadline(t *testing.T) {
+	auth := &custodyDeadlineAuth{}
+	h, err := httpapi.NewCustody(&custody.Service{}, auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/storage/custody", nil))
+	if w.Code != http.StatusUnauthorized || auth.remaining <= 0 || auth.remaining > time.Minute {
+		t.Fatalf("authentication deadline=%s status=%d", auth.remaining, w.Code)
+	}
+}
