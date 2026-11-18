@@ -37,18 +37,41 @@ CREATE TABLE IF NOT EXISTS storage.jobs (
     lease_until timestamptz NOT NULL,
     data jsonb NOT NULL
 );
+CREATE INDEX IF NOT EXISTS objects_reconcile ON storage.objects(id) WHERE data->>'state'<>'deleted';
 CREATE INDEX IF NOT EXISTS replicas_instance ON storage.replicas(instance_id);
-CREATE INDEX IF NOT EXISTS jobs_claim ON storage.jobs(state,available_at,lease_until);
+CREATE INDEX IF NOT EXISTS jobs_active_claim ON storage.jobs(state,available_at,lease_until) WHERE state IN ('pending','running','blocked');
+DROP INDEX IF EXISTS storage.jobs_claim;
+CREATE INDEX IF NOT EXISTS jobs_failed ON storage.jobs(id) WHERE state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'';
 CREATE TABLE IF NOT EXISTS storage.idempotency (
     key text PRIMARY KEY,
     data jsonb NOT NULL
 );
 CREATE TABLE IF NOT EXISTS storage.outbox (
+    seq bigint GENERATED ALWAYS AS IDENTITY,
     id text PRIMARY KEY,
     data jsonb NOT NULL,
     delivered boolean NOT NULL DEFAULT false
 );
+-- Existing rows have no global commit order. Preserve each stream's durable
+-- revision order and advance the identity past the backfilled rows atomically.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='storage.outbox'::regclass
+                   AND attname='seq' AND NOT attisdropped) THEN
+        ALTER TABLE storage.outbox ADD COLUMN seq bigint;
+        WITH ranked AS (
+            SELECT id, row_number() OVER (ORDER BY data->>'subject', (data#>>'{data,revision}')::bigint, id) AS position
+            FROM storage.outbox
+        )
+        UPDATE storage.outbox o SET seq=ranked.position FROM ranked WHERE o.id=ranked.id;
+        ALTER TABLE storage.outbox ALTER COLUMN seq SET NOT NULL;
+        ALTER TABLE storage.outbox ALTER COLUMN seq ADD GENERATED ALWAYS AS IDENTITY;
+        PERFORM setval(pg_get_serial_sequence('storage.outbox','seq'), COALESCE(max(seq),0)+1, false)
+        FROM storage.outbox;
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS outbox_pending ON storage.outbox(id) WHERE NOT delivered;
+CREATE INDEX IF NOT EXISTS outbox_pending_seq ON storage.outbox(seq) WHERE NOT delivered;
 CREATE TABLE IF NOT EXISTS storage.audit (
     id text PRIMARY KEY,
     data jsonb NOT NULL
