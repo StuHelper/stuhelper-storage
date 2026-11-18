@@ -46,13 +46,16 @@
     "STORAGE-11": [
       "drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion",
       "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed",
-      "bhpan_recovery_test.go#TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories"
+      "bhpan_recovery_test.go#TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories",
+      "drivers/bhpan/bhpan_test.go#TestFindLegacyIntentAfterShardCached",
+      "drivers/bhpan/bhpan_test.go#TestWriteWithExistingShardInOversizedLegacyRoot"
     ],
     "STORAGE-12": [
       "drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload",
       "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline",
       "drivers/bhpan/bhpan_test.go#TestCallerCancellationAndLeaseDeadlinePreserveSession",
-      "drivers/bhpan/bhpan_test.go#TestProvisionDoesNotBlockPoolOrLeakRefCapacity"
+      "drivers/bhpan/bhpan_test.go#TestProvisionDoesNotBlockPoolOrLeakRefCapacity",
+      "drivers/bhpan/bhpan_test.go#TestRevokedReferencesReleasePoolSlots"
     ],
     "STORAGE-13": [
       "staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup",

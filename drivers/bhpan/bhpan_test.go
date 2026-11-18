@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -347,4 +348,75 @@ func TestProvisionDoesNotBlockPoolOrLeakRefCapacity(t *testing.T) {
 	if _, err := p.Provision(context.Background(), "valid-after-120-failures", 1, &fake{}, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("failed attempts leaked versions capacity: %v", err)
 	}
+}
+
+func TestRevokedReferencesReleasePoolSlots(t *testing.T) {
+	p := NewPool()
+	defer p.Close()
+	until := time.Now().Add(time.Hour)
+	for n := 0; n < 105; n++ {
+		ref := fmt.Sprintf("withdrawn-%d", n)
+		p.Revoke(ref, 1)
+		if _, err := p.Provision(context.Background(), ref, 1, &fake{}, until); err == nil {
+			t.Fatal("revoked revision accepted")
+		}
+	}
+	if _, err := p.Provision(context.Background(), "replacement", 1, &fake{}, until); err != nil {
+		t.Fatalf("withdrawn references still consume active slots: %v", err)
+	}
+}
+
+func TestFindLegacyIntentAfterShardCached(t *testing.T) {
+	p, f, i := fixture(t)
+	intent := strings.Repeat("a", 32)
+	_, err := p.Write(context.Background(), i, intent, 4, strings.NewReader("data"), func(storage.Locator) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The existing account also has a flat-layout upload with a lost response.
+	f.current = f.root + "/old-file"
+	f.currentName = "aa" + strings.Repeat("0", 30)
+	got, err := p.Find(context.Background(), i, f.currentName, storage.Locator{})
+	if err != nil || got.ID != f.current {
+		t.Fatalf("legacy lookup: %+v, %v", got, err)
+	}
+}
+
+type oversizedRootClient struct {
+	fake
+	rootLists int
+}
+
+func (f *oversizedRootClient) List(ctx context.Context, id string) (protocol.Directory, error) {
+	if id == f.root {
+		f.rootLists++
+		return protocol.Directory{}, protocol.ErrProtocol
+	}
+	return f.fake.List(ctx, id)
+}
+
+func TestWriteWithExistingShardInOversizedLegacyRoot(t *testing.T) {
+	p := NewPool()
+	defer p.Close()
+	ctx := context.Background()
+	f := &oversizedRootClient{}
+	i, err := p.Provision(ctx, "legacy", 1, f, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.shards = map[string]string{"ab": i.Root + "/existing"}
+	var saved storage.Locator
+	got, err := p.Write(ctx, i, strings.Repeat("ab", 16), 4, strings.NewReader("data"), func(loc storage.Locator) error { saved = loc; return nil })
+	if err != nil || got != saved || got.ID != i.Root+"/object" || string(f.data) != "data" {
+		t.Fatal(got, saved, err)
+	}
+	found, err := p.Find(ctx, i, strings.Repeat("ab", 16), saved)
+	if err != nil || found != saved {
+		t.Fatal(found, err)
+	}
+	_, err = p.Write(ctx, i, "ab"+strings.Repeat("1", 30), 4, strings.NewReader("next"), func(storage.Locator) error { return nil })
+	if err != nil || f.rootLists != 1 {
+		t.Fatalf("repeated oversized root listings: %d %v", f.rootLists, err)
+	}
+
 }

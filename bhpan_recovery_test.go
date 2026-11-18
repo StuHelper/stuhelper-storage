@@ -432,7 +432,9 @@ func TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories(t *te
 		}
 	}
 
-	// Upload two distinct objects that land in shards; once shard is cached, root List is not called again.
+	// A legacy flat root can already exceed the provider response limit on the first write.
+	clientA.failRootList.Store(true)
+	clientB.failRootList.Store(true)
 	for n := 0; n < 2; n++ {
 		payload := []byte(fmt.Sprintf("sharded-payload-%d", n))
 		sum := sha256.Sum256(payload)

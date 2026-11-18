@@ -106,9 +106,8 @@ func ownedFile(root, id string) bool {
 }
 
 func (p *Pool) cleanupRefLocked(ref string) {
-	if p.sessions[ref] == nil && p.revoked[ref] == 0 && p.provisioning[ref] == nil && p.inFlight[ref] == 0 {
+	if p.sessions[ref] == nil && p.provisioning[ref] == nil && p.inFlight[ref] == 0 {
 		delete(p.versions, ref)
-		delete(p.revoked, ref)
 		delete(p.provisioning, ref)
 		delete(p.inFlight, ref)
 	}
@@ -126,7 +125,7 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 		p.mu.Unlock()
 		return storage.Instance{}, storage.ErrConflict
 	}
-	opCtx, opCancel := context.WithCancel(ctx)
+	opCtx, opCancel := context.WithDeadline(ctx, expires)
 	p.versions[ref]++
 	version := p.versions[ref]
 	p.provisioning[ref] = opCancel
@@ -203,9 +202,11 @@ func (p *Pool) Revoke(ref string, revision int64) {
 	p.mu.Lock()
 	_, tracked := p.versions[ref]
 	var cancelProvision context.CancelFunc
-	if token.MatchString(ref) && revision > 0 && (tracked || len(p.versions) < 100) {
+	if token.MatchString(ref) && revision > 0 {
 		p.revoked[ref] = max(p.revoked[ref], revision)
-		p.versions[ref]++
+		if tracked {
+			p.versions[ref]++
+		}
 		cancelProvision = p.provisioning[ref]
 	}
 	s, ok := p.sessions[ref]
@@ -317,7 +318,7 @@ func (s *session) cacheShards(dirs []protocol.Entry) error {
 		s.shards = map[string]string{}
 	}
 	for name, id := range seen {
-		if existing := s.shards[name]; existing != "" && existing != id {
+		if existing := s.shards[name]; existing != "" && existing != s.root && existing != id {
 			return storage.ErrUnknown
 		}
 		s.shards[name] = id
@@ -329,17 +330,19 @@ func (s *session) lookupShard(prefix string) string {
 	defer s.shardMu.Unlock()
 	return s.shards[prefix]
 }
+
+// A verified flat root is also a valid write parent for legacy accounts.
+func (s *session) rememberParent(prefix, parent string) string {
+	s.shardMu.Lock()
+	defer s.shardMu.Unlock()
+	if known := s.shards[prefix]; known != "" {
+		return known
+	}
+	s.shards[prefix] = parent
+	return parent
+}
+
 func (s *session) ensureShard(ctx context.Context, opCtx context.Context, prefix string) (string, error) {
-	if id := s.lookupShard(prefix); id != "" {
-		return id, nil
-	}
-	dir, err := s.client.List(opCtx, s.root)
-	if err != nil {
-		return "", s.safeErr(ctx, err)
-	}
-	if err := s.cacheShards(dir.Directories); err != nil {
-		return "", err
-	}
 	if id := s.lookupShard(prefix); id != "" {
 		return id, nil
 	}
@@ -348,16 +351,15 @@ func (s *session) ensureShard(ctx context.Context, opCtx context.Context, prefix
 		if !child(s.root, created) {
 			return "", storage.ErrUnknown
 		}
-		s.shardMu.Lock()
-		if s.shards == nil {
-			s.shards = map[string]string{}
-		}
-		s.shards[prefix] = created
-		s.shardMu.Unlock()
-		return created, nil
+		return s.rememberParent(prefix, created), nil
 	}
 	if errors.Is(err, protocol.ErrConflict) {
 		dir, listErr := s.client.List(opCtx, s.root)
+		if errors.Is(listErr, protocol.ErrProtocol) && s.checkContext(ctx) == nil {
+			// An oversized legacy root cannot reveal the existing shard ID.
+			// New intents can still write to the verified root with a durable locator.
+			return s.rememberParent(prefix, s.root), nil
+		}
 		if listErr != nil {
 			return "", s.safeErr(ctx, listErr)
 		}
@@ -440,37 +442,37 @@ func (p *Pool) Find(ctx context.Context, i storage.Instance, intent string, expe
 	}
 	prefix := intent[:2]
 	var out storage.Locator
-	shard := s.lookupShard(prefix)
-	if shard == "" {
-		dir, err := s.client.List(opCtx, s.root)
-		if err != nil {
-			return storage.Locator{}, s.safeErr(ctx, err)
-		}
-		if err := s.cacheShards(dir.Directories); err != nil {
-			return storage.Locator{}, err
-		}
-		for _, e := range dir.Files {
-			if e.Name == intent {
-				if out.ID != "" || !child(s.root, e.ID) {
-					return out, storage.ErrUnknown
-				}
-				out = storage.Locator{ID: e.ID, Revision: e.Revision}
-			}
-		}
-		shard = s.lookupShard(prefix)
+	// Only recovery without a persisted ID needs a name lookup. Check both
+	// layouts even when the session already knows a shard for this prefix.
+	dir, err := s.client.List(opCtx, s.root)
+	if err != nil {
+		return out, s.safeErr(ctx, err)
 	}
-	if shard != "" {
-		shardDir, err := s.client.List(opCtx, shard)
+	if err := s.cacheShards(dir.Directories); err != nil {
+		return out, err
+	}
+	match := func(parent string, files []protocol.Entry) error {
+		for _, e := range files {
+			if e.Name != intent {
+				continue
+			}
+			if out.ID != "" || !child(parent, e.ID) {
+				return storage.ErrUnknown
+			}
+			out = storage.Locator{ID: e.ID, Revision: e.Revision}
+		}
+		return nil
+	}
+	if err := match(s.root, dir.Files); err != nil {
+		return storage.Locator{}, err
+	}
+	if shard := s.lookupShard(prefix); shard != "" && shard != s.root {
+		dir, err := s.client.List(opCtx, shard)
 		if err != nil {
 			return storage.Locator{}, s.safeErr(ctx, err)
 		}
-		for _, e := range shardDir.Files {
-			if e.Name == intent {
-				if out.ID != "" || !child(shard, e.ID) {
-					return out, storage.ErrUnknown
-				}
-				out = storage.Locator{ID: e.ID, Revision: e.Revision}
-			}
+		if err := match(shard, dir.Files); err != nil {
+			return storage.Locator{}, err
 		}
 	}
 	if out.ID == "" {
