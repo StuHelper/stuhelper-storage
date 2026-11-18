@@ -441,13 +441,7 @@ func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string
 		return Status{}, err
 	}
 	defer removeTemporary(f)
-	_, err = io.Copy(f, io.LimitReader(&pacedReader{ctx: ctx, src: src, global: s.bandwidth}, g.Size+1))
-	if err != nil {
-		err = streamErr(err)
-	}
-	if err == nil {
-		err = verifyFile(ctx, f, Object{Size: g.Size, SHA256: g.SHA256})
-	}
+	err = stageFromReader(ctx, f, src, s.bandwidth, g.Size, g.SHA256)
 	// A verified durable proof permits recovery to observe another concurrent
 	// writer's result. It is committed only after checking the actual complete bytes.
 	if err == nil {
@@ -615,10 +609,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 	}
 	return s.contentStatusAction(ctx, p, id, "storage.objects.delete")
 }
-func (s *Service) downloadContent(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer, review bool) error {
-	if dst == nil {
-		return ErrInput
-	}
+func (s *Service) openContentDownload(ctx context.Context, p Principal, id string, review bool, serve func(VerifiedContent) error) error {
 	action := "storage.objects.download"
 	if review {
 		action = "storage.objects.review"
@@ -665,35 +656,12 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, b
 		return e
 	}
 	// The handle gate above prevents inheriting another handle's publication.
-	cw := &contentWriter{check: func() error { return check(true) }, beforeWrite: beforeWrite, dst: dst}
-	return s.download(ctx, p, object, cw.setSize, cw, review, false)
-}
-
-type contentWriter struct {
-	check       func() error
-	beforeWrite func(int64)
-	size        int64
-	sizeSet     bool
-	dst         io.Writer
-	checked     bool
-}
-
-func (w *contentWriter) setSize(size int64) {
-	w.size = size
-	w.sizeSet = true
-}
-
-func (w *contentWriter) Write(b []byte) (int, error) {
-	if !w.checked {
-		if e := w.check(); e != nil {
-			return 0, e
+	return s.openObjectDownload(ctx, p, object, review, false, func(c VerifiedContent) error {
+		if e := check(true); e != nil {
+			return e
 		}
-		if w.beforeWrite != nil && w.sizeSet {
-			w.beforeWrite(w.size)
-		}
-		w.checked = true
-	}
-	return w.dst.Write(b)
+		return serve(c)
+	})
 }
 
 func (s *Service) cleanupContents(ctx context.Context, p Principal, limit int) error {

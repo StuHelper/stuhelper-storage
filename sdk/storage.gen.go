@@ -4956,6 +4956,31 @@ func (r ObjectStatusResponse) ContentType() string {
 	return ""
 }
 
+// DownloadContentResponse200Headers the declared response headers of an HTTP 200 response for DownloadContent
+type DownloadContentResponse200Headers struct {
+	AcceptRanges  *string
+	ContentLength *int64
+	ETag          *string
+}
+
+// DownloadContentResponse206Headers the declared response headers of an HTTP 206 response for DownloadContent
+type DownloadContentResponse206Headers struct {
+	AcceptRanges  *string
+	ContentLength *int64
+	ContentRange  *string
+	ETag          *string
+}
+
+// DownloadContentResponse304Headers the declared response headers of an HTTP 304 response for DownloadContent
+type DownloadContentResponse304Headers struct {
+	ETag *string
+}
+
+// DownloadContentResponse416Headers the declared response headers of an HTTP 416 response for DownloadContent
+type DownloadContentResponse416Headers struct {
+	ContentRange *string
+}
+
 type DownloadContentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4973,6 +4998,14 @@ type DownloadContentResponse struct {
 	JSON413 *Problem
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *DownloadContentResponse200Headers
+	// Headers206 the parsed response headers for an HTTP 206 response
+	Headers206 *DownloadContentResponse206Headers
+	// Headers304 the parsed response headers for an HTTP 304 response
+	Headers304 *DownloadContentResponse304Headers
+	// Headers416 the parsed response headers for an HTTP 416 response
+	Headers416 *DownloadContentResponse416Headers
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -7527,6 +7560,9 @@ func ParseDownloadContentResponse(rsp *http.Response) (*DownloadContentResponse,
 	}
 
 	switch {
+	case rsp.StatusCode == 304:
+		break // No content-type
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -7569,6 +7605,9 @@ func ParseDownloadContentResponse(rsp *http.Response) (*DownloadContentResponse,
 		}
 		response.JSON413 = &dest
 
+	case rsp.StatusCode == 416:
+		break // No content-type
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -7576,6 +7615,84 @@ func ParseDownloadContentResponse(rsp *http.Response) (*DownloadContentResponse,
 		}
 		response.JSON503 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers DownloadContentResponse200Headers
+		if values := rsp.Header.Values("Accept-Ranges"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Accept-Ranges", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.AcceptRanges = &value
+		}
+		if values := rsp.Header.Values("Content-Length"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Length", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.ContentLength = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 206:
+		var headers DownloadContentResponse206Headers
+		if values := rsp.Header.Values("Accept-Ranges"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Accept-Ranges", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.AcceptRanges = &value
+		}
+		if values := rsp.Header.Values("Content-Length"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Length", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.ContentLength = &value
+		}
+		if values := rsp.Header.Values("Content-Range"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Range", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentRange = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers206 = &headers
+	case rsp.StatusCode == 304:
+		var headers DownloadContentResponse304Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers304 = &headers
+	case rsp.StatusCode == 416:
+		var headers DownloadContentResponse416Headers
+		if values := rsp.Header.Values("Content-Range"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Range", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentRange = &value
+		}
+		response.Headers416 = &headers
 	}
 
 	return response, nil

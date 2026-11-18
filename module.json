@@ -193,6 +193,11 @@
     "STORAGE-42": [
       "bhpan_integration_test.go#TestServiceExecutorAndBHpanPoolRestartAndPopulatedDirectoryIntegration"
     ],
+    "STORAGE-35": [
+      "bhpan_recovery_test.go#TestMultipartRechecksObjectAfterPartUpload",
+      "drivers/bhpan/bhpan_test.go#TestMultipartUploadCheckpointRevocationAndFallback",
+      "transfer_http_test.go#TestStreamingHashRangeAndETagDownload"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"

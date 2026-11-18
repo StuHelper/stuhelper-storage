@@ -624,3 +624,97 @@ func TestRecoverFlatIntentAfterShardCached(t *testing.T) {
 		t.Fatal("recovery created another remote file")
 	}
 }
+
+type multipartFenceClient struct {
+	*bhpanFakeClient
+	onPart             func()
+	parts, completions int
+}
+
+func (c *multipartFenceClient) MultipartOptions(context.Context) (protocol.MultipartOptions, error) {
+	return protocol.MultipartOptions{MinimumSize: 1, MaximumSize: 4, MaximumParts: 4}, nil
+}
+func (c *multipartFenceClient) BeginMultipart(ctx context.Context, parent, name string, size int64) (protocol.MultipartUpload, error) {
+	upload, err := c.BeginUpload(ctx, parent, name, size)
+	return protocol.MultipartUpload{DocumentID: upload.DocumentID, Revision: upload.Revision, UploadID: "fixture-upload"}, err
+}
+func (c *multipartFenceClient) PartGrants(_ context.Context, _ protocol.MultipartUpload, first, last int) ([]protocol.PartGrant, error) {
+	return make([]protocol.PartGrant, last-first+1), nil
+}
+func (c *multipartFenceClient) WritePart(_ context.Context, _ protocol.PartGrant, src io.Reader, size int64) (protocol.Part, error) {
+	n, err := io.Copy(io.Discard, src)
+	if err != nil || n != size {
+		return protocol.Part{}, storage.ErrIntegrity
+	}
+	c.parts++
+	if c.parts == 1 {
+		c.onPart()
+	}
+	return protocol.Part{Number: c.parts, Size: n, ETag: "fixture"}, nil
+}
+func (c *multipartFenceClient) CompleteMultipart(context.Context, protocol.MultipartUpload, []protocol.Part) error {
+	c.completions++
+	return nil
+}
+
+func TestMultipartRechecksObjectAfterPartUpload(t *testing.T) {
+	h := harnessFor(t)
+	pool := bhpan.NewPool()
+	defer pool.Close()
+	pool.SetMultipartThreshold(8)
+	c := &multipartFenceClient{bhpanFakeClient: newBHpanFakeClient("multipart-fence")}
+	inst, err := pool.Provision(h.ctx, "multipart-fence", 1, c, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst.ID = "multipart"
+	inst.OwnerDomain = "test"
+	inst.Ownership = "platform"
+	inst.State = "active"
+	inst.Authorized = true
+	inst.Limit = 1024
+	inst.Admissions = []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: inst.ExpiresAt}}
+	cfg := h.cfg
+	cfg.TemporaryDirectory = t.TempDir()
+	svc, err := storage.New(h.repo, h.auth, pool, pool, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close(context.Background())
+	if _, err = svc.Register(h.ctx, h.actor, "register-multipart", inst); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("0123456789abcdef")
+	o := h.object(t, "fence-object", data)
+	c.onPart = func() {
+		if _, err := svc.Delete(h.ctx, h.actor, o.ID, "delete-after-part", o.Revision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = svc.Ingest(h.ctx, h.actor, o.ID, "fenced-upload", bytes.NewReader(data)); !errors.Is(err, storage.ErrStale) {
+		t.Fatalf("ingest: %v", err)
+	}
+	if c.parts == 0 || c.completions != 0 {
+		t.Fatalf("parts=%d completions=%d", c.parts, c.completions)
+	}
+	if err = h.repo.Transaction(h.ctx, func(tx storage.Transaction) error {
+		rs, err := tx.Replicas(o.ID)
+		if err != nil {
+			return err
+		}
+		if len(rs) != 1 || rs[0].Remote.ID == "" || !rs[0].IssuedWrite || rs[0].State != "cleanup" || !rs[0].Reserved || rs[0].Accounted {
+			t.Fatalf("replica: %+v", rs)
+		}
+		i, err := tx.Instance(inst.ID)
+		if err == nil && (i.Reserved != o.Size || i.Used != 0) {
+			t.Fatalf("reserved=%d used=%d", i.Reserved, i.Used)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err = h.db.QueryRow("SELECT state FROM storage.jobs WHERE object_id=$1 AND data->>'kind'='ingest'", o.ID).Scan(&state); err != nil || state != "done" {
+		t.Fatal(state, err)
+	}
+}

@@ -37,6 +37,15 @@ type Client interface {
 	Close()
 }
 
+// Older clients provide only the single-upload protocol.
+type multipartClient interface {
+	MultipartOptions(context.Context) (protocol.MultipartOptions, error)
+	BeginMultipart(context.Context, string, string, int64) (protocol.MultipartUpload, error)
+	PartGrants(context.Context, protocol.MultipartUpload, int, int) ([]protocol.PartGrant, error)
+	WritePart(context.Context, protocol.PartGrant, io.Reader, int64) (protocol.Part, error)
+	CompleteMultipart(context.Context, protocol.MultipartUpload, []protocol.Part) error
+}
+
 type session struct {
 	pool                        *Pool
 	client                      Client
@@ -55,27 +64,31 @@ type provisionOperation struct {
 	cancel   context.CancelFunc
 }
 
+const DefaultMultipartThreshold int64 = 16 << 20
+
 // Pool holds sessions until an explicit operator-authorized deadline. That
 // deadline limits local use; it does not assert a provider token's lifetime.
 // Credential retention and renewal belong to the composition layer.
 type Pool struct {
-	mu           sync.Mutex
-	sessions     map[string]*session
-	versions     map[string]uint64
-	revoked      map[string]int64
-	provisioning map[string]*provisionOperation
-	inFlight     map[string]int
-	closed       bool
-	observer     atomic.Pointer[storage.Observer]
+	mu                 sync.Mutex
+	sessions           map[string]*session
+	versions           map[string]uint64
+	revoked            map[string]int64
+	provisioning       map[string]*provisionOperation
+	inFlight           map[string]int
+	closed             bool
+	observer           atomic.Pointer[storage.Observer]
+	multipartThreshold int64
 }
 
 func NewPool() *Pool {
 	return &Pool{
-		sessions:     map[string]*session{},
-		versions:     map[string]uint64{},
-		revoked:      map[string]int64{},
-		provisioning: map[string]*provisionOperation{},
-		inFlight:     map[string]int{},
+		sessions:           map[string]*session{},
+		versions:           map[string]uint64{},
+		revoked:            map[string]int64{},
+		provisioning:       map[string]*provisionOperation{},
+		multipartThreshold: DefaultMultipartThreshold,
+		inFlight:           map[string]int{},
 	}
 }
 
@@ -86,6 +99,17 @@ func (p *Pool) SetObserver(obs storage.Observer) {
 		return
 	}
 	p.observer.Store(&obs)
+}
+
+// SetMultipartThreshold configures the byte size above which Write switches to
+// multipart uploads. Values <= 0 reset to DefaultMultipartThreshold (16 MiB).
+func (p *Pool) SetMultipartThreshold(threshold int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if threshold <= 0 {
+		threshold = DefaultMultipartThreshold
+	}
+	p.multipartThreshold = threshold
 }
 
 var token = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
@@ -279,13 +303,8 @@ func (p *Pool) expire(expected *session) {
 	expected.client.Close()
 }
 func (p *Pool) get(i storage.Instance) (*session, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	s := p.sessions[i.CredentialRef]
-	if s == nil || i.Adapter != "bhpan" || i.CredentialRevision != s.revision || i.Root != s.root || (i.AccountDomain != "" && i.AccountDomain != s.account) || !s.expires.After(time.Now()) || i.ExpiresAt.After(s.expires) {
-		return nil, storage.ErrDenied
-	}
-	return s, nil
+	s, _, err := p.getWithThreshold(i)
+	return s, err
 }
 func (s *session) operation(ctx context.Context) (context.Context, func()) {
 	opCtx, cancel := context.WithCancel(ctx)
@@ -505,7 +524,7 @@ func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent st
 	if !intentPattern.MatchString(intent) || size < 1 || src == nil || issue == nil || checkpoint == nil {
 		return storage.Locator{}, storage.ErrInput
 	}
-	s, err := p.get(i)
+	s, threshold, err := p.getWithThreshold(i)
 	if err != nil {
 		return storage.Locator{}, err
 	}
@@ -520,6 +539,18 @@ func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent st
 	}
 	if err := s.checkContext(ctx); err != nil {
 		return storage.Locator{}, err
+	}
+	if multipart, ok := s.client.(multipartClient); ok && size > threshold {
+		opts, err := multipart.MultipartOptions(opCtx)
+		if err != nil {
+			return storage.Locator{}, s.safeErr(ctx, "multipart-options", err)
+		}
+		if opts.MinimumSize <= 0 || opts.MaximumSize < opts.MinimumSize || opts.MaximumParts <= 0 {
+			return storage.Locator{}, storage.ErrUnavailable
+		}
+		if size > opts.MinimumSize {
+			return s.writeMultipart(opCtx, multipart, shard, intent, size, src, issue, checkpoint, opts, threshold)
+		}
 	}
 	if err := issue(); err != nil {
 		return storage.Locator{}, err
@@ -554,6 +585,95 @@ func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent st
 	}
 	if err = s.client.FinishUpload(opCtx, u.DocumentID, u.Revision); err != nil {
 		return remote, s.safeErr(ctx, "finish-upload", err)
+	}
+	return remote, nil
+}
+
+func (p *Pool) getWithThreshold(i storage.Instance) (*session, int64, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.sessions[i.CredentialRef]
+	if s == nil || i.Adapter != "bhpan" || i.CredentialRevision != s.revision || i.Root != s.root || (i.AccountDomain != "" && i.AccountDomain != s.account) || !s.expires.After(time.Now()) || i.ExpiresAt.After(s.expires) {
+		return nil, 0, storage.ErrDenied
+	}
+	threshold := p.multipartThreshold
+	if threshold <= 0 {
+		threshold = DefaultMultipartThreshold
+	}
+	return s, threshold, nil
+}
+
+func (s *session) writeMultipart(ctx context.Context, client multipartClient, parent, intent string, size int64, src io.Reader, issue func() error, checkpoint func(storage.Locator) error, opts protocol.MultipartOptions, threshold int64) (storage.Locator, error) {
+	maxParts := min(opts.MaximumParts, 10000)
+	partSize := min(max(threshold, opts.MinimumSize), opts.MaximumSize)
+	if minForParts := 1 + (size-1)/int64(maxParts); partSize < minForParts {
+		partSize = minForParts
+	}
+	if partSize > opts.MaximumSize {
+		return storage.Locator{}, storage.ErrInput
+	}
+	totalParts := int(1 + (size-1)/partSize)
+	if err := s.checkContext(ctx); err != nil {
+		return storage.Locator{}, err
+	}
+	if err := issue(); err != nil {
+		return storage.Locator{}, err
+	}
+	u, err := client.BeginMultipart(ctx, parent, intent, size)
+	remote := storage.Locator{ID: u.DocumentID, Revision: u.Revision}
+	if child(parent, u.DocumentID) {
+		if e := checkpoint(remote); e != nil {
+			return remote, e
+		}
+	}
+	if err != nil {
+		return remote, s.safeErr(ctx, "begin-multipart", err)
+	}
+	if !child(parent, u.DocumentID) || u.UploadID == "" {
+		return remote, storage.ErrUnknown
+	}
+	parts := make([]protocol.Part, 0, totalParts)
+	remaining := size
+	for first := 1; first <= totalParts; first += 100 {
+		if err := s.checkContext(ctx); err != nil {
+			return remote, err
+		}
+		last := min(totalParts, first+99)
+		grants, err := client.PartGrants(ctx, u, first, last)
+		if err != nil {
+			return remote, s.safeErr(ctx, "part-grants", err)
+		}
+		if len(grants) != last-first+1 {
+			return remote, storage.ErrUnavailable
+		}
+		for idx, g := range grants {
+			if err := s.checkContext(ctx); err != nil {
+				return remote, err
+			}
+			num := first + idx
+			partLen := min(partSize, remaining)
+			part, err := client.WritePart(ctx, g, io.LimitReader(src, partLen), partLen)
+			if err != nil {
+				return remote, s.safeErr(ctx, "write-part", err)
+			}
+			if part.Number != num || part.Size != partLen || part.ETag == "" {
+				return remote, storage.ErrIntegrity
+			}
+			parts = append(parts, part)
+			remaining -= partLen
+		}
+	}
+	if remaining != 0 {
+		return remote, storage.ErrIntegrity
+	}
+	if err := checkpoint(remote); err != nil {
+		return remote, err
+	}
+	if err := s.checkContext(ctx); err != nil {
+		return remote, err
+	}
+	if err := client.CompleteMultipart(ctx, u, parts); err != nil {
+		return remote, s.safeErr(ctx, "complete-multipart", err)
 	}
 	return remote, nil
 }

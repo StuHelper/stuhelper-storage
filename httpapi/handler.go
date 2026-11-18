@@ -321,17 +321,23 @@ type trackingWriter struct {
 	started bool
 }
 
+func (w *trackingWriter) WriteHeader(statusCode int) {
+	w.started = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
 func (w *trackingWriter) Write(b []byte) (int, error) {
 	w.started = true
 	return w.ResponseWriter.Write(b)
 }
 func (h *handler) download(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	writer := &trackingWriter{ResponseWriter: w}
-	err := h.s.DownloadWithSize(r.Context(), p, r.PathValue("id"), func(size int64) {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-		w.Header().Set("Content-Disposition", "attachment")
-	}, writer)
+	err := h.s.OpenDownload(r.Context(), p, r.PathValue("id"), func(content storage.VerifiedContent) error {
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Content-Disposition", "attachment")
+		writer.Header().Set("ETag", `"`+content.SHA256+`"`)
+		http.ServeContent(writer, r, "", time.Time{}, content.Body)
+		return nil
+	})
 	if err != nil && writer.started {
 		panic(http.ErrAbortHandler)
 	}
