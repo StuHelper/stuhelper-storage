@@ -257,7 +257,8 @@ func (c *bhpanFakeClient) Purge(ctx context.Context, docID string) error {
 
 func (c *bhpanFakeClient) Close() {}
 
-func TestBHpanShutdownCancellationRecoversWithoutBlockingJob(t *testing.T) {
+func newBHpanRecoveryHarness(t *testing.T) (*harness, *bhpanFakeClient, *bhpanFakeClient) {
+	t.Helper()
 	if os.Getenv("STUHELPER_STORAGE_TEST_DSN") == "" {
 		t.Skip("PostgreSQL integration requires STUHELPER_STORAGE_TEST_DSN")
 	}
@@ -304,6 +305,12 @@ func TestBHpanShutdownCancellationRecoversWithoutBlockingJob(t *testing.T) {
 		}
 	}
 
+	base.s, base.repo, base.clock = svc, repo, c
+	return base, clientA, clientB
+}
+func TestBHpanShutdownCancellationRecoversWithoutBlockingJob(t *testing.T) {
+	base, clientA, clientB := newBHpanRecoveryHarness(t)
+	svc, repo, c := base.s, base.repo, base.clock
 	payload := []byte("bhpan shutdown recovery payload")
 	sum := sha256.Sum256(payload)
 	obj, err := svc.Create(base.ctx, base.actor, "create", storage.CreateRequest{
@@ -566,5 +573,54 @@ func TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories(t *te
 		if inst.Reserved != 0 {
 			t.Fatalf("unissued reservation leaked capacity on %s: reserved=%d", inst.ID, inst.Reserved)
 		}
+	}
+}
+
+func TestRecoverFlatIntentAfterShardCached(t *testing.T) {
+	h, a, b := newBHpanRecoveryHarness(t)
+	data := []byte("legacy flat upload")
+	hash := sha256.Sum256(data)
+	o, err := h.s.Create(h.ctx, h.actor, "legacy", storage.CreateRequest{Size: int64(len(data)), SHA256: hex.EncodeToString(hash[:]), Protection: storage.Protection{Class: "public", Scope: "school-a", Public: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.lostBegin.Store(true)
+	b.lostBegin.Store(true)
+	if _, err = h.s.Ingest(h.ctx, h.actor, o.ID, "ingest-legacy", bytes.NewReader(data)); !errors.Is(err, storage.ErrUnavailable) {
+		t.Fatal(err)
+	}
+	// Represent a pre-sharding upload whose response was lost. The active
+	// session already knows the new shard with the same two-digit prefix.
+	var flat string
+	for _, cl := range []*bhpanFakeClient{a, b} {
+		for key, f := range cl.files {
+			if flat != "" {
+				t.Fatal("expected exactly one remote upload")
+			}
+			f.parent = cl.root
+			flat = cl.root + "/" + key
+			f.documentID = flat
+			f.data = data
+			cl.files[key] = f
+		}
+	}
+	h.clock.Add(6 * time.Second)
+	if ok, err := h.s.RunOne(h.ctx, "recover-flat"); !ok || err != nil {
+		t.Fatalf("recovery claimed=%v err=%v", ok, err)
+	}
+	if err = h.repo.Transaction(h.ctx, func(tx storage.Transaction) error {
+		copies, e := tx.Replicas(o.ID)
+		if e != nil {
+			return e
+		}
+		if flat == "" || len(copies) != 1 || copies[0].Remote.ID != flat || copies[0].State != "healthy" || copies[0].Reserved || !copies[0].Accounted {
+			t.Fatalf("recovered replicas: %+v", copies)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.files)+len(b.files) != 1 {
+		t.Fatal("recovery created another remote file")
 	}
 }

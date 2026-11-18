@@ -48,6 +48,7 @@
       "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed",
       "bhpan_recovery_test.go#TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories",
       "drivers/bhpan/bhpan_test.go#TestFindLegacyIntentAfterShardCached",
+      "bhpan_recovery_test.go#TestRecoverFlatIntentAfterShardCached",
       "drivers/bhpan/bhpan_test.go#TestWriteWithExistingShardInOversizedLegacyRoot"
     ],
     "STORAGE-12": [
