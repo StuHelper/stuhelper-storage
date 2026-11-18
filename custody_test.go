@@ -92,12 +92,14 @@ func (a *custodyAuth) Authorize(_ context.Context, p storage.Principal, action, 
 }
 
 type custodyProvider struct {
-	h              *harness
-	creates        atomic.Int32
-	failCommit     atomic.Bool
-	failPrepare    atomic.Bool
-	failAfterClaim atomic.Bool
-	account        string
+	h                 *harness
+	creates           atomic.Int32
+	failCommit        atomic.Bool
+	failPrepare       atomic.Bool
+	failAfterClaim    atomic.Bool
+	unknownAfterClaim atomic.Bool
+	prepareInputs     atomic.Int32
+	account           string
 }
 
 func (p *custodyProvider) Fingerprint(b []byte) (string, error) {
@@ -106,7 +108,10 @@ func (p *custodyProvider) Fingerprint(b []byte) (string, error) {
 	return hex.EncodeToString(m.Sum(nil)), nil
 }
 func (p *custodyProvider) ValidateInput(string, json.RawMessage) error { return nil }
-func (p *custodyProvider) Prepare(ctx context.Context, id string, until time.Time, _ json.RawMessage, current *storage.Instance, claim func(string) error) (storage.Instance, error) {
+func (p *custodyProvider) Prepare(ctx context.Context, id string, until time.Time, input json.RawMessage, current *storage.Instance, claim func(string) error) (storage.Instance, error) {
+	if len(input) > 0 {
+		p.prepareInputs.Add(1)
+	}
 	if p.failPrepare.Load() {
 		return storage.Instance{}, storage.ErrDenied
 	}
@@ -123,6 +128,9 @@ func (p *custodyProvider) Prepare(ctx context.Context, id string, until time.Tim
 	}
 	if e := claim(account); e != nil {
 		return storage.Instance{}, e
+	}
+	if p.unknownAfterClaim.Load() {
+		return storage.Instance{}, storage.ErrUnknown
 	}
 	if p.failAfterClaim.Load() {
 		return storage.Instance{}, storage.ErrUnavailable
@@ -594,5 +602,32 @@ func TestInstanceUpdatePreservesNewerQuotaSample(t *testing.T) {
 	updated, err := s.UpdateInstance(h.ctx, h.actor, "sampling-update", i)
 	if err != nil || updated.ProviderFree != 42 || updated.QuotaRevision != i.QuotaRevision+1 || updated.Limit != 2048 {
 		t.Fatalf("quota=%d revision=%d error=%v", updated.ProviderFree, updated.QuotaRevision, err)
+	}
+}
+
+func TestCustodyUnknownPreparationKeepsAccountClaim(t *testing.T) {
+	h, s, p, _, user, q := custodyFixture(t)
+	p.account = "account:shared"
+	h.provider.verificationClock = h.clock.Now
+	p.unknownAfterClaim.Store(true)
+	key := "00000000-0000-4000-8000-000000000001"
+	v, err := s.Submit(h.ctx, user, "", key, q)
+	if err != nil || v.State != "blocked" || v.LastError != "result_unknown" {
+		t.Fatal(v, err)
+	}
+	h.clock.Add(3 * time.Minute)
+	replacement := q
+	replacement.Revision = v.Revision
+	if _, err = s.Submit(h.ctx, user, v.ID, "00000000-0000-4000-8000-000000000002", replacement); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("replaced unknown request: %v", err)
+	}
+	var claimed string
+	if err = h.db.QueryRow("SELECT account_domain FROM storage.custody_bindings WHERE id=$1", v.ID).Scan(&claimed); err != nil || claimed != p.account {
+		t.Fatal(claimed, err)
+	}
+	p.unknownAfterClaim.Store(false)
+	v, err = s.Submit(h.ctx, user, "", key, q)
+	if err != nil || v.State != "ready" || p.prepareInputs.Load() != 1 || p.creates.Load() != 1 {
+		t.Fatalf("recovery state=%s err=%v preparations=%d roots=%d", v.State, err, p.prepareInputs.Load(), p.creates.Load())
 	}
 }

@@ -137,7 +137,7 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 					return storage.ErrConflict
 				}
 				canResume := !prevOp.Complete && prevOp.Attempts < 5 && prevOp.Until.After(now)
-				if canResume && (b.State == "pending" || prevOp.Result != nil) {
+				if canResume && (b.State == "pending" || prevOp.Result != nil || unknownPreparation(b)) {
 					return storage.ErrConflict
 				}
 				if b.Instance.ID == "" && prevOp.Result == nil {
@@ -175,6 +175,12 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 	return s.run(ctx, p, out.ID, ResumeRequest{key, out.Revision}, q.Credential, false)
 }
 
+// The provider may have created a root after claiming the account and before
+// returning a candidate. Recover that operation before accepting new credentials.
+func unknownPreparation(b Binding) bool {
+	return b.Instance.ID == "" && b.AccountDomain != "" && (b.LastError == "result_unknown" || b.State == "pending")
+}
+
 // Check after recording the pending state inside the registry transaction.
 // Replacing or resuming a failed request must reserve its released slot again.
 func checkCapacity(tx Tx, owner storage.Principal) error {
@@ -208,6 +214,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	var out View
 	var b Binding
 	var op Operation
+	var recoverClaim bool
 	if !uuid.MatchString(target) || !uuid.MatchString(q.RequestID) || q.Revision < 1 {
 		return out, storage.ErrInput
 	}
@@ -252,6 +259,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		if recent >= 5 {
 			return storage.ErrCapacity
 		}
+		recoverClaim = op.Result == nil && unknownPreparation(b)
 		if b.State != "pending" {
 			b.State = "pending"
 			if e := tx.SaveBinding(b); e != nil {
@@ -330,7 +338,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	}
 	if e == nil && op.Result == nil {
 		var candidate storage.Instance
-		if len(input) > 0 {
+		if len(input) > 0 && !recoverClaim {
 			candidate, e = s.provider.Prepare(work, target, op.Until, input, current, claim)
 		} else {
 			candidate, e = s.provider.Resume(work, target, op.Until, current, claim)
@@ -426,6 +434,8 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			op.Complete = true
 			b.State = "ready"
 			b.Instance = applied
+		} else if recoverClaim && op.Result == nil && op.Attempts < 5 && op.Until.After(s.cfg.Clock()) {
+			b.LastError = "result_unknown"
 		} else if op.Result == nil && (errors.Is(resultErr, storage.ErrDenied) || errors.Is(resultErr, storage.ErrNotFound)) {
 			b.State = "credentials_required"
 			if b.Instance.ID == "" {
