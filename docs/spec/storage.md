@@ -24,7 +24,7 @@ OpenAPI 位于 contracts/storage.openapi.json，Go 与 TypeScript SDK 由固定�
 
 ## 数据库与运行
 
-postgres/schema.sql 为首版迁移，由迁移身份执行。运行身份仅获 storage schema 的必要表权限，audit 只追加。审计与 CloudEvents outbox 同事务提交；事件 revision 按对象或实例递增，消费者去重后重新读取当前状态。
+postgres/schema.sql 为首版迁移，由迁移身份执行。运行身份仅获 storage schema 的必要表权限，audit 只追加。审计与 CloudEvents outbox 同事务提交；事件 revision 按对象或实例递增，消费者去重后重新读取当前状态。任务领取与失败列表使用部分索引。升级会移除包含已完成任务的旧领取索引。
 
 未引用上传在创建满 24 小时后进入删除。幂等响应有效期为 24 小时。生产装配还需实现已完成事件和幂等记录清理、审计保留与备份恢复；未完成这些事项前不开放生产服务。
 

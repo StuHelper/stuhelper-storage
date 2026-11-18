@@ -128,7 +128,8 @@
       "executor/maintenance_test.go#TestLongMaintenanceSweepVisitsAllPagesAndDueAccounts",
       "executor/maintenance_test.go#TestLongMaintenanceSweepStopsInFlightPage",
       "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor",
-      "operations_test.go#TestReconcileSkipsTombstonesAndHealthyObjectInstanceLocks"
+      "operations_test.go#TestReconcileSkipsTombstonesAndHealthyObjectInstanceLocks",
+      "operations_test.go#TestClaimIndexesExcludeCompletedJobsAfterUpgrade"
     ],
     "STORAGE-31": [
       "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission"

@@ -14,6 +14,7 @@ import (
 
 	storage "github.com/StuHelper/stuhelper-storage"
 	"github.com/StuHelper/stuhelper-storage/httpapi"
+	"github.com/StuHelper/stuhelper-storage/postgres"
 	"github.com/StuHelper/stuhelper-storage/sdk"
 )
 
@@ -303,5 +304,22 @@ func TestReconcileSkipsTombstonesAndHealthyObjectInstanceLocks(t *testing.T) {
 	res, err := h.s.Reconcile(shortCtx, h.actor, 100, "")
 	if err != nil || res.Processed != 1 {
 		t.Fatalf("Reconcile scanned tombstone or locked instances unnecessarily: res=%+v err=%v", res, err)
+	}
+}
+
+func TestClaimIndexesExcludeCompletedJobsAfterUpgrade(t *testing.T) {
+	h := harnessFor(t)
+	// Recreate the original unfiltered index as it exists on upgrade.
+	if _, err := h.admin.Exec("CREATE INDEX IF NOT EXISTS jobs_claim ON storage.jobs(state,available_at,lease_until)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.Exec(postgres.Schema); err != nil {
+		t.Fatal(err)
+	}
+	var full, partial int
+	err := h.db.QueryRow(`SELECT count(*) FILTER (WHERE indpred IS NULL), count(*) FILTER (WHERE indpred IS NOT NULL)
+        FROM pg_index WHERE indrelid='storage.jobs'::regclass AND pg_get_indexdef(indexrelid) LIKE '%(state, available_at, lease_until)%'`).Scan(&full, &partial)
+	if err != nil || full != 0 || partial != 1 {
+		t.Fatalf("claim indexes full=%d partial=%d: %v", full, partial, err)
 	}
 }

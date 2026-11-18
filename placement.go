@@ -169,18 +169,12 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			needsReplicaAction := o.State == "deleting" || expired
 			revisionOrCorrupt := false
 			drainingHealthy := false
-			plannedAccounts := map[string]bool{}
-			plannedOwners := map[string]bool{}
 			plannedCount := 0
 			for _, r := range replicas {
 				if r.State == "deleted" {
 					continue
 				}
 				i := snapByID[r.InstanceID]
-				plannedAccounts[i.AccountDomain] = true
-				if i.Ownership == "contributor" {
-					plannedOwners[i.OwnerDomain] = true
-				}
 				if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(now) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, now) && r.CredentialRevision == i.CredentialRevision {
 					plannedCount++
 				}
