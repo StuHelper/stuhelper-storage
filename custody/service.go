@@ -114,6 +114,12 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 		}
 		var b Binding
 		if target == "" {
+			// Binding IDs outlive their completed request receipts.
+			if _, err := tx.Binding(key); err == nil {
+				return storage.ErrConflict
+			} else if !errors.Is(err, storage.ErrNotFound) {
+				return err
+			}
 			target = key
 			b = Binding{View: View{ID: target, Adapter: q.Adapter}, Owner: p}
 		} else {
@@ -432,6 +438,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		b.State = "blocked"
 		if resultErr == nil {
 			op.Complete = true
+			op.CompletedAt = s.cfg.Clock()
 			b.State = "ready"
 			b.Instance = applied
 		} else if recoverClaim && op.Result == nil && op.Attempts < 5 && op.Until.After(s.cfg.Clock()) {

@@ -512,6 +512,7 @@ func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 			return err
 		}
 		current.State = "done"
+		current.CompletedAt = s.now()
 		if err := tx.SaveJob(current); err != nil {
 			return err
 		}
@@ -620,6 +621,7 @@ func (s *Service) failJob(ctx context.Context, expected Job, cause error) error 
 					return err
 				}
 				j.State = "done"
+				j.CompletedAt = s.now()
 				j.ErrorCode = errorCode(cause)
 				return tx.SaveJob(j)
 			}
@@ -634,6 +636,7 @@ func (s *Service) failJob(ctx context.Context, expected Job, cause error) error 
 		// cannot succeed by retrying and must not remain an actionable blockage.
 		if errors.Is(cause, ErrStale) {
 			j.State = "done"
+			j.CompletedAt = s.now()
 		}
 		return tx.SaveJob(j)
 	})
@@ -693,6 +696,7 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 			return err
 		}
 		current.State = "done"
+		current.CompletedAt = s.now()
 		if err := tx.SaveJob(current); err != nil {
 			return err
 		}

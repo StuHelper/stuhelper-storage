@@ -181,6 +181,11 @@
     "STORAGE-41": [
       "config_validation_test.go#TestCrossComponentConfigurationValidation"
     ],
+    "STORAGE-38": [
+      "retention_test.go#TestEnrollmentIdentitySurvivesOperationPurge",
+      "retention_test.go#TestLegacyRetentionBeginsOnMigration",
+      "retention_test.go#TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"

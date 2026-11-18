@@ -71,7 +71,7 @@ func TestCrossComponentConfigurationValidation(t *testing.T) {
 		t.Fatalf("unexpected BudgetSummary: %+v", summary)
 	}
 
-	// 2. QuotaValidity=5m + QuotaRefreshAhead=1m leaves a 4m refresh window; MaintenanceInterval=1h must be rejected.
+	// Four minutes between sweeps cannot refresh samples within a one-minute advance window.
 	_, err = executor.New(svc, executor.Config{
 		ID:                  "bad-interval",
 		Principal:           h.actor,

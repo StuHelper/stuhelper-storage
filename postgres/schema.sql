@@ -10,8 +10,12 @@ CREATE TABLE IF NOT EXISTS storage.custody_bindings (
 CREATE INDEX IF NOT EXISTS custody_owner ON storage.custody_bindings(owner_issuer,owner_subject,id);
 CREATE TABLE IF NOT EXISTS storage.custody_operations (
     id text PRIMARY KEY,
+    completed_at timestamptz,
     data jsonb NOT NULL
 );
+ALTER TABLE storage.custody_operations ADD COLUMN IF NOT EXISTS completed_at timestamptz;
+UPDATE storage.custody_operations SET completed_at=transaction_timestamp() WHERE completed_at IS NULL AND (data->>'Complete')::boolean;
+CREATE INDEX IF NOT EXISTS custody_operations_completed_at ON storage.custody_operations(completed_at) WHERE completed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS storage.instances (
     id text PRIMARY KEY,
@@ -35,23 +39,34 @@ CREATE TABLE IF NOT EXISTS storage.jobs (
     state text NOT NULL,
     available_at timestamptz NOT NULL,
     lease_until timestamptz NOT NULL,
+    completed_at timestamptz,
     data jsonb NOT NULL
 );
+ALTER TABLE storage.jobs ADD COLUMN IF NOT EXISTS completed_at timestamptz;
+UPDATE storage.jobs SET completed_at=transaction_timestamp() WHERE completed_at IS NULL AND state='done';
 CREATE INDEX IF NOT EXISTS objects_reconcile ON storage.objects(id) WHERE data->>'state'<>'deleted';
 CREATE INDEX IF NOT EXISTS replicas_instance ON storage.replicas(instance_id);
 CREATE INDEX IF NOT EXISTS jobs_active_claim ON storage.jobs(state,available_at,lease_until) WHERE state IN ('pending','running','blocked');
 DROP INDEX IF EXISTS storage.jobs_claim;
 CREATE INDEX IF NOT EXISTS jobs_failed ON storage.jobs(id) WHERE state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'';
+CREATE INDEX IF NOT EXISTS jobs_completed_at ON storage.jobs(completed_at) WHERE state='done';
 CREATE TABLE IF NOT EXISTS storage.idempotency (
     key text PRIMARY KEY,
+    expires_at timestamptz,
     data jsonb NOT NULL
 );
+ALTER TABLE storage.idempotency ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+UPDATE storage.idempotency SET expires_at=(data->>'ExpiresAt')::timestamptz WHERE expires_at IS NULL AND data ? 'ExpiresAt';
+CREATE INDEX IF NOT EXISTS idempotency_expires_at ON storage.idempotency(expires_at);
 CREATE TABLE IF NOT EXISTS storage.outbox (
     seq bigint GENERATED ALWAYS AS IDENTITY,
     id text PRIMARY KEY,
     data jsonb NOT NULL,
-    delivered boolean NOT NULL DEFAULT false
+    delivered boolean NOT NULL DEFAULT false,
+    delivered_at timestamptz
 );
+ALTER TABLE storage.outbox ADD COLUMN IF NOT EXISTS delivered_at timestamptz;
+UPDATE storage.outbox SET delivered_at=transaction_timestamp() WHERE delivered_at IS NULL AND delivered;
 -- Existing rows have no global commit order. Preserve each stream's durable
 -- revision order and advance the identity past the backfilled rows atomically.
 DO $$
@@ -71,6 +86,7 @@ BEGIN
     END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS outbox_pending ON storage.outbox(id) WHERE NOT delivered;
+CREATE INDEX IF NOT EXISTS outbox_delivered_at ON storage.outbox(delivered_at) WHERE delivered;
 CREATE INDEX IF NOT EXISTS outbox_pending_seq ON storage.outbox(seq) WHERE NOT delivered;
 CREATE TABLE IF NOT EXISTS storage.audit (
     id text PRIMARY KEY,

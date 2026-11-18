@@ -173,7 +173,11 @@ func (t *transaction) Job(id string) (storage.Job, error) {
 	return read[storage.Job](t, `SELECT data FROM storage.jobs WHERE id=$1 FOR UPDATE`, id)
 }
 func (t *transaction) SaveJob(v storage.Job) error {
-	return t.save(`INSERT INTO storage.jobs(id,object_id,state,available_at,lease_until,data) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET state=excluded.state,available_at=excluded.available_at,lease_until=excluded.lease_until,data=excluded.data`, v, v.ID, v.ObjectID, v.State, v.AvailableAt, v.LeaseUntil)
+	var completedAt any
+	if v.State == "done" && !v.CompletedAt.IsZero() {
+		completedAt = v.CompletedAt
+	}
+	return t.save(`INSERT INTO storage.jobs(id,object_id,state,available_at,lease_until,completed_at,data) VALUES($1,$2,$3,$4,$5,CASE WHEN $3='done' THEN COALESCE($6::timestamptz,now()) END,$7) ON CONFLICT(id) DO UPDATE SET state=excluded.state,available_at=excluded.available_at,lease_until=excluded.lease_until,completed_at=CASE WHEN excluded.state='done' THEN COALESCE(storage.jobs.completed_at,excluded.completed_at) ELSE NULL END,data=excluded.data`, v, v.ID, v.ObjectID, v.State, v.AvailableAt, v.LeaseUntil, completedAt)
 }
 func (t *transaction) OutstandingJobs(exclude string, limit int) (int, error) {
 	var count int
@@ -192,7 +196,32 @@ func (t *transaction) Idempotency(key string) (storage.Idempotency, error) {
 	return read[storage.Idempotency](t, `SELECT data FROM storage.idempotency WHERE key=$1 FOR UPDATE`, key)
 }
 func (t *transaction) SaveIdempotency(v storage.Idempotency) error {
-	return t.save(`INSERT INTO storage.idempotency(key,data) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET data=excluded.data`, v, v.Key)
+	return t.save(`INSERT INTO storage.idempotency(key,expires_at,data) VALUES($1,$2,$3) ON CONFLICT(key) DO UPDATE SET expires_at=excluded.expires_at,data=excluded.data`, v, v.Key, v.ExpiresAt)
+}
+func (t *transaction) PurgeRetention(cutoffs storage.RetentionCutoffs, limit int) (storage.RetentionResult, error) {
+	var out storage.RetentionResult
+	execDelete := func(query string, cutoff time.Time) (int, error) {
+		res, err := t.tx.ExecContext(t.ctx, query, cutoff, limit)
+		if err != nil {
+			return 0, safe(err)
+		}
+		rows, err := res.RowsAffected()
+		return int(rows), safe(err)
+	}
+	var err error
+	if out.Idempotency, err = execDelete(`DELETE FROM storage.idempotency WHERE ctid IN (SELECT ctid FROM storage.idempotency WHERE expires_at <= $1 ORDER BY expires_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.IdempotencyBefore); err != nil {
+		return out, err
+	}
+	if out.DeliveredOutbox, err = execDelete(`DELETE FROM storage.outbox WHERE ctid IN (SELECT ctid FROM storage.outbox WHERE delivered AND delivered_at <= $1 ORDER BY delivered_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.DeliveredOutboxBefore); err != nil {
+		return out, err
+	}
+	if out.CompletedJobs, err = execDelete(`DELETE FROM storage.jobs WHERE ctid IN (SELECT ctid FROM storage.jobs WHERE state='done' AND completed_at <= $1 ORDER BY completed_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.CompletedJobsBefore); err != nil {
+		return out, err
+	}
+	if out.CustodyOperations, err = execDelete(`DELETE FROM storage.custody_operations WHERE ctid IN (SELECT o.ctid FROM storage.custody_operations o WHERE COALESCE((o.data->>'Complete')::boolean,false) AND o.completed_at <= $1 AND NOT EXISTS (SELECT 1 FROM storage.custody_bindings b WHERE b.data->>'request_id'=o.id AND b.data->>'state'<>'ready') ORDER BY o.completed_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.CompletedCustodyBefore); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 func (t *transaction) Event(v storage.Event) error {
 	v.SpecVersion = "1.0"
@@ -295,6 +324,6 @@ func (r *Repository) PendingEventsAfter(ctx context.Context, limit int, afterSeq
 	return out, err
 }
 func (r *Repository) AcknowledgeEvent(ctx context.Context, id string) error {
-	_, err := r.DB.ExecContext(ctx, `UPDATE storage.outbox SET delivered=true WHERE id=$1`, id)
+	_, err := r.DB.ExecContext(ctx, `UPDATE storage.outbox SET delivered=true, delivered_at=COALESCE(delivered_at,GREATEST(now(),(data->>'time')::timestamptz)) WHERE id=$1`, id)
 	return safe(err)
 }
