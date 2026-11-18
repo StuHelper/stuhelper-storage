@@ -45,11 +45,14 @@
     ],
     "STORAGE-11": [
       "drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion",
-      "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed"
+      "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed",
+      "bhpan_recovery_test.go#TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories"
     ],
     "STORAGE-12": [
       "drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload",
-      "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline"
+      "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline",
+      "drivers/bhpan/bhpan_test.go#TestCallerCancellationAndLeaseDeadlinePreserveSession",
+      "drivers/bhpan/bhpan_test.go#TestProvisionDoesNotBlockPoolOrLeakRefCapacity"
     ],
     "STORAGE-13": [
       "staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup",
@@ -64,7 +67,8 @@
     "STORAGE-15": [
       "executor/executor_test.go#TestBoundedWorkersAndGracefulStop",
       "executor/executor_test.go#TestStopDeadlineCancelsAndWaitsForCleanup",
-      "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas"
+      "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas",
+      "bhpan_recovery_test.go#TestBHpanShutdownCancellationRecoversWithoutBlockingJob"
     ],
     "STORAGE-16": [
       "runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"
