@@ -222,7 +222,7 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 	if err != nil {
 		return out, err
 	}
-	if err = s.resumeContentCopy(ctx, p, out.ID); err != nil {
+	if err = s.resumeContentCopy(ctx, p, out.ID, "", 0); err != nil {
 		return out, err
 	}
 	return s.contentStatus(ctx, p, out.ID)
@@ -263,11 +263,129 @@ func (s *Service) contentSource(ctx context.Context, tx Transaction, p Principal
 	}
 	return o, group, nil
 }
-func (s *Service) ensureContentObject(ctx context.Context, g ContentGroup) (Status, error) {
-	if _, err := s.Create(ctx, g.Owner, "content-create:"+g.ID, CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy, ContentGroup: g.ID}); err != nil {
-		return Status{}, err
+func (s *Service) ensureContentObject(ctx context.Context, actor Principal, g ContentGroup) (Status, error) {
+	var out Status
+	err := s.repo.Transaction(ctx, func(tx Transaction) error {
+		if err := tx.Lock("object:" + g.ObjectID); err != nil {
+			return err
+		}
+		existing, err := tx.Object(g.ObjectID)
+		if err == nil {
+			out, err = s.status(tx, existing)
+			return err
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		creation := CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy}
+		o := Object{
+			ContentGroup: g.ID,
+			CreationHash: requestHash(creation),
+			ID:           g.ObjectID,
+			Owner:        g.Owner,
+			Size:         g.Size,
+			SHA256:       g.SHA256,
+			Protection:   g.Protection,
+			Policy:       g.Policy,
+			Revision:     1,
+			State:        "pending",
+			CreatedAt:    s.now(),
+			References:   []Reference{},
+		}
+		if err := tx.SaveObject(o); err != nil {
+			return err
+		}
+		if err := s.emit(tx, actor, "storage.object.created", o.ID, o.Revision); err != nil {
+			return err
+		}
+		out, err = s.status(tx, o)
+		return err
+	})
+	return out, err
+}
+
+func (s *Service) writeContentObject(ctx context.Context, g ContentGroup, f *stagedFile, checkAuth func(Transaction) error) error {
+	ctx, release, err := s.begin(ctx)
+	if err != nil {
+		return err
 	}
-	return s.Status(ctx, g.Owner, g.ObjectID)
+	defer release()
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		return ErrUnavailable
+	}
+	var job Job
+	already := false
+	err = s.repo.Transaction(ctx, func(tx Transaction) error {
+		if checkAuth != nil {
+			if err := checkAuth(tx); err != nil {
+				return err
+			}
+		}
+		if err := tx.Lock("object:" + g.ObjectID); err != nil {
+			return err
+		}
+		o, err := tx.Object(g.ObjectID)
+		if err != nil {
+			return err
+		}
+		if o.State == "deleting" || o.State == "deleted" {
+			return ErrStale
+		}
+		replicas, err := tx.Replicas(o.ID)
+		if err != nil {
+			return err
+		}
+		for _, r := range replicas {
+			if r.State == "healthy" && r.ObjectRevision == o.Revision {
+				already = true
+				return nil
+			}
+			if r.State != "deleted" {
+				return ErrConflict
+			}
+		}
+		planned, err := s.plan(tx, o, 1)
+		if err != nil {
+			return err
+		}
+		if len(planned) == 0 {
+			return ErrCapacity
+		}
+		replica := planned[0]
+		replica.State = "writing"
+		if err := tx.SaveReplica(replica); err != nil {
+			return err
+		}
+		job = Job{
+			ID:                 newID(),
+			ObjectID:           o.ID,
+			ReplicaID:          replica.ID,
+			Intent:             replica.Intent,
+			ObjectRevision:     replica.ObjectRevision,
+			InstanceRevision:   replica.InstanceRevision,
+			CredentialRevision: replica.CredentialRevision,
+			Kind:               "ingest",
+			State:              "running",
+			Generation:         1,
+			LeaseOwner:         newID(),
+			LeaseUntil:         s.now().Add(s.cfg.Lease),
+			AvailableAt:        s.now(),
+			Attempts:           1,
+		}
+		return s.queue(tx, job)
+	})
+	if err != nil || already {
+		return err
+	}
+	workCtx, cancel := context.WithTimeout(ctx, s.cfg.Lease)
+	defer cancel()
+	if err = s.writeReplica(workCtx, job, f); err != nil {
+		cleanupCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stop()
+		_ = s.failJob(cleanupCtx, job, err)
+		return err
+	}
+	return nil
 }
 func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string, src io.Reader) (Status, error) {
 	if !validKey(key) || src == nil {
@@ -334,13 +452,15 @@ func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string
 	if err != nil {
 		return Status{}, err
 	}
-	if _, err = s.ensureContentObject(ctx, g); err != nil {
+	if _, err = s.ensureContentObject(ctx, p, g); err != nil {
 		return Status{}, err
 	}
-	if _, err = s.Ingest(ctx, p, g.ObjectID, key, f); err != nil {
+	if err = s.writeContentObject(ctx, g, f, func(Transaction) error {
+		return s.authorize(ctx, p, "storage.objects.upload", id, g.Protection)
+	}); err != nil {
 		return Status{}, err
 	}
-	return s.contentStatus(ctx, p, id)
+	return s.contentStatusAction(ctx, p, id, "storage.objects.upload")
 }
 func (s *Service) contentReference(ctx context.Context, p Principal, id, key string, ref Reference, attach bool) (Status, error) {
 	if !validID(ref.Module) || !validID(ref.ID) {
@@ -458,7 +578,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 	if err == nil {
 		for _, groupID := range []string{h.GroupID, h.SourceGroup, h.PendingGroup} {
 			if groupID != "" {
-				if e := s.cleanupContentGroup(ctx, groupID); e != nil {
+				if e := s.cleanupContentGroup(ctx, p, groupID); e != nil {
 					err = e
 					break
 				}
@@ -486,8 +606,17 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, d
 			if e != nil {
 				return e
 			}
-			if h.State != "active" || !h.Verified || h.PendingGroup != "" {
+			if h.State != "active" || !h.Verified || (h.PendingGroup != "" && !review) {
 				return ErrDenied
+			}
+			if h.PendingGroup != "" && review {
+				pending, pe := tx.ContentGroup(h.PendingGroup)
+				if pe != nil {
+					return pe
+				}
+				if pe = s.authorize(ctx, p, action, id, pending.Protection); pe != nil {
+					return pe
+				}
 			}
 			st, e := s.contentView(tx, h, g)
 			if e != nil {
@@ -541,13 +670,13 @@ func (s *Service) cleanupContents(ctx context.Context, p Principal, limit int) e
 		if e := s.authorize(ctx, p, "storage.maintenance", g.ObjectID, g.Protection); e != nil {
 			return e
 		}
-		if e := s.cleanupContentGroup(ctx, g.ID); e != nil && first == nil {
+		if e := s.cleanupContentGroup(ctx, p, g.ID); e != nil && first == nil {
 			first = e
 		}
 	}
 	return first
 }
-func (s *Service) cleanupContentGroup(ctx context.Context, id string) error {
+func (s *Service) cleanupContentGroup(ctx context.Context, actor Principal, id string) error {
 	var g ContentGroup
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
 		if e := tx.Lock("content-ledger"); e != nil {
@@ -573,19 +702,84 @@ func (s *Service) cleanupContentGroup(ctx context.Context, id string) error {
 		return err
 	}
 	// Materialize a possible lost create response with the stable key before
-	// deletion. This prevents a late create from escaping an earlier release.
-	st, err := s.ensureContentObject(ctx, g)
-	if err != nil {
-		return err
-	}
-	if st.State != "deleted" && st.State != "deleting" {
-		st, err = s.deleteObject(ctx, g.Owner, g.ObjectID, "content-delete:"+g.ID, st.Revision, true)
-		if err != nil {
-			return err
+	// deletion so a late create cannot escape an earlier release, using the
+	// caller's already-verified cleanup privilege rather than impersonating g.Owner.
+	objectDeleted := false
+	err = s.repo.Transaction(ctx, func(tx Transaction) error {
+		if e := tx.Lock("object:" + g.ObjectID); e != nil {
+			return e
 		}
-	}
-	if st.State != "deleted" {
+		o, e := tx.Object(g.ObjectID)
+		if errors.Is(e, ErrNotFound) {
+			creation := CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy}
+			o = Object{
+				ContentGroup: g.ID,
+				CreationHash: requestHash(creation),
+				ID:           g.ObjectID,
+				Owner:        g.Owner,
+				Size:         g.Size,
+				SHA256:       g.SHA256,
+				Protection:   g.Protection,
+				Policy:       g.Policy,
+				Revision:     1,
+				State:        "deleted",
+				CreatedAt:    s.now(),
+				References:   []Reference{},
+			}
+			if e = tx.SaveObject(o); e != nil {
+				return e
+			}
+			objectDeleted = true
+			return s.emit(tx, actor, "storage.object.deleting", o.ID, o.Revision)
+		}
+		if e != nil {
+			return e
+		}
+		replicas, e := tx.Replicas(o.ID)
+		if e != nil {
+			return e
+		}
+		remaining := 0
+		for _, r := range replicas {
+			if r.State != "deleted" {
+				remaining++
+			}
+		}
+		if o.State != "deleted" && o.State != "deleting" {
+			o.State = "deleting"
+			o.Revision++
+			if remaining == 0 {
+				o.State = "deleted"
+			}
+			if e = tx.SaveObject(o); e != nil {
+				return e
+			}
+			for _, r := range replicas {
+				if r.State == "deleted" {
+					continue
+				}
+				r.State = "cleanup"
+				if e = tx.SaveReplica(r); e != nil {
+					return e
+				}
+				if e = s.enqueue(tx, o.ID, r.ID, "delete"); e != nil {
+					return e
+				}
+			}
+			if e = s.emit(tx, actor, "storage.object.deleting", o.ID, o.Revision); e != nil {
+				return e
+			}
+		} else if o.State == "deleting" && remaining == 0 {
+			o.State = "deleted"
+			if e = tx.SaveObject(o); e != nil {
+				return e
+			}
+		}
+		objectDeleted = o.State == "deleted"
 		return nil
+	})
+	if err != nil || !objectDeleted {
+		return err
 	}
 	return s.repo.Transaction(ctx, func(tx Transaction) error {
 		if e := tx.Lock("content-ledger"); e != nil {

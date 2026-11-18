@@ -41,7 +41,8 @@
     ],
     "STORAGE-10": [
       "integration_test.go#TestRestrictedPlacementAndCredentialRotation",
-      "integration_test.go#TestExpiredEmptyObjectIsTombstoned"
+      "integration_test.go#TestExpiredEmptyObjectIsTombstoned",
+      "integration_test.go#TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion"
     ],
     "STORAGE-11": [
       "drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion",
@@ -157,11 +158,13 @@
     ],
     "STORAGE-33": [
       "content_test.go#TestSharedContentProtectionMigrationAndReuseRemainIndependent",
-      "content_test.go#TestSharedContentReplayScopePolicyAndMigration"
+      "content_test.go#TestSharedContentReplayScopePolicyAndMigration",
+      "content_test.go#TestSharedContentProtectionChangeLeastPrivilegeAndRollback"
     ],
     "STORAGE-34": [
       "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
-      "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
+      "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle",
+      "content_test.go#TestSharedContentCleanupUsesActualActorWithoutOwnerPermissions"
     ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery"

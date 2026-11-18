@@ -607,10 +607,12 @@ func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string,
 		if err != nil {
 			return nil, err
 		}
+		remaining := 0
 		for _, r := range replicas {
 			if r.State == "deleted" {
 				continue
 			}
+			remaining++
 			r.State = "cleanup"
 			if err := tx.SaveReplica(r); err != nil {
 				return nil, err
@@ -619,7 +621,7 @@ func (s *Service) deleteObject(ctx context.Context, p Principal, id, key string,
 				return nil, err
 			}
 		}
-		if len(replicas) == 0 {
+		if remaining == 0 {
 			o.State = "deleted"
 			if err := tx.SaveObject(o); err != nil {
 				return nil, err
