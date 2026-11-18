@@ -240,3 +240,92 @@ func TestOperatorRetryRecoversTransientVerificationFailure(t *testing.T) {
 		t.Fatal("verification did not recover without rewriting", out, err)
 	}
 }
+
+func TestOperatorCommandCannotBypassContributorConsent(t *testing.T) {
+	h := harnessFor(t)
+	until := h.clock.Now().Add(24 * time.Hour)
+	inst, err := h.s.Register(h.ctx, h.actor, "reg-custody-contributor", storage.Instance{
+		ID:                 "custody-contributor",
+		Adapter:            "test",
+		AccountDomain:      "untrusted",
+		OwnerDomain:        "owner-1",
+		Ownership:          "contributor",
+		CredentialRef:      "custody-contributor",
+		CredentialRevision: 1,
+		Root:               "isolated",
+		State:              "paused",
+		Authorized:         true,
+		Limit:              0,
+		ExpiresAt:          until,
+		Admissions:         []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: until}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quota := int64(1024)
+	if _, err = h.s.CommandInstance(h.ctx, h.actor, inst.ID, "bypass-quota", storage.InstanceCommand{
+		Revision:   inst.Revision,
+		Action:     "quota",
+		LimitBytes: &quota,
+	}); !errors.Is(err, storage.ErrDenied) {
+		t.Fatalf("operator assigned quota without contribution consent: %v", err)
+	}
+	if _, err = h.s.CommandInstance(h.ctx, h.actor, inst.ID, "bypass-resume", storage.InstanceCommand{
+		Revision: inst.Revision,
+		Action:   "resume",
+	}); !errors.Is(err, storage.ErrDenied) {
+		t.Fatalf("operator resumed contributor without contribution consent: %v", err)
+	}
+	o := h.object(t, "no-consent-obj", []byte("data"))
+	if _, err = h.s.Ingest(h.ctx, h.actor, o.ID, "ingest", bytes.NewReader([]byte("data"))); !errors.Is(err, storage.ErrCapacity) {
+		t.Fatalf("unconsented contributor accepted write: %v", err)
+	}
+
+	// Bind paused consent: operator still cannot force-resume while user consent is paused.
+	snap, err := h.s.ApplyContribution(h.ctx, h.actor, inst.ID, storage.ContributionControl{
+		ID:               "consent-1",
+		OwnerDomain:      "owner-1",
+		Revision:         1,
+		ExpectedRevision: inst.Revision,
+		State:            "paused",
+		LimitBytes:       1024,
+		Until:            h.clock.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.s.CommandInstance(h.ctx, h.actor, inst.ID, "resume-paused-consent", storage.InstanceCommand{
+		Revision: snap.Revision,
+		Action:   "resume",
+	}); !errors.Is(err, storage.ErrDenied) {
+		t.Fatalf("operator resumed user-paused contribution: %v", err)
+	}
+
+	// Activate consent, operator pauses it, then user consent expires: operator cannot resume expired consent.
+	snap, err = h.s.ApplyContribution(h.ctx, h.actor, inst.ID, storage.ContributionControl{
+		ID:               "consent-1",
+		OwnerDomain:      "owner-1",
+		Revision:         2,
+		ExpectedRevision: snap.Revision,
+		State:            "active",
+		LimitBytes:       1024,
+		Until:            h.clock.Now().Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pausedHealth, err := h.s.CommandInstance(h.ctx, h.actor, inst.ID, "op-pause", storage.InstanceCommand{
+		Revision: snap.Revision,
+		Action:   "pause",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.clock.Add(11 * time.Minute)
+	if _, err = h.s.CommandInstance(h.ctx, h.actor, inst.ID, "resume-expired-consent", storage.InstanceCommand{
+		Revision: pausedHealth.Revision,
+		Action:   "resume",
+	}); !errors.Is(err, storage.ErrDenied) {
+		t.Fatalf("operator resumed expired contribution consent: %v", err)
+	}
+}

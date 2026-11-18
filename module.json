@@ -31,25 +31,39 @@
       "integration_test.go#TestOldLeaseCannotCommitAfterAnotherWorkerClaims"
     ],
     "STORAGE-07": [
-      "integration_test.go#TestRuntimeDatabaseIdentityAndAtomicAuditOutbox"
+      "integration_test.go#TestRuntimeDatabaseIdentityAndAtomicAuditOutbox",
+      "integration_test.go#TestOutboxDeliveryResumesOlderCommittedAndExcludedEvents",
+      "integration_test.go#TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation",
+      "integration_test.go#TestOutboxUpgradePreservesPendingRevisions"
     ],
     "STORAGE-08": [
-      "integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary"
+      "integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary",
+      "contracts_http_test.go#TestHTTPChunkedMaxBytesAuthUnavailableAndDuplicateIdempotencyHeader",
+      "contracts_http_test.go#TestLeastPrivilegeCreateDownloadAndExpiredConsentRetryRejection"
     ],
     "STORAGE-09": [
       "integration_test.go#TestDrainWaitsForVerifiedReplacement"
     ],
     "STORAGE-10": [
       "integration_test.go#TestRestrictedPlacementAndCredentialRotation",
-      "integration_test.go#TestExpiredEmptyObjectIsTombstoned"
+      "integration_test.go#TestExpiredEmptyObjectIsTombstoned",
+      "integration_test.go#TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion"
     ],
     "STORAGE-11": [
       "drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion",
-      "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed"
+      "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed",
+      "bhpan_recovery_test.go#TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories",
+      "drivers/bhpan/bhpan_test.go#TestFindLegacyIntentAfterShardCached",
+      "bhpan_recovery_test.go#TestRecoverFlatIntentAfterShardCached",
+      "drivers/bhpan/bhpan_test.go#TestWriteWithExistingShardInOversizedLegacyRoot"
     ],
     "STORAGE-12": [
       "drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload",
-      "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline"
+      "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline",
+      "drivers/bhpan/bhpan_test.go#TestCallerCancellationAndLeaseDeadlinePreserveSession",
+      "drivers/bhpan/bhpan_test.go#TestProvisionDoesNotBlockPoolOrLeakRefCapacity",
+      "drivers/bhpan/bhpan_test.go#TestRevokedReferencesReleasePoolSlots",
+      "drivers/bhpan/restore_test.go#TestOlderRevocationPreservesNewerCredentialWork"
     ],
     "STORAGE-13": [
       "staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup",
@@ -64,7 +78,8 @@
     "STORAGE-15": [
       "executor/executor_test.go#TestBoundedWorkersAndGracefulStop",
       "executor/executor_test.go#TestStopDeadlineCancelsAndWaitsForCleanup",
-      "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas"
+      "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas",
+      "bhpan_recovery_test.go#TestBHpanShutdownCancellationRecoversWithoutBlockingJob"
     ],
     "STORAGE-16": [
       "runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"
@@ -86,7 +101,8 @@
     ],
     "STORAGE-21": [
       "operations_test.go#TestOperationsAuthorizationCapacityFailuresAndPagination",
-      "operations_test.go#TestSupersededVerificationIsNotAnActionableBlockage"
+      "operations_test.go#TestSupersededVerificationIsNotAnActionableBlockage",
+      "operations_test.go#TestOperationsReadSnapshotDoesNotBlockOrDeadlockConcurrentWrites"
     ],
     "STORAGE-22": [
       "media_boundary_test.go#TestStableClientKeySurvivesReplayExpiryAndDeletion",
@@ -94,30 +110,43 @@
     ],
     "STORAGE-23": [
       "operations_commands_test.go#TestOperatorInstanceCommandsFenceReplayAndPreserveCustody",
-      "operations_commands_test.go#TestOperatorCommandHTTPContract"
+      "operations_commands_test.go#TestOperatorCommandHTTPContract",
+      "operations_commands_test.go#TestOperatorCommandCannotBypassContributorConsent"
     ],
     "STORAGE-24": [
       "operations_commands_test.go#TestOperatorRetryPreservesUnknownWriteAndIsIdempotent",
       "operations_commands_test.go#TestOperatorRetryRejectsRevocationSupersessionAndQueueOverflow",
-      "operations_commands_test.go#TestOperatorRetryRecoversTransientVerificationFailure"
+      "operations_commands_test.go#TestOperatorRetryRecoversTransientVerificationFailure",
+      "contracts_http_test.go#TestLeastPrivilegeCreateDownloadAndExpiredConsentRetryRejection"
     ],
     "STORAGE-25": [
       "contribution_test.go#TestContributionControlFencesOwnershipReplayAndConsentExpiry",
-      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup"
+      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup",
+      "contribution_test.go#TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone"
     ],
     "STORAGE-26": [
-      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe"
+      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe",
+      "contribution_test.go#TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone"
     ],
     "STORAGE-27": [
       "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation",
-      "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses"
+      "custody_test.go#TestCustodyAuthenticationReceivesRouteDeadline",
+      "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses",
+      "contracts_http_test.go#TestCustodyBrowserSDKClassifies404AsNotFound"
     ],
     "STORAGE-28": [
-      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance"
+      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance",
+      "custody_test.go#TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota",
+      "custody_test.go#TestInstanceUpdatePreservesNewerQuotaSample"
     ],
     "STORAGE-29": [
       "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination",
-      "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart"
+      "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart",
+      "custody_test.go#TestCustodyUnknownPreparationKeepsAccountClaim",
+      "custody_test.go#TestCustodyBlockedRecoveryReauthorizeReplayQuotaAndSlidingBudget",
+      "custody_test.go#TestFailedCustodyRequestsReleaseOperationBudget",
+      "custody_test.go#TestCustodyRecoveryReacquiresReleasedSlot",
+      "custody_test.go#TestCustodyInterruptedLastAttemptAllowsNewRevision"
     ],
     "STORAGE-30": [
       "scheduling_test.go#TestConfiguredQuotaValidityControlsWritesAndRefresh",
@@ -126,10 +155,14 @@
       "executor/executor_test.go#TestConfiguredQuotaRefreshWindowAndAuthorization",
       "executor/maintenance_test.go#TestLongMaintenanceSweepVisitsAllPagesAndDueAccounts",
       "executor/maintenance_test.go#TestLongMaintenanceSweepStopsInFlightPage",
-      "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor"
+      "executor/maintenance_test.go#TestMaintenancePageBudgetRetainsResumeCursor",
+      "operations_test.go#TestReconcileSkipsTombstonesAndHealthyObjectInstanceLocks",
+      "operations_test.go#TestClaimIndexesExcludeCompletedJobsAfterUpgrade"
     ],
     "STORAGE-31": [
-      "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission"
+      "integration_test.go#TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission",
+      "integration_test.go#TestProtectionAuditUsesCommittedSchool",
+      "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"
     ],
     "STORAGE-32": [
       "content_test.go#TestSharedContentConcurrentProofAndSinglePhysicalObject",
@@ -138,17 +171,40 @@
     ],
     "STORAGE-33": [
       "content_test.go#TestSharedContentProtectionMigrationAndReuseRemainIndependent",
-      "content_test.go#TestSharedContentReplayScopePolicyAndMigration"
+      "content_test.go#TestSharedContentReplayScopePolicyAndMigration",
+      "content_test.go#TestSharedContentProtectionChangeLeastPrivilegeAndRollback"
     ],
     "STORAGE-34": [
       "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
-      "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
+      "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle",
+      "content_test.go#TestSharedContentCleanupUsesActualActorWithoutOwnerPermissions"
+    ],
+    "STORAGE-41": [
+      "config_validation_test.go#TestCrossComponentConfigurationValidation"
+    ],
+    "STORAGE-38": [
+      "retention_test.go#TestEnrollmentIdentitySurvivesOperationPurge",
+      "retention_test.go#TestLegacyRetentionBeginsOnMigration",
+      "retention_test.go#TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords"
+    ],
+    "STORAGE-40": [
+      "observability_test.go#TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify"
+    ],
+    "STORAGE-42": [
+      "bhpan_integration_test.go#TestServiceExecutorAndBHpanPoolRestartAndPopulatedDirectoryIntegration"
+    ],
+    "STORAGE-35": [
+      "bhpan_recovery_test.go#TestMultipartRechecksObjectAfterPartUpload",
+      "drivers/bhpan/bhpan_test.go#TestMultipartUploadCheckpointRevocationAndFallback",
+      "transfer_http_test.go#TestStreamingHashRangeAndETagDownload"
     ],
     "STORAGE-36": [
+      "custody_ux_test.go#TestCustodyDeleteRechecksProvisioningAndExpiresOrphanAttempts",
       "custody_ux_test.go#TestCustodyChallengeCooldownCleanupAndCandidateReasons"
     ],
     "AUDIT-01": [
-      "postgres/audit_query_test.go#TestPublicAuditQuery"
+      "postgres/audit_query_test.go#TestPublicAuditQuery",
+      "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"
     ]
   }
 }

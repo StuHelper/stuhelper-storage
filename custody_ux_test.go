@@ -211,3 +211,63 @@ func TestCustodyChallengeCooldownCleanupAndCandidateReasons(t *testing.T) {
 		t.Fatalf("re-enrolling cleaned-up account failed: %+v %v", reenrollView, err)
 	}
 }
+
+type custodyStoreAfterList struct {
+	custody.Store
+	after func()
+}
+
+func (s *custodyStoreAfterList) Instances(ctx context.Context, p storage.Principal, limit int, after string) ([]storage.Instance, error) {
+	rows, err := s.Store.Instances(ctx, p, limit, after)
+	if err == nil && s.after != nil {
+		run := s.after
+		s.after = nil
+		run()
+	}
+	return rows, err
+}
+func TestCustodyDeleteRechecksProvisioningAndExpiresOrphanAttempts(t *testing.T) {
+	h, provision, provider, auth, user, request := custodyFixture(t)
+	provider.failPrepare.Store(true)
+	k := "70000000-0000-4000-8000-000000000001"
+	failed, err := provision.Submit(h.ctx, user, "", k, request)
+	if err != nil || failed.State != "credentials_required" {
+		t.Fatal(failed, err)
+	}
+	store := &custodyStoreAfterList{Store: h.s}
+	remove, err := custody.New(&postgres.CustodyRepository{Repository: h.repo}, auth, store, provider, custody.Config{Actor: h.actor, Policy: provision.Policy(), Clock: h.clock.Now, PublicScopes: []string{"school-a"}, Timeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.after = func() {
+		provider.failPrepare.Store(false)
+		ready, e := provision.Resume(h.ctx, user, k, custody.ResumeRequest{RequestID: k, Revision: failed.Revision}, false)
+		if e != nil || ready.State != "ready" {
+			t.Fatal(ready, e)
+		}
+	}
+	if _, err = remove.Delete(h.ctx, user, k, "70000000-0000-4000-8000-000000000002"); !errors.Is(err, storage.ErrConflict) {
+		t.Errorf("concurrent provisioning: %v", err)
+	}
+	var count int
+	if err = h.db.QueryRow("SELECT count(*) FROM storage.custody_bindings WHERE id=$1 AND data->>'state'='ready'", k).Scan(&count); err != nil || count != 1 {
+		t.Errorf("ready binding count=%d err=%v", count, err)
+	}
+	orphan := "70000000-0000-4000-8000-000000000003"
+	provider.failPrepare.Store(true)
+	if _, err = provision.Submit(h.ctx, user, "", orphan, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remove.Delete(h.ctx, user, orphan, "70000000-0000-4000-8000-000000000004"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []int{1, 0} {
+		if _, err = h.s.PurgeExpired(h.ctx, h.actor, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err = h.db.QueryRow("SELECT count(*) FROM storage.custody_operations WHERE id=$1", orphan).Scan(&count); err != nil || count != want {
+			t.Fatalf("orphan retention count=%d want=%d err=%v", count, want, err)
+		}
+		h.clock.Add(5*time.Minute + time.Second)
+	}
+}

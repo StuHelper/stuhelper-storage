@@ -26,8 +26,9 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 	if e := s.authorize(ctx, p, "storage.contributions.read", "", Protection{}); e != nil {
 		return out, e
 	}
-	e := s.repo.Transaction(ctx, func(tx Transaction) error {
-		items, e := tx.ContributionCandidates(owner, n+1, after)
+	e := s.readTx(ctx, func(tx Transaction) error {
+		now := s.now()
+		items, e := tx.ContributionCandidates(owner, now, n+1, after)
 		if e != nil {
 			return e
 		}
@@ -36,14 +37,11 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 			out.NextCursor = items[n-1].ID
 		}
 		for _, i := range items {
-			if !i.Authorized || !i.ExpiresAt.After(s.now()) {
-				continue
-			}
 			i.State = "active" // Compute potential capacity without enabling the instance.
 			if i.Limit == 0 {
 				i.Limit = 1 << 60
 			} // Initial custody has no contribution allocation yet.
-			health := instanceHealth(i, s.now())
+			health := instanceHealth(i, now)
 			out.Items = append(out.Items, ContributionCandidate{
 				ID:                     i.ID,
 				Adapter:                i.Adapter,
@@ -99,8 +97,8 @@ func (s *Service) InspectContribution(ctx context.Context, p Principal, id, owne
 	if err := s.authorize(ctx, p, "storage.contributions.read", id, Protection{}); err != nil {
 		return out, err
 	}
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		i, err := tx.Instance(id)
+	err := s.readTx(ctx, func(tx Transaction) error {
+		i, err := tx.InstanceSnapshot(id)
 		if err != nil {
 			return err
 		}
@@ -128,6 +126,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 	if err := s.authorize(ctx, p, "storage.contributions.manage", id, Protection{}); err != nil {
 		return out, err
 	}
+	c.Until = c.Until.UTC()
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
 		i, err := tx.Instance(id)
 		if err != nil {
@@ -147,6 +146,8 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 				want, previous := c, *old
 				want.ExpectedRevision = 0
 				previous.ExpectedRevision = 0
+				want.Until = want.Until.UTC()
+				previous.Until = previous.Until.UTC()
 				if requestHash(want) != requestHash(previous) {
 					return ErrConflict
 				}
@@ -191,7 +192,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 		if err = tx.SaveInstance(i); err != nil {
 			return err
 		}
-		if err = s.emit(tx, p, "storage.instance.contribution", id, i.Revision); err != nil {
+		if err = s.emit(ctx, tx, p, "storage.instance.contribution", id, i.Revision); err != nil {
 			return err
 		}
 		out, err = s.contributionSnapshot(tx, i)

@@ -114,25 +114,13 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 		} else if !errors.Is(e, storage.ErrNotFound) {
 			return e
 		}
-		count, e := tx.OperationCount()
-		if e != nil {
-			return e
-		}
-		if count >= 1000 {
-			return storage.ErrCapacity
-		}
 		var b Binding
 		if target == "" {
-			count, e = tx.Count(storage.Principal{})
-			if e != nil {
-				return e
-			}
-			owned, e := tx.Count(p)
-			if e != nil {
-				return e
-			}
-			if count >= 100 || owned >= 5 {
-				return storage.ErrCapacity
+			// Binding IDs outlive their completed request receipts.
+			if _, err := tx.Binding(key); err == nil {
+				return storage.ErrConflict
+			} else if !errors.Is(err, storage.ErrNotFound) {
+				return err
 			}
 			target = key
 			b = Binding{View: View{ID: target, Adapter: q.Adapter}, Owner: p}
@@ -144,8 +132,25 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 			if b.Owner != p {
 				return storage.ErrDenied
 			}
-			if b.Revision != q.Revision || b.State == "pending" || b.State == "blocked" {
+			if b.Revision != q.Revision {
 				return storage.ErrConflict
+			}
+			if b.State == "blocked" || b.State == "pending" {
+				now := s.cfg.Clock()
+				prevOp, opErr := tx.Operation(b.RequestID)
+				if opErr != nil {
+					return opErr
+				}
+				if prevOp.LeaseUntil.After(now) {
+					return storage.ErrConflict
+				}
+				canResume := !prevOp.Complete && prevOp.Attempts < 5 && prevOp.Until.After(now)
+				if canResume && (b.State == "pending" || prevOp.Result != nil || unknownPreparation(b)) {
+					return storage.ErrConflict
+				}
+				if b.Instance.ID == "" && prevOp.Result == nil {
+					b.AccountDomain = ""
+				}
 			}
 		}
 		b.Revision++
@@ -163,8 +168,11 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 		if e = tx.SaveOperation(o); e != nil {
 			return e
 		}
+		if e := checkCapacity(tx, b.Owner); e != nil {
+			return e
+		}
 		out = b.View
-		return s.event(tx, p, b, "requested")
+		return s.event(ctx, tx, p, b, "requested", "success")
 	})
 	if e != nil {
 		return out, e
@@ -174,6 +182,38 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 	}
 	return s.run(ctx, p, out.ID, ResumeRequest{key, out.Revision}, q.Credential, false)
 }
+
+// The provider may have created a root after claiming the account and before
+// returning a candidate. Recover that operation before accepting new credentials.
+func unknownPreparation(b Binding) bool {
+	return b.Instance.ID == "" && b.AccountDomain != "" && (b.LastError == "result_unknown" || b.State == "pending")
+}
+
+// Check after recording the pending state inside the registry transaction.
+// Replacing or resuming a failed request must reserve its released slot again.
+func checkCapacity(tx Tx, owner storage.Principal) error {
+	for _, scope := range []struct {
+		principal storage.Principal
+		limit     int
+	}{{owner, 5}, {storage.Principal{}, 100}} {
+		count, err := tx.Count(scope.principal)
+		if err != nil {
+			return err
+		}
+		if count > scope.limit {
+			return storage.ErrCapacity
+		}
+	}
+	count, err := tx.OperationCount()
+	if err != nil {
+		return err
+	}
+	if count > 1000 {
+		return storage.ErrCapacity
+	}
+	return nil
+}
+
 func (s *Service) Resume(ctx context.Context, p storage.Principal, target string, q ResumeRequest, admin bool) (View, error) {
 	return s.run(ctx, p, target, q, nil, admin)
 }
@@ -182,6 +222,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	var out View
 	var b Binding
 	var op Operation
+	var recoverClaim bool
 	if !uuid.MatchString(target) || !uuid.MatchString(q.RequestID) || q.Revision < 1 {
 		return out, storage.ErrInput
 	}
@@ -232,7 +273,25 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			}
 			return storage.RetryAfterError{Err: storage.ErrCapacity, RetryAfterSeconds: retryAfter}
 		}
+		recoverClaim = op.Result == nil && unknownPreparation(b)
+		if b.State != "pending" {
+			b.State = "pending"
+			if e := tx.SaveBinding(b); e != nil {
+				return e
+			}
+			if e := checkCapacity(tx, b.Owner); e != nil {
+				return e
+			}
+		}
+		// Old records only have the last attempt time. Preserve their previous
+		// conservative window until those attempts have aged out.
+		if len(op.AttemptTimes) == 0 && op.Attempts > 0 {
+			for range op.Attempts {
+				op.AttemptTimes = append(op.AttemptTimes, op.AttemptedAt.UTC())
+			}
+		}
 		op.AttemptedAt = now
+		op.AttemptTimes = append(op.AttemptTimes, now.UTC())
 		op.Attempts++
 		op.LeaseUntil = now.Add(2 * time.Minute)
 		return tx.SaveOperation(op)
@@ -293,7 +352,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	}
 	if e == nil && op.Result == nil {
 		var candidate storage.Instance
-		if len(input) > 0 {
+		if len(input) > 0 && !recoverClaim {
 			candidate, e = s.provider.Prepare(work, target, op.Until, input, current, claim)
 		} else {
 			candidate, e = s.provider.Resume(work, target, op.Until, current, claim)
@@ -367,6 +426,15 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	finish, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	resultErr := e
+	if resultErr != nil {
+		storage.EmitDiagnostic(s.cfg.Observer, storage.Diagnostic{
+			Component: "custody",
+			Operation: "execute",
+			ObjectID:  target,
+			JobID:     op.ID,
+			Category:  safeCode(resultErr),
+		})
+	}
 	e = s.repo.Transaction(finish, func(tx Tx) error {
 		latest, err := tx.Operation(op.ID)
 		if err != nil {
@@ -387,10 +455,18 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		b.State = "blocked"
 		if resultErr == nil {
 			op.Complete = true
+			op.CompletedAt = s.cfg.Clock()
 			b.State = "ready"
 			b.Instance = applied
+		} else if recoverClaim && op.Result == nil && op.Attempts < 5 && op.Until.After(s.cfg.Clock()) {
+			b.LastError = "result_unknown"
 		} else if op.Result == nil && (errors.Is(resultErr, storage.ErrDenied) || errors.Is(resultErr, storage.ErrNotFound) || isChallenge(resultErr)) {
 			b.State = "credentials_required"
+			if b.Instance.ID == "" {
+				b.AccountDomain = ""
+			}
+		} else if b.Instance.ID == "" && op.Result == nil && (!errors.Is(resultErr, storage.ErrUnknown) || op.Attempts >= 5 || !op.Until.After(s.cfg.Clock())) {
+			b.AccountDomain = ""
 		}
 		if err = tx.SaveOperation(op); err != nil {
 			return err
@@ -399,16 +475,25 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			return err
 		}
 		out = b.View
-		return s.event(tx, p, b, b.State)
+		auditResult := "failed"
+		switch {
+		case resultErr == nil:
+			auditResult = "success"
+		case errors.Is(resultErr, storage.ErrUnknown):
+			auditResult = "unknown"
+		case errors.Is(resultErr, storage.ErrDenied):
+			auditResult = "denied"
+		}
+		return s.event(ctx, tx, p, b, b.State, auditResult)
 	})
 	return out, e
 }
-func (s *Service) event(tx Tx, p storage.Principal, b Binding, kind string) error {
+func (s *Service) event(ctx context.Context, tx Tx, p storage.Principal, b Binding, kind, result string) error {
 	var nonce [16]byte
 	if _, e := rand.Read(nonce[:]); e != nil {
 		return storage.ErrUnavailable
 	}
-	return tx.Event(storage.Event{ID: hex.EncodeToString(nonce[:]), Type: "storage.custody." + kind, ObjectID: b.ID, Revision: b.Revision, Time: s.cfg.Clock(), Actor: p})
+	return tx.Event(storage.Event{ID: hex.EncodeToString(nonce[:]), Type: "storage.custody." + kind, ObjectID: b.ID, Revision: b.Revision, Time: s.cfg.Clock(), Actor: p, TraceParent: storage.TraceParentFromContext(ctx), AuditResult: result, AuditSchool: "*"})
 }
 func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key string) (View, error) {
 	var out View
@@ -422,6 +507,7 @@ func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key s
 	idempSum := sha256.Sum256(idempRaw)
 	idempKey := hex.EncodeToString(idempSum[:])
 	replayed := false
+	var initial View
 	e := s.repo.Transaction(ctx, func(tx Tx) error {
 		now := s.cfg.Clock()
 		if prev, err := tx.Idempotency(idempKey); err == nil && prev.ExpiresAt.After(now) {
@@ -446,8 +532,9 @@ func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key s
 		if b.Owner != p {
 			return storage.ErrDenied
 		}
+		initial = b.View
 		if op, opErr := tx.Operation(b.RequestID); opErr == nil {
-			if !op.Complete && (op.LeaseUntil.After(now) || op.Result != nil) {
+			if !op.Complete && (op.LeaseUntil.After(now) || op.Result != nil || unknownPreparation(b) && op.Attempts < 5 && op.Until.After(now)) {
 				return storage.ErrConflict
 			}
 		} else if !errors.Is(opErr, storage.ErrNotFound) {
@@ -508,11 +595,15 @@ func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key s
 		if b.Owner != p {
 			return storage.ErrDenied
 		}
+		// Resume can finish during the store lookup without increasing Revision.
+		if b.View != initial {
+			return storage.ErrConflict
+		}
 		if err = s.authorize(ctx, p, "storage.custody.manage", target); err != nil {
 			return err
 		}
 		if op, opErr := tx.Operation(b.RequestID); opErr == nil {
-			if !op.Complete && (op.LeaseUntil.After(now) || op.Result != nil) {
+			if !op.Complete && (op.LeaseUntil.After(now) || op.Result != nil || unknownPreparation(b) && op.Attempts < 5 && op.Until.After(now)) {
 				return storage.ErrConflict
 			}
 		} else if !errors.Is(opErr, storage.ErrNotFound) {
@@ -530,7 +621,7 @@ func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key s
 		if err = tx.SaveIdempotency(storage.Idempotency{Key: idempKey, Digest: target, ObjectID: target, Result: encoded, ExpiresAt: now.Add(24 * time.Hour)}); err != nil {
 			return err
 		}
-		return s.event(tx, p, b, "deleted")
+		return s.event(ctx, tx, p, b, "deleted", "success")
 	})
 	return out, e
 }

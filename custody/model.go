@@ -71,6 +71,8 @@ type Operation struct {
 	ExpectedRevision int64
 	Attempts         int
 	AttemptedAt      time.Time
+	CompletedAt      time.Time
+	AttemptTimes     []time.Time
 	LeaseUntil       time.Time
 	Result           *storage.Instance
 	Complete         bool
@@ -115,6 +117,7 @@ type Config struct {
 	PublicScopes []string
 	Clock        func() time.Time
 	Timeout      time.Duration
+	Observer     storage.Observer
 }
 type Service struct {
 	repo     Repository
