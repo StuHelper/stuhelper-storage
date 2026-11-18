@@ -108,12 +108,15 @@ func (d *limitedDriver) Remove(ctx context.Context, i Instance, l Locator) error
 	return d.inner.Remove(ctx, i, l)
 }
 func (d *limitedDriver) Write(ctx context.Context, i Instance, intent string, size int64, src io.Reader, checkpoint func(Locator) error) (Locator, error) {
+	return d.WriteWithFence(ctx, i, intent, size, src, func() error { return nil }, checkpoint)
+}
+func (d *limitedDriver) WriteWithFence(ctx context.Context, i Instance, intent string, size int64, src io.Reader, issue func() error, checkpoint func(Locator) error) (Locator, error) {
 	release, err := d.slot(ctx)
 	if err != nil {
 		return Locator{}, err
 	}
 	defer release()
-	return d.inner.Write(ctx, i, intent, size, &pacedReader{ctx: ctx, src: src, global: d.global, account: d.account.pacer}, checkpoint)
+	return writeWithFence(ctx, d.inner, i, intent, size, &pacedReader{ctx: ctx, src: src, global: d.global, account: d.account.pacer}, issue, checkpoint)
 }
 func (d *limitedDriver) Read(ctx context.Context, i Instance, l Locator, dst io.Writer) (int64, error) {
 	release, err := d.slot(ctx)

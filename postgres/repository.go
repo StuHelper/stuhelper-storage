@@ -67,6 +67,17 @@ func (r *Repository) Transaction(ctx context.Context, f func(storage.Transaction
 	}
 	return safe(tx.Commit())
 }
+func (r *Repository) ReadTransaction(ctx context.Context, f func(storage.Transaction) error) error {
+	tx, err := r.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return safe(err)
+	}
+	defer tx.Rollback()
+	if err = f(&transaction{tx, ctx}); err != nil {
+		return err
+	}
+	return safe(tx.Commit())
+}
 func (t *transaction) Lock(key string) error {
 	_, err := t.tx.ExecContext(t.ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "stuhelper-storage:"+key)
 	return safe(err)
@@ -111,8 +122,11 @@ func (t *transaction) save(query string, item any, args ...any) error {
 func (t *transaction) Instance(id string) (storage.Instance, error) {
 	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1 FOR UPDATE`, id)
 }
-func (t *transaction) ContributionCandidates(owner string, limit int, after string) ([]storage.Instance, error) {
-	return list[storage.Instance](t, `SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $3`, after, owner, limit)
+func (t *transaction) InstanceSnapshot(id string) (storage.Instance, error) {
+	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1`, id)
+}
+func (t *transaction) ContributionCandidates(owner string, now time.Time, limit int, after string) ([]storage.Instance, error) {
+	return list[storage.Instance](t, `SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->>'authorized')::boolean AND (i.data->>'expires_at')::timestamptz>$3 AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $4`, after, owner, now, limit)
 }
 func (t *transaction) Instances(limit int, after string) ([]storage.Instance, error) {
 	return list[storage.Instance](t, `SELECT data FROM storage.instances WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
@@ -123,14 +137,34 @@ func (t *transaction) SaveInstance(v storage.Instance) error {
 func (t *transaction) Object(id string) (storage.Object, error) {
 	return read[storage.Object](t, `SELECT data FROM storage.objects WHERE id=$1 FOR UPDATE`, id)
 }
+func (t *transaction) ObjectSnapshot(id string) (storage.Object, error) {
+	return read[storage.Object](t, `SELECT data FROM storage.objects WHERE id=$1`, id)
+}
 func (t *transaction) Objects(limit int, after string) ([]storage.Object, error) {
 	return list[storage.Object](t, `SELECT data FROM storage.objects WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
+}
+func (t *transaction) ActiveObjects(limit int, after string) ([]storage.Object, error) {
+	return list[storage.Object](t, `SELECT data FROM storage.objects WHERE id>$1 AND data->>'state'<>'deleted' ORDER BY id LIMIT $2`, after, limit)
 }
 func (t *transaction) SaveObject(v storage.Object) error {
 	return t.save(`INSERT INTO storage.objects(id,data) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, v, v.ID)
 }
 func (t *transaction) Replicas(id string) ([]storage.Replica, error) {
 	return list[storage.Replica](t, `SELECT data FROM storage.replicas WHERE object_id=$1 ORDER BY instance_id`, id)
+}
+func (t *transaction) ReplicasByObjects(ids []string) (map[string][]storage.Replica, error) {
+	out := make(map[string][]storage.Replica, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	items, err := list[storage.Replica](t, `SELECT data FROM storage.replicas WHERE object_id = ANY($1) ORDER BY object_id, instance_id`, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range items {
+		out[r.ObjectID] = append(out[r.ObjectID], r)
+	}
+	return out, nil
 }
 func (t *transaction) SaveReplica(v storage.Replica) error {
 	return t.save(`INSERT INTO storage.replicas(id,object_id,instance_id,data) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, v, v.ID, v.ObjectID, v.InstanceID)
@@ -140,16 +174,10 @@ func (t *transaction) Job(id string) (storage.Job, error) {
 }
 func (t *transaction) SaveJob(v storage.Job) error {
 	var completedAt any
-	if v.State == "done" {
-		ts := v.CompletedAt
-		if ts.IsZero() {
-			ts = v.AvailableAt
-		}
-		if !ts.IsZero() {
-			completedAt = ts
-		}
+	if v.State == "done" && !v.CompletedAt.IsZero() {
+		completedAt = v.CompletedAt
 	}
-	return t.save(`INSERT INTO storage.jobs(id,object_id,state,available_at,lease_until,completed_at,data) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET state=excluded.state,available_at=excluded.available_at,lease_until=excluded.lease_until,completed_at=CASE WHEN excluded.state='done' THEN COALESCE(excluded.completed_at,storage.jobs.completed_at,now()) ELSE NULL END,data=excluded.data`, v, v.ID, v.ObjectID, v.State, v.AvailableAt, v.LeaseUntil, completedAt)
+	return t.save(`INSERT INTO storage.jobs(id,object_id,state,available_at,lease_until,completed_at,data) VALUES($1,$2,$3,$4,$5,CASE WHEN $3='done' THEN COALESCE($6::timestamptz,now()) END,$7) ON CONFLICT(id) DO UPDATE SET state=excluded.state,available_at=excluded.available_at,lease_until=excluded.lease_until,completed_at=CASE WHEN excluded.state='done' THEN COALESCE(storage.jobs.completed_at,excluded.completed_at) ELSE NULL END,data=excluded.data`, v, v.ID, v.ObjectID, v.State, v.AvailableAt, v.LeaseUntil, completedAt)
 }
 func (t *transaction) OutstandingJobs(exclude string, limit int) (int, error) {
 	var count int
@@ -158,7 +186,7 @@ func (t *transaction) OutstandingJobs(exclude string, limit int) (int, error) {
 }
 func (t *transaction) JobTotals() (storage.JobTotals, error) {
 	var out storage.JobTotals
-	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FILTER (WHERE state='pending'),count(*) FILTER (WHERE state='running'),count(*) FILTER (WHERE state='blocked') FROM storage.jobs`).Scan(&out.Pending, &out.Running, &out.Blocked)
+	err := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FILTER (WHERE state='pending'),count(*) FILTER (WHERE state='running'),count(*) FILTER (WHERE state='blocked') FROM storage.jobs WHERE state IN ('pending','running','blocked')`).Scan(&out.Pending, &out.Running, &out.Blocked)
 	return out, safe(err)
 }
 func (t *transaction) FailedJobs(limit int, after string) ([]storage.Job, error) {
@@ -181,16 +209,16 @@ func (t *transaction) PurgeRetention(cutoffs storage.RetentionCutoffs, limit int
 		return int(rows), safe(err)
 	}
 	var err error
-	if out.Idempotency, err = execDelete(`DELETE FROM storage.idempotency WHERE ctid IN (SELECT ctid FROM storage.idempotency WHERE COALESCE(expires_at,(data->>'ExpiresAt')::timestamptz) <= $1 ORDER BY expires_at NULLS FIRST LIMIT $2)`, cutoffs.IdempotencyBefore); err != nil {
+	if out.Idempotency, err = execDelete(`DELETE FROM storage.idempotency WHERE ctid IN (SELECT ctid FROM storage.idempotency WHERE expires_at <= $1 ORDER BY expires_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.IdempotencyBefore); err != nil {
 		return out, err
 	}
-	if out.DeliveredOutbox, err = execDelete(`DELETE FROM storage.outbox WHERE ctid IN (SELECT ctid FROM storage.outbox WHERE delivered AND COALESCE(delivered_at,(data->>'time')::timestamptz) <= $1 ORDER BY delivered_at NULLS FIRST LIMIT $2)`, cutoffs.DeliveredOutboxBefore); err != nil {
+	if out.DeliveredOutbox, err = execDelete(`DELETE FROM storage.outbox WHERE ctid IN (SELECT ctid FROM storage.outbox WHERE delivered AND delivered_at <= $1 ORDER BY delivered_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.DeliveredOutboxBefore); err != nil {
 		return out, err
 	}
-	if out.CompletedJobs, err = execDelete(`DELETE FROM storage.jobs WHERE ctid IN (SELECT ctid FROM storage.jobs WHERE state='done' AND COALESCE(completed_at,available_at) <= $1 ORDER BY completed_at NULLS FIRST LIMIT $2)`, cutoffs.CompletedJobsBefore); err != nil {
+	if out.CompletedJobs, err = execDelete(`DELETE FROM storage.jobs WHERE ctid IN (SELECT ctid FROM storage.jobs WHERE state='done' AND completed_at <= $1 ORDER BY completed_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.CompletedJobsBefore); err != nil {
 		return out, err
 	}
-	if out.CustodyOperations, err = execDelete(`DELETE FROM storage.custody_operations WHERE ctid IN (SELECT o.ctid FROM storage.custody_operations o WHERE COALESCE((o.data->>'Complete')::boolean,false) AND COALESCE(o.completed_at,NULLIF(o.data->>'AttemptedAt','')::timestamptz) <= $1 AND NOT EXISTS (SELECT 1 FROM storage.custody_bindings b WHERE b.data->>'request_id'=o.id AND b.data->>'state'<>'ready') ORDER BY o.completed_at NULLS FIRST LIMIT $2)`, cutoffs.CompletedCustodyBefore); err != nil {
+	if out.CustodyOperations, err = execDelete(`DELETE FROM storage.custody_operations WHERE ctid IN (SELECT o.ctid FROM storage.custody_operations o WHERE COALESCE((o.data->>'Complete')::boolean,false) AND o.completed_at <= $1 AND NOT EXISTS (SELECT 1 FROM storage.custody_bindings b WHERE b.data->>'request_id'=o.id AND b.data->>'state'<>'ready') ORDER BY o.completed_at LIMIT $2 FOR UPDATE SKIP LOCKED)`, cutoffs.CompletedCustodyBefore); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -215,10 +243,20 @@ func (t *transaction) Event(v storage.Event) error {
 	if err := t.save(`INSERT INTO storage.outbox(id,data) VALUES($1,$2)`, v, v.ID); err != nil {
 		return err
 	}
-	return t.save(`INSERT INTO storage.audit(id,reason,result,data) VALUES($1,'','unknown',$2)`, struct {
+	result := v.AuditResult
+	switch result {
+	case "success", "denied", "failed", "unknown":
+	default:
+		result = "unknown"
+	}
+	school := v.AuditSchool
+	if school == "" {
+		school = "*"
+	}
+	return t.save(`INSERT INTO storage.audit(id,reason,result,audit_school,data) VALUES($1,$2,$3,$4,$5)`, struct {
 		Event storage.Event     `json:"event"`
 		Actor storage.Principal `json:"actor"`
-	}{v, v.Actor}, v.ID)
+	}{v, v.Actor}, v.ID, v.Reason, result, school)
 }
 func (r *Repository) Claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (storage.Job, error) {
 	var result storage.Job
@@ -242,14 +280,46 @@ func (r *Repository) Claim(ctx context.Context, owner string, now time.Time, lea
 	return result, err
 }
 func (r *Repository) PendingEvents(ctx context.Context, limit int) ([]storage.Event, error) {
-	if limit < 1 || limit > 100 {
+	return r.PendingEventsExcluding(ctx, limit, nil)
+}
+
+// PendingEventsExcluding starts a delivery pass. Only persisted acknowledgements
+// suppress delivery between passes. Removing a subject from backoff makes
+// all of its pending rows visible, including rows before a prior page cursor.
+func (r *Repository) PendingEventsExcluding(ctx context.Context, limit int, excludeSubjects []string) ([]storage.Event, error) {
+	return r.PendingEventsAfter(ctx, limit, 0, excludeSubjects)
+}
+
+// PendingEventsAfter pages within a pass with a fixed exclusion set. Begin
+// each new pass with PendingEventsExcluding: allocation order can differ from
+// commit order across subjects, and excluded subjects can become deliverable.
+func (r *Repository) PendingEventsAfter(ctx context.Context, limit int, afterSeq int64, excludeSubjects []string) ([]storage.Event, error) {
+	if limit < 1 || limit > 100 || afterSeq < 0 || len(excludeSubjects) > 1000 {
 		return nil, storage.ErrInput
+	}
+	if excludeSubjects == nil {
+		excludeSubjects = []string{}
 	}
 	var out []storage.Event
 	err := r.Transaction(ctx, func(tx storage.Transaction) error {
-		var err error
-		out, err = list[storage.Event](tx.(*transaction), `SELECT data FROM storage.outbox WHERE NOT delivered ORDER BY id LIMIT $1`, limit)
-		return err
+		t := tx.(*transaction)
+		rows, err := t.tx.QueryContext(t.ctx, `SELECT seq, data FROM storage.outbox WHERE NOT delivered AND seq>$1 AND NOT (data->>'subject' = ANY($2)) ORDER BY seq ASC LIMIT $3`, afterSeq, excludeSubjects, limit)
+		if err != nil {
+			return safe(err)
+		}
+		defer rows.Close()
+		out = make([]storage.Event, 0)
+		for rows.Next() {
+			var seq int64
+			var b []byte
+			var item storage.Event
+			if rows.Scan(&seq, &b) != nil || json.Unmarshal(b, &item) != nil {
+				return storage.ErrUnavailable
+			}
+			item.Sequence = seq
+			out = append(out, item)
+		}
+		return safe(rows.Err())
 	})
 	return out, err
 }

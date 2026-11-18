@@ -14,6 +14,7 @@ import (
 
 	storage "github.com/StuHelper/stuhelper-storage"
 	"github.com/StuHelper/stuhelper-storage/httpapi"
+	"github.com/StuHelper/stuhelper-storage/postgres"
 	"github.com/StuHelper/stuhelper-storage/sdk"
 )
 
@@ -218,5 +219,107 @@ func TestSupersededVerificationIsNotAnActionableBlockage(t *testing.T) {
 	out, err := h.s.Operations(h.ctx, h.actor, 100, "", "")
 	if err != nil || out.Jobs.Blocked != 0 || len(out.Failures) != 0 {
 		t.Fatal("obsolete job was reported as actionable")
+	}
+}
+
+func TestOperationsReadSnapshotDoesNotBlockOrDeadlockConcurrentWrites(t *testing.T) {
+	h := harnessFor(t)
+	h.instance(t, "i1", "p1", "platform", 1024)
+	h.instance(t, "i2", "p2", "platform", 1024)
+	c1 := h.instance(t, "c1", "contrib-owner", "contributor", 1024)
+
+	o1 := h.object(t, "o1", []byte("alpha"))
+	h.ingest(t, o1.ID, []byte("alpha"))
+	o2 := h.object(t, "o2", []byte("bravo"))
+	h.ingest(t, o2.ID, []byte("bravo"))
+
+	tx, err := h.db.BeginTx(h.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var sink string
+	for _, id := range []string{"c1", "i1", "i2"} {
+		if err = tx.QueryRowContext(h.ctx, `SELECT id FROM storage.instances WHERE id=$1 FOR UPDATE`, id).Scan(&sink); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.QueryRowContext(h.ctx, `SELECT id FROM storage.objects WHERE id=$1 FOR UPDATE`, o1.ID).Scan(&sink); err != nil {
+		t.Fatal(err)
+	}
+
+	shortCtx, cancel := context.WithTimeout(h.ctx, 400*time.Millisecond)
+	defer cancel()
+
+	ops, err := h.s.Operations(shortCtx, h.actor, 100, "", "")
+	if err != nil || len(ops.Objects) != 2 {
+		t.Fatalf("Operations blocked on concurrent FOR UPDATE locks or returned wrong count: len=%d err=%v", len(ops.Objects), err)
+	}
+	st, err := h.s.Status(shortCtx, h.actor, o1.ID)
+	if err != nil || st.Healthy != 1 {
+		t.Fatalf("Status blocked on concurrent FOR UPDATE locks: st=%+v err=%v", st, err)
+	}
+	snap, err := h.s.InspectContribution(shortCtx, h.actor, c1.ID, "contrib-owner")
+	if err != nil || snap.InstanceID != c1.ID {
+		t.Fatalf("InspectContribution blocked on concurrent FOR UPDATE locks: snap=%+v err=%v", snap, err)
+	}
+}
+
+func TestReconcileSkipsTombstonesAndHealthyObjectInstanceLocks(t *testing.T) {
+	h := harnessFor(t)
+	for n := 1; n <= 4; n++ {
+		h.instance(t, fmt.Sprintf("i%d", n), fmt.Sprintf("p%d", n), "platform", 4096)
+	}
+	tomb := h.object(t, "tomb", []byte("unused"))
+	if _, err := h.s.Delete(h.ctx, h.actor, tomb.ID, "del-tomb", tomb.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	healthy := h.object(t, "healthy", []byte("three-copies"))
+	h.ingest(t, healthy.ID, []byte("three-copies"))
+	h.reconcile(t)
+	h.run(t)
+	h.run(t)
+	st, err := h.s.Status(h.ctx, h.actor, healthy.ID)
+	if err != nil || st.Healthy != 3 {
+		t.Fatalf("setup expected 3 healthy copies, got %+v err=%v", st, err)
+	}
+
+	// Hold exclusive row locks on ALL instances; Reconcile must skip deleted tombstones and
+	// avoid locking instances for already-healthy 3/3 objects not due for verification or drain.
+	tx, err := h.db.BeginTx(h.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for n := 1; n <= 4; n++ {
+		var sink string
+		if err = tx.QueryRowContext(h.ctx, `SELECT id FROM storage.instances WHERE id=$1 FOR UPDATE`, fmt.Sprintf("i%d", n)).Scan(&sink); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	shortCtx, cancel := context.WithTimeout(h.ctx, 400*time.Millisecond)
+	defer cancel()
+	res, err := h.s.Reconcile(shortCtx, h.actor, 100, "")
+	if err != nil || res.Processed != 1 {
+		t.Fatalf("Reconcile scanned tombstone or locked instances unnecessarily: res=%+v err=%v", res, err)
+	}
+}
+
+func TestClaimIndexesExcludeCompletedJobsAfterUpgrade(t *testing.T) {
+	h := harnessFor(t)
+	// Recreate the original unfiltered index as it exists on upgrade.
+	if _, err := h.admin.Exec("CREATE INDEX IF NOT EXISTS jobs_claim ON storage.jobs(state,available_at,lease_until)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.Exec(postgres.Schema); err != nil {
+		t.Fatal(err)
+	}
+	var full, partial int
+	err := h.db.QueryRow(`SELECT count(*) FILTER (WHERE indpred IS NULL), count(*) FILTER (WHERE indpred IS NOT NULL)
+        FROM pg_index WHERE indrelid='storage.jobs'::regclass AND pg_get_indexdef(indexrelid) LIKE '%(state, available_at, lease_until)%'`).Scan(&full, &partial)
+	if err != nil || full != 0 || partial != 1 {
+		t.Fatalf("claim indexes full=%d partial=%d: %v", full, partial, err)
 	}
 }

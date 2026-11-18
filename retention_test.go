@@ -174,7 +174,7 @@ func TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords(t *testing.T)
 		Principal:           h.actor,
 		Workers:             1,
 		PollInterval:        50 * time.Millisecond,
-		MaintenanceInterval: time.Hour,
+		MaintenanceInterval: 10 * time.Second,
 		MaintenanceTimeout:  5 * time.Second,
 		BatchSize:           1,
 	})
@@ -202,5 +202,71 @@ func TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords(t *testing.T)
 	// Undelivered outbox events (original undelivered + custody/fresh events) must all remain intact.
 	if countRows(`SELECT count(*) FROM storage.outbox WHERE NOT delivered`) < undeliveredExpected {
 		t.Fatal("retention cleanup deleted undelivered outbox events")
+	}
+}
+
+func TestEnrollmentIdentitySurvivesOperationPurge(t *testing.T) {
+	h, s, provider, _, user, q := custodyFixture(t)
+	key := "90000000-0000-4000-8000-000000000001"
+	v, err := s.Submit(h.ctx, user, "", key, q)
+	if err != nil || v.State != "ready" {
+		t.Fatal(v, err)
+	}
+	if _, err = h.db.Exec("UPDATE storage.custody_operations SET completed_at=now()-interval '365 days' WHERE id=$1", key); err != nil {
+		t.Fatal(err)
+	}
+	result, err := h.s.PurgeExpired(h.ctx, h.actor, 10)
+	if err != nil || result.CustodyOperations != 1 {
+		t.Fatal(result, err)
+	}
+	var before, after string
+	read := func(dst *string) {
+		t.Helper()
+		if err := h.db.QueryRow("SELECT data::text FROM storage.custody_bindings WHERE id=$1", key).Scan(dst); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(&before)
+	if _, err = s.Submit(h.ctx, user, "", key, q); !errors.Is(err, storage.ErrConflict) {
+		t.Errorf("duplicate enrollment: %v", err)
+	}
+	read(&after)
+	if before != after || provider.creates.Load() != 1 {
+		t.Fatal("existing binding changed on replay")
+	}
+}
+
+func TestLegacyRetentionBeginsOnMigration(t *testing.T) {
+	h := harnessFor(t)
+	_, err := h.admin.Exec(`INSERT INTO storage.outbox(id,data,delivered) VALUES('old','{"time":"2000-01-01T00:00:00Z"}',true);
+ INSERT INTO storage.objects(id,data) VALUES('legacy','{}');
+ INSERT INTO storage.jobs(id,object_id,state,available_at,lease_until,data) VALUES('job','legacy','done','2000-01-01','2000-01-01','{}');
+ INSERT INTO storage.custody_operations(id,data) VALUES('custody','{"Complete":true,"AttemptedAt":"2000-01-01T00:00:00Z"}');
+ INSERT INTO storage.idempotency(key,data) VALUES('old','{"ExpiresAt":"2000-01-01T00:00:00Z"}');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first time.Time
+	for i := 0; i < 2; i++ {
+		if _, err = h.admin.Exec(postgres.Schema); err != nil {
+			t.Fatal(err)
+		}
+		var stamp time.Time
+		if err = h.db.QueryRow("SELECT delivered_at FROM storage.outbox WHERE id='old'").Scan(&stamp); err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 && !stamp.Equal(first) {
+			t.Fatal("migration reset baseline")
+		}
+		first = stamp
+	}
+	out, err := h.s.PurgeExpired(h.ctx, h.actor, 100)
+	if err != nil || out.Idempotency != 1 || out.Total() != 1 {
+		t.Fatal(out, err)
+	}
+	h.clock.Add(366 * 24 * time.Hour)
+	out, err = h.s.PurgeExpired(h.ctx, h.actor, 100)
+	if err != nil || out.CompletedJobs != 1 || out.DeliveredOutbox != 1 || out.CustodyOperations != 1 {
+		t.Fatal(out, err)
 	}
 }

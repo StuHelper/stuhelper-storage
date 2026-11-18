@@ -17,7 +17,7 @@ func (r *Repository) CheckRuntime(ctx context.Context) error {
 	if !allowed {
 		return storage.ErrDenied
 	}
-	err = r.DB.QueryRowContext(ctx, `SELECT has_schema_privilege(current_user,'storage','USAGE') AND NOT has_schema_privilege(current_user,'storage','CREATE') AND NOT has_table_privilege(current_user,'storage.audit','UPDATE') AND NOT has_table_privilege(current_user,'storage.audit','DELETE')`).Scan(&allowed)
+	err = r.DB.QueryRowContext(ctx, `SELECT has_schema_privilege(current_user,'storage','USAGE') AND NOT has_schema_privilege(current_user,'storage','CREATE') AND NOT has_table_privilege(current_user,'storage.audit','UPDATE') AND NOT has_table_privilege(current_user,'storage.audit','DELETE') AND NOT has_table_privilege(current_user,'storage.audit','TRUNCATE') AND has_table_privilege(current_user,'storage.audit_retention','SELECT') AND NOT has_table_privilege(current_user,'storage.audit_retention','INSERT') AND NOT has_table_privilege(current_user,'storage.audit_retention','UPDATE') AND NOT has_table_privilege(current_user,'storage.audit_retention','DELETE') AND NOT has_table_privilege(current_user,'storage.audit_retention','TRUNCATE')`).Scan(&allowed)
 	if err != nil {
 		return safe(err)
 	}
