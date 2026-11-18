@@ -18,7 +18,12 @@ type fake struct {
 	data                               []byte
 	deleted, closed, forbid, invisible bool
 	writes, purges                     int
+	multipartBegins, multipartParts    int
+	multipartCompletes                 int
+	multipartGrantBatches              int
+	multipartMinSize                   int64
 	beforeWrite                        func()
+	partStaging                        bytes.Buffer
 }
 
 func (f *fake) Identity(context.Context) (protocol.Identity, error) {
@@ -69,6 +74,48 @@ func (f *fake) WriteUpload(ctx context.Context, _ protocol.Upload, src io.Reader
 	return "etag", nil
 }
 func (f *fake) FinishUpload(context.Context, string, string) error { return nil }
+func (f *fake) MultipartOptions(context.Context) (protocol.MultipartOptions, error) {
+	minSize := f.multipartMinSize
+	if minSize == 0 {
+		minSize = 4 << 20
+	}
+	return protocol.MultipartOptions{MinimumSize: minSize, MaximumSize: 64 << 20, MaximumParts: 10000}, nil
+}
+func (f *fake) BeginMultipart(context.Context, string, string, int64) (protocol.MultipartUpload, error) {
+	f.multipartBegins++
+	f.partStaging.Reset()
+	f.current = f.root + "/object"
+	f.revision = "v1"
+	return protocol.MultipartUpload{DocumentID: f.current, Revision: f.revision, UploadID: "upload-1"}, nil
+}
+func (f *fake) PartGrants(_ context.Context, _ protocol.MultipartUpload, first, last int) ([]protocol.PartGrant, error) {
+	f.multipartGrantBatches++
+	out := make([]protocol.PartGrant, last-first+1)
+	return out, nil
+}
+func (f *fake) WritePart(ctx context.Context, _ protocol.PartGrant, src io.Reader, length int64) (protocol.Part, error) {
+	if f.beforeWrite != nil {
+		f.beforeWrite()
+	}
+	if ctx.Err() != nil {
+		return protocol.Part{}, ctx.Err()
+	}
+	b, err := io.ReadAll(src)
+	if err != nil {
+		return protocol.Part{}, err
+	}
+	f.multipartParts++
+	_, _ = f.partStaging.Write(b)
+	return protocol.Part{Number: f.multipartParts, ETag: "part-etag", Size: int64(len(b))}, nil
+}
+func (f *fake) CompleteMultipart(_ context.Context, _ protocol.MultipartUpload, parts []protocol.Part) error {
+	if len(parts) == 0 {
+		return protocol.ErrInput
+	}
+	f.multipartCompletes++
+	f.data = bytes.Clone(f.partStaging.Bytes())
+	return nil
+}
 func (f *fake) Download(_ context.Context, _ string, dst io.Writer) (int64, error) {
 	n, e := dst.Write(f.data)
 	return int64(n), e
@@ -203,5 +250,83 @@ func TestExplicitSessionDeadline(t *testing.T) {
 	<-time.After(time.Until(i.ExpiresAt) + time.Millisecond)
 	if _, err = p.Resolve(ctx, i); !errors.Is(err, storage.ErrDenied) {
 		t.Fatalf("expired session accepted: %v", err)
+	}
+}
+
+func TestMultipartUploadCheckpointRevocationAndFallback(t *testing.T) {
+	p, f, i := fixture(t)
+	ctx := context.Background()
+	large := bytes.Repeat([]byte("0123456789abcdef"), (17<<20)/16)
+	checkpointCalls := 0
+	f.beforeWrite = func() {
+		if checkpointCalls == 0 {
+			t.Error("multipart part written before durable locator checkpoint")
+		}
+	}
+	remote, err := p.Write(ctx, i, strings.Repeat("b", 32), int64(len(large)), bytes.NewReader(large), func(r storage.Locator) error {
+		if r.ID == "" {
+			return storage.ErrInput
+		}
+		checkpointCalls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("multipart write failed: %v", err)
+	}
+	if f.writes != 0 || f.multipartBegins != 1 || f.multipartParts != 2 || f.multipartCompletes != 1 || checkpointCalls != 2 {
+		t.Fatalf("unexpected multipart counters: single=%d begins=%d parts=%d completes=%d checkpoints=%d", f.writes, f.multipartBegins, f.multipartParts, f.multipartCompletes, checkpointCalls)
+	}
+	var got bytes.Buffer
+	if _, err = p.Read(ctx, i, remote, &got); err != nil || !bytes.Equal(got.Bytes(), large) {
+		t.Fatalf("multipart readback mismatch: err=%v len=%d", err, got.Len())
+	}
+
+	// Verify >100 parts batching with custom threshold and small min part size.
+	f2 := &fake{multipartMinSize: 64}
+	p2 := NewPool()
+	p2.SetMultipartThreshold(64)
+	t.Cleanup(p2.Close)
+	i2, err := p2.Provision(ctx, "batched", 1, f2, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchedData := bytes.Repeat([]byte("z"), 64*105+13)
+	if _, err = p2.Write(ctx, i2, strings.Repeat("c", 32), int64(len(batchedData)), bytes.NewReader(batchedData), func(storage.Locator) error { return nil }); err != nil {
+		t.Fatalf("multi-batch multipart failed: %v", err)
+	}
+	if f2.multipartGrantBatches != 2 || f2.multipartParts != 106 || f2.multipartCompletes != 1 {
+		t.Fatalf("expected 2 grant batches and 106 parts, got batches=%d parts=%d", f2.multipartGrantBatches, f2.multipartParts)
+	}
+
+	// Fallback to single PUT when provider MinimumSize >= object size.
+	f3 := &fake{multipartMinSize: 32 << 20}
+	p3 := NewPool()
+	t.Cleanup(p3.Close)
+	i3, err := p3.Provision(ctx, "fallback", 1, f3, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	medium := bytes.Repeat([]byte("m"), 17<<20)
+	if _, err = p3.Write(ctx, i3, strings.Repeat("d", 32), int64(len(medium)), bytes.NewReader(medium), func(storage.Locator) error { return nil }); err != nil {
+		t.Fatalf("fallback write failed: %v", err)
+	}
+	if f3.writes != 1 || f3.multipartBegins != 0 {
+		t.Fatalf("expected single-PUT fallback, got writes=%d multipartBegins=%d", f3.writes, f3.multipartBegins)
+	}
+
+	// Revocation during multipart checkpoint prevents part uploads and completion.
+	f4 := &fake{}
+	p4 := NewPool()
+	t.Cleanup(p4.Close)
+	i4, err := p4.Provision(ctx, "revoke-multi", 1, f4, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p4.Write(ctx, i4, strings.Repeat("e", 32), int64(len(large)), bytes.NewReader(large), func(storage.Locator) error {
+		p4.Revoke(i4.CredentialRef, i4.CredentialRevision)
+		return nil
+	})
+	if !errors.Is(err, storage.ErrDenied) || f4.multipartParts != 0 || f4.multipartCompletes != 0 {
+		t.Fatalf("revoked multipart continued: err=%v parts=%d completes=%d", err, f4.multipartParts, f4.multipartCompletes)
 	}
 }

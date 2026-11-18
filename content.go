@@ -301,10 +301,7 @@ func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string
 		return Status{}, err
 	}
 	defer removeTemporary(f)
-	_, err = io.Copy(f, io.LimitReader(&pacedReader{ctx: ctx, src: src, global: s.bandwidth}, g.Size+1))
-	if err == nil {
-		err = verifyFile(ctx, f, Object{Size: g.Size, SHA256: g.SHA256})
-	}
+	err = stageFromReader(ctx, f, src, s.bandwidth, g.Size, g.SHA256)
 	// A verified durable proof permits recovery to observe another concurrent
 	// writer's result. It is committed only after checking the actual complete bytes.
 	if err == nil {
@@ -337,7 +334,7 @@ func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string
 	if _, err = s.ensureContentObject(ctx, g); err != nil {
 		return Status{}, err
 	}
-	if _, err = s.Ingest(ctx, p, g.ObjectID, key, f); err != nil {
+	if _, err = s.ingestStaged(ctx, p, g.ObjectID, f); err != nil {
 		return Status{}, err
 	}
 	return s.contentStatus(ctx, p, id)
@@ -470,10 +467,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 	}
 	return s.contentStatusAction(ctx, p, id, "storage.objects.delete")
 }
-func (s *Service) downloadContent(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
-	if dst == nil {
-		return ErrInput
-	}
+func (s *Service) openContentDownload(ctx context.Context, p Principal, id string, review bool, serve func(VerifiedContent) error) error {
 	action := "storage.objects.download"
 	if review {
 		action = "storage.objects.review"
@@ -508,23 +502,12 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, d
 		return e
 	}
 	// The handle gate above prevents inheriting another handle's publication.
-	return s.download(ctx, p, object, &contentWriter{check: check, dst: dst}, review)
-}
-
-type contentWriter struct {
-	check   func() error
-	dst     io.Writer
-	checked bool
-}
-
-func (w *contentWriter) Write(b []byte) (int, error) {
-	if !w.checked {
-		if e := w.check(); e != nil {
-			return 0, e
+	return s.openObjectDownload(ctx, p, object, review, func(c VerifiedContent) error {
+		if e := check(); e != nil {
+			return e
 		}
-		w.checked = true
-	}
-	return w.dst.Write(b)
+		return serve(c)
+	})
 }
 
 func (s *Service) cleanupContents(ctx context.Context, p Principal, limit int) error {

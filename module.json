@@ -144,6 +144,10 @@
       "content_test.go#TestSharedContentLostReplyExpiryAndCanonicalProtection",
       "content_test.go#TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle"
     ],
+    "STORAGE-35": [
+      "drivers/bhpan/bhpan_test.go#TestMultipartUploadCheckpointRevocationAndFallback",
+      "transfer_http_test.go#TestStreamingHashRangeAndETagDownload"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery"
     ]

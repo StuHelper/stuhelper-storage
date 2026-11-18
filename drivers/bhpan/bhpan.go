@@ -29,6 +29,11 @@ type Client interface {
 	BeginUpload(context.Context, string, string, int64) (protocol.Upload, error)
 	WriteUpload(context.Context, protocol.Upload, io.Reader) (string, error)
 	FinishUpload(context.Context, string, string) error
+	MultipartOptions(context.Context) (protocol.MultipartOptions, error)
+	BeginMultipart(context.Context, string, string, int64) (protocol.MultipartUpload, error)
+	PartGrants(context.Context, protocol.MultipartUpload, int, int) ([]protocol.PartGrant, error)
+	WritePart(context.Context, protocol.PartGrant, io.Reader, int64) (protocol.Part, error)
+	CompleteMultipart(context.Context, protocol.MultipartUpload, []protocol.Part) error
 	Download(context.Context, string, io.Writer) (int64, error)
 	Delete(context.Context, string) error
 	RecycleBin(context.Context, string, int, int) (protocol.Directory, error)
@@ -46,19 +51,33 @@ type session struct {
 	timer                       *time.Timer
 }
 
+const DefaultMultipartThreshold int64 = 16 << 20
+
 // Pool holds sessions until an explicit operator-authorized deadline. That
 // deadline limits local use; it does not assert a provider token's lifetime.
 // Credential retention and renewal belong to the composition layer.
 type Pool struct {
-	mu       sync.Mutex
-	sessions map[string]*session
-	versions map[string]uint64
-	revoked  map[string]int64
-	closed   bool
+	mu                 sync.Mutex
+	sessions           map[string]*session
+	versions           map[string]uint64
+	revoked            map[string]int64
+	multipartThreshold int64
+	closed             bool
 }
 
 func NewPool() *Pool {
-	return &Pool{sessions: map[string]*session{}, versions: map[string]uint64{}, revoked: map[string]int64{}}
+	return &Pool{sessions: map[string]*session{}, versions: map[string]uint64{}, revoked: map[string]int64{}, multipartThreshold: DefaultMultipartThreshold}
+}
+
+// SetMultipartThreshold configures the byte size above which Write switches to
+// multipart uploads. Values <= 0 reset to DefaultMultipartThreshold (16 MiB).
+func (p *Pool) SetMultipartThreshold(threshold int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if threshold <= 0 {
+		threshold = DefaultMultipartThreshold
+	}
+	p.multipartThreshold = threshold
 }
 
 var token = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
@@ -291,12 +310,24 @@ func (p *Pool) Write(ctx context.Context, i storage.Instance, intent string, siz
 	if !intentPattern.MatchString(intent) || size < 1 || src == nil || checkpoint == nil {
 		return storage.Locator{}, storage.ErrInput
 	}
-	s, err := p.get(i)
+	s, threshold, err := p.getWithThreshold(i)
 	if err != nil {
 		return storage.Locator{}, err
 	}
 	ctx, done := s.operation(ctx)
 	defer done()
+	if size > threshold {
+		opts, err := s.client.MultipartOptions(ctx)
+		if err != nil {
+			return storage.Locator{}, safe(err)
+		}
+		if opts.MinimumSize <= 0 || opts.MaximumSize < opts.MinimumSize || opts.MaximumParts <= 0 {
+			return storage.Locator{}, storage.ErrUnavailable
+		}
+		if size > opts.MinimumSize {
+			return s.writeMultipart(ctx, intent, size, src, checkpoint, opts, threshold)
+		}
+	}
 	u, err := s.client.BeginUpload(ctx, s.root, intent, size)
 	remote := storage.Locator{ID: u.DocumentID, Revision: u.Revision}
 	// Even an invalid grant may have allocated a remote file. Persist a valid
@@ -326,6 +357,89 @@ func (p *Pool) Write(ctx context.Context, i storage.Instance, intent string, siz
 		return remote, storage.ErrDenied
 	}
 	if err = s.client.FinishUpload(ctx, u.DocumentID, u.Revision); err != nil {
+		return remote, safe(err)
+	}
+	return remote, nil
+}
+
+func (p *Pool) getWithThreshold(i storage.Instance) (*session, int64, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.sessions[i.CredentialRef]
+	if s == nil || i.Adapter != "bhpan" || i.CredentialRevision != s.revision || i.Root != s.root || (i.AccountDomain != "" && i.AccountDomain != s.account) || !s.expires.After(time.Now()) || i.ExpiresAt.After(s.expires) {
+		return nil, 0, storage.ErrDenied
+	}
+	threshold := p.multipartThreshold
+	if threshold <= 0 {
+		threshold = DefaultMultipartThreshold
+	}
+	return s, threshold, nil
+}
+
+func (s *session) writeMultipart(ctx context.Context, intent string, size int64, src io.Reader, checkpoint func(storage.Locator) error, opts protocol.MultipartOptions, threshold int64) (storage.Locator, error) {
+	maxParts := min(opts.MaximumParts, 10000)
+	partSize := max(threshold, opts.MinimumSize)
+	if minForParts := (size + int64(maxParts) - 1) / int64(maxParts); partSize < minForParts {
+		partSize = minForParts
+	}
+	if partSize > opts.MaximumSize {
+		return storage.Locator{}, storage.ErrInput
+	}
+	totalParts := int((size + partSize - 1) / partSize)
+	u, err := s.client.BeginMultipart(ctx, s.root, intent, size)
+	remote := storage.Locator{ID: u.DocumentID, Revision: u.Revision}
+	if child(s.root, u.DocumentID) {
+		if e := checkpoint(remote); e != nil {
+			return remote, e
+		}
+	}
+	if err != nil {
+		return remote, safe(err)
+	}
+	if !child(s.root, u.DocumentID) || u.UploadID == "" {
+		return remote, storage.ErrUnknown
+	}
+	parts := make([]protocol.Part, 0, totalParts)
+	remaining := size
+	for first := 1; first <= totalParts; first += 100 {
+		if ctx.Err() != nil || s.ctx.Err() != nil {
+			return remote, storage.ErrDenied
+		}
+		last := min(totalParts, first+99)
+		grants, err := s.client.PartGrants(ctx, u, first, last)
+		if err != nil {
+			return remote, safe(err)
+		}
+		if len(grants) != last-first+1 {
+			return remote, storage.ErrUnavailable
+		}
+		for idx, g := range grants {
+			if ctx.Err() != nil || s.ctx.Err() != nil {
+				return remote, storage.ErrDenied
+			}
+			num := first + idx
+			partLen := min(partSize, remaining)
+			part, err := s.client.WritePart(ctx, g, io.LimitReader(src, partLen), partLen)
+			if err != nil {
+				return remote, safe(err)
+			}
+			if part.Number != num || part.Size != partLen || part.ETag == "" {
+				return remote, storage.ErrIntegrity
+			}
+			parts = append(parts, part)
+			remaining -= partLen
+		}
+	}
+	if remaining != 0 {
+		return remote, storage.ErrIntegrity
+	}
+	if err := checkpoint(remote); err != nil {
+		return remote, err
+	}
+	if ctx.Err() != nil || s.ctx.Err() != nil {
+		return remote, storage.ErrDenied
+	}
+	if err := s.client.CompleteMultipart(ctx, u, parts); err != nil {
 		return remote, safe(err)
 	}
 	return remote, nil

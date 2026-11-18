@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -144,6 +145,43 @@ func (p *pacedReader) Read(b []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+type pacedReadSeeker struct {
+	ctx     context.Context
+	src     io.ReadSeeker
+	global  *pacer
+	readErr error
+}
+
+func (p *pacedReadSeeker) Read(b []byte) (int, error) {
+	if err := p.ctx.Err(); err != nil {
+		p.readErr = err
+		return 0, err
+	}
+	n, err := p.src.Read(b[:min(len(b), 32<<10)])
+	if n > 0 {
+		if e := p.global.wait(p.ctx, n); e != nil {
+			p.readErr = e
+			return 0, e
+		}
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		p.readErr = err
+	}
+	return n, err
+}
+
+func (p *pacedReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	if err := p.ctx.Err(); err != nil {
+		p.readErr = err
+		return 0, err
+	}
+	pos, err := p.src.Seek(offset, whence)
+	if err != nil {
+		p.readErr = err
+	}
+	return pos, err
 }
 
 type pacedWriter struct {

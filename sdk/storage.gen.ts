@@ -1235,11 +1235,35 @@ export interface operations {
             /** @description Verified complete content; no provider URL */
             200: {
                 headers: {
+                    ETag?: string;
+                    "Accept-Ranges"?: string;
+                    "Content-Length"?: number;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/octet-stream": string;
                 };
+            };
+            /** @description Verified partial content range; no provider URL */
+            206: {
+                headers: {
+                    ETag?: string;
+                    "Accept-Ranges"?: string;
+                    "Content-Range"?: string;
+                    "Content-Length"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Verified content unchanged for matching ETag */
+            304: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Stable sanitized error */
             400: {
@@ -1294,6 +1318,14 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Problem"];
                 };
+            };
+            /** @description Requested byte range not satisfiable */
+            416: {
+                headers: {
+                    "Content-Range"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Stable sanitized error */
             503: {

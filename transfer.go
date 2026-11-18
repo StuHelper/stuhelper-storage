@@ -5,9 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 )
+
+type VerifiedContent struct {
+	Size   int64
+	SHA256 string
+	Body   io.ReadSeeker
+}
 
 type boundedWriter struct {
 	w         io.Writer
@@ -23,24 +30,26 @@ func (w *boundedWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func verifyFile(ctx context.Context, f *stagedFile, o Object) error {
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return ErrUnavailable
-	}
+func stageFromReader(ctx context.Context, dst *stagedFile, src io.Reader, global *pacer, size int64, expectedSHA256 string) error {
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(&pacedReader{ctx: ctx, src: f}, o.Size+1))
+	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(&pacedReader{ctx: ctx, src: src, global: global}, size+1))
 	if err != nil {
-		return ErrUnavailable
+		if errors.Is(err, ErrIntegrity) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	if n != o.Size || hex.EncodeToString(h.Sum(nil)) != o.SHA256 {
+	if n != size || hex.EncodeToString(h.Sum(nil)) != expectedSHA256 {
 		return ErrIntegrity
 	}
-	_, err = f.Seek(0, io.SeekStart)
-	return err
+	if _, err = dst.Seek(0, io.SeekStart); err != nil {
+		return ErrUnavailable
+	}
+	return nil
 }
 
-// Ingest hashes bounded local staging before any provider write. The staging
-// file is removed on return; retry uses the immutable object's size and digest.
+// Ingest hashes bounded local staging while streaming before any provider write.
+// The staging file is removed on return; retry uses the immutable object's size and digest.
 func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src io.Reader) (Status, error) {
 	if contentID(id) {
 		return s.ingestContent(ctx, p, id, key, src)
@@ -73,16 +82,43 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 		return Status{}, err
 	}
 	defer removeTemporary(f)
-	if _, err = io.Copy(f, io.LimitReader(&pacedReader{ctx: ctx, src: src, global: s.bandwidth}, o.Size+1)); err != nil {
-		return Status{}, ErrUnavailable
-	}
-	if err = verifyFile(ctx, f, o); err != nil {
+	if err = stageFromReader(ctx, f, src, s.bandwidth, o.Size, o.SHA256); err != nil {
 		return Status{}, err
 	}
+	return s.commitStagedIngest(ctx, p, id, o, f)
+}
+
+func (s *Service) ingestStaged(ctx context.Context, p Principal, id string, f *stagedFile) (Status, error) {
+	ctx, release, err := s.begin(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	defer release()
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		return Status{}, ErrUnavailable
+	}
+	var o Object
+	if err = s.repo.Transaction(ctx, func(tx Transaction) error {
+		var e error
+		o, e = s.objectGuard(ctx, tx, p, "storage.objects.upload", id)
+		if e != nil {
+			return e
+		}
+		if o.State == "deleted" || o.State == "deleting" {
+			return ErrConflict
+		}
+		return nil
+	}); err != nil {
+		return Status{}, err
+	}
+	return s.commitStagedIngest(ctx, p, id, o, f)
+}
+
+func (s *Service) commitStagedIngest(ctx context.Context, p Principal, id string, o Object, f *stagedFile) (Status, error) {
 	var job Job
 	var replica Replica
 	already := false
-	err = s.repo.Transaction(ctx, func(tx Transaction) error {
+	err := s.repo.Transaction(ctx, func(tx Transaction) error {
 		current, err := s.objectGuard(ctx, tx, p, "storage.objects.upload", id)
 		if err != nil {
 			return err
@@ -139,24 +175,47 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 // Download buffers within the configured size/concurrency budget so corrupted
 // or replaced remote content cannot partially escape before checksum validation.
 func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, false)
+	if dst == nil {
+		return ErrInput
+	}
+	return s.openDownload(ctx, p, id, false, func(c VerifiedContent) error {
+		_, err := io.Copy(dst, c.Body)
+		return err
+	})
+}
+
+// OpenDownload stages and verifies the complete object and rechecks current
+// authorization before invoking serve with a seekable reader for Range/ETag responses.
+func (s *Service) OpenDownload(ctx context.Context, p Principal, id string, serve func(VerifiedContent) error) error {
+	return s.openDownload(ctx, p, id, false, serve)
 }
 
 // ReviewDownload uses a separate permission to inspect an unpublished verified
 // copy. It never changes publication, references, replica policy or protection.
 func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, true)
-}
-func (s *Service) download(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
-	if contentID(id) {
-		return s.downloadContent(ctx, p, id, dst, review)
+	if dst == nil {
+		return ErrInput
 	}
+	return s.openDownload(ctx, p, id, true, func(c VerifiedContent) error {
+		_, err := io.Copy(dst, c.Body)
+		return err
+	})
+}
+
+func (s *Service) openDownload(ctx context.Context, p Principal, id string, review bool, serve func(VerifiedContent) error) error {
+	if serve == nil {
+		return ErrInput
+	}
+	if contentID(id) {
+		return s.openContentDownload(ctx, p, id, review, serve)
+	}
+	return s.openObjectDownload(ctx, p, id, review, serve)
+}
+
+func (s *Service) openObjectDownload(ctx context.Context, p Principal, id string, review bool, serve func(VerifiedContent) error) error {
 	action := "storage.objects.download"
 	if review {
 		action = "storage.objects.review"
-	}
-	if dst == nil {
-		return ErrInput
 	}
 	ctx, release, err := s.begin(ctx)
 	if err != nil {
@@ -200,8 +259,11 @@ func (s *Service) download(ctx context.Context, p Principal, id string, dst io.W
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(&pacedWriter{ctx: ctx, dst: dst, global: s.bandwidth}, f)
-	return err
+	reader := &pacedReadSeeker{ctx: ctx, src: f, global: s.bandwidth}
+	if err := serve(VerifiedContent{Size: o.Size, SHA256: o.SHA256, Body: reader}); err != nil {
+		return err
+	}
+	return reader.readErr
 }
 
 func (s *Service) readSource(ctx context.Context, o Object, excluded string) (*stagedFile, error) {
@@ -269,13 +331,16 @@ func (s *Service) readRemote(ctx context.Context, o Object, i Instance, remote L
 	if err != nil {
 		return nil, err
 	}
-	w := &boundedWriter{w: f, remaining: o.Size}
+	h := sha256.New()
+	w := &boundedWriter{w: io.MultiWriter(f, h), remaining: o.Size}
 	n, err := driver.Read(ctx, i, remote, w)
-	if err == nil && (n != o.Size || w.remaining != 0) {
+	if err == nil && (n != o.Size || w.remaining != 0 || hex.EncodeToString(h.Sum(nil)) != o.SHA256) {
 		err = ErrIntegrity
 	}
 	if err == nil {
-		err = verifyFile(ctx, f, o)
+		if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+			err = ErrUnavailable
+		}
 	}
 	if err != nil {
 		removeTemporary(f)
