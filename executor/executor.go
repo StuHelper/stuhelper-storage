@@ -73,9 +73,9 @@ func New(b Backend, cfg Config) (*Executor, error) {
 			if cfg.QuotaRefreshAhead >= summary.QuotaValidity {
 				return nil, fmt.Errorf("%w: quota_refresh_ahead %s must be shorter than quota_validity %s", storage.ErrInput, cfg.QuotaRefreshAhead, summary.QuotaValidity)
 			}
-			window := summary.QuotaValidity - cfg.QuotaRefreshAhead
-			if cfg.MaintenanceInterval > window {
-				return nil, fmt.Errorf("%w: maintenance_interval %s exceeds quota refresh window %s", storage.ErrInput, cfg.MaintenanceInterval, window)
+			window := cfg.QuotaRefreshAhead
+			if cfg.MaintenanceInterval+cfg.MaintenanceTimeout > window {
+				return nil, fmt.Errorf("%w: maintenance_interval %s plus maintenance_timeout %s exceeds quota_refresh_ahead %s", storage.ErrInput, cfg.MaintenanceInterval, cfg.MaintenanceTimeout, window)
 			}
 		}
 	}
@@ -173,6 +173,7 @@ func (e *Executor) worker(ctx context.Context, id string) {
 func (e *Executor) maintenance(ctx context.Context) {
 	position := maintenancePosition{}
 	for !e.stopping() {
+		started := time.Now()
 		work, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		err := e.maintenanceSweep(work, &position)
 		cancel()
@@ -183,7 +184,7 @@ func (e *Executor) maintenance(ctx context.Context) {
 			e.state.LastError = code(err)
 		}
 		e.mu.Unlock()
-		if !e.wait(ctx, e.cfg.MaintenanceInterval) {
+		if !e.wait(ctx, e.cfg.MaintenanceInterval-time.Since(started)) {
 			return
 		}
 	}

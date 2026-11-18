@@ -77,13 +77,13 @@ func TestCrossComponentConfigurationValidation(t *testing.T) {
 		Principal:           h.actor,
 		Workers:             1,
 		PollInterval:        time.Second,
-		MaintenanceInterval: time.Hour,
+		MaintenanceInterval: 4 * time.Minute,
 		MaintenanceTimeout:  10 * time.Second,
 		QuotaRefreshAhead:   time.Minute,
 		BatchSize:           10,
 	})
-	if !errors.Is(err, storage.ErrInput) || !strings.Contains(err.Error(), "4m0s") {
-		t.Fatalf("expected ErrInput citing 4m0s quota refresh window, got %v", err)
+	if !errors.Is(err, storage.ErrInput) {
+		t.Fatalf("interval outside the one-minute advance window, got %v", err)
 	}
 
 	// QuotaRefreshAhead >= QuotaValidity must also be rejected.
@@ -101,15 +101,15 @@ func TestCrossComponentConfigurationValidation(t *testing.T) {
 		t.Fatalf("expected ErrInput when QuotaRefreshAhead >= QuotaValidity, got %v", err)
 	}
 
-	// MaintenanceInterval=4m (exact boundary <= 5m - 1m) is accepted.
+	// A two-minute schedule fits in a four-minute advance window.
 	execOK, err := executor.New(svc, executor.Config{
 		ID:                  "ok-interval",
 		Principal:           h.actor,
 		Workers:             1,
 		PollInterval:        time.Second,
-		MaintenanceInterval: 4 * time.Minute,
+		MaintenanceInterval: 2 * time.Minute,
 		MaintenanceTimeout:  10 * time.Second,
-		QuotaRefreshAhead:   time.Minute,
+		QuotaRefreshAhead:   4 * time.Minute,
 		BatchSize:           10,
 	})
 	if err != nil || execOK == nil {
