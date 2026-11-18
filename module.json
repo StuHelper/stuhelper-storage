@@ -32,7 +32,8 @@
     ],
     "STORAGE-07": [
       "integration_test.go#TestRuntimeDatabaseIdentityAndAtomicAuditOutbox",
-      "integration_test.go#TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation"
+      "integration_test.go#TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation",
+      "integration_test.go#TestOutboxUpgradePreservesPendingRevisions"
     ],
     "STORAGE-08": [
       "integration_test.go#TestHTTPContractSDKAndAuthenticationBoundary"

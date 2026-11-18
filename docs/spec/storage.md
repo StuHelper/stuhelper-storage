@@ -169,7 +169,7 @@ AUDIT-01：postgres.Repository.ReadAudit(ctx, auditquery.Request) 返回 auditqu
 
 摘要只含模块、内部对象和操作者标识、时间、操作、原因、结果与范围。业务提交投影实际结果与对象所属学校范围，学校或群不明时使用 *。没有原因时为空，超出 512 字节或含控制字符的原因省略；无法证明结果时为 unknown。
 
-表结构直接定义最终形态，不转换历史数据。审计与业务同事务写入。运行身份需要读取 audit_retention，清理修订由固定 schema 的触发器更新。快照超过 256 字节或无效时明确报错。
+已有 outbox 升级时按主题与事件修订回填序号，保留投递状态，新序号从回填范围之后分配。游标只用于单轮扫描；每轮从头读取尚未投递的事件，以覆盖上一轮后提交的事务。审计与业务同事务写入。运行身份需要读取 audit_retention，清理修订由固定 schema 的触发器更新。快照超过 256 字节或无效时明确报错。
 
 postgres/audit_query_test.go 的 TestPublicAuditQuery 使用独立 PostgreSQL 数据库，验证条件筛选、范围、空原因、unknown、脱敏、回填与延迟提交、清理失效和取消。OpenAPI 路径保持现状，本接口供可信 Go 装配使用。
 

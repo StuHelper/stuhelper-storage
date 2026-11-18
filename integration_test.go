@@ -867,3 +867,38 @@ func TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation(t *tes
 		}
 	}
 }
+
+func TestOutboxUpgradePreservesPendingRevisions(t *testing.T) {
+	h := harnessFor(t)
+	// The old layout permits heap order to differ from stream order (e.g. after a restore).
+	_, err := h.admin.Exec(`ALTER TABLE storage.outbox DROP COLUMN seq;
+        INSERT INTO storage.outbox(id,data,delivered) VALUES
+        ('c','{"subject":"object/test","id":"c","data":{"revision":3}}',false),
+        ('b','{"subject":"object/test","id":"b","data":{"revision":2}}',false),
+        ('a','{"subject":"object/test","id":"a","data":{"revision":1}}',true)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := h.admin.Exec(postgres.Schema); err != nil {
+			t.Fatal(err)
+		}
+		events, err := h.repo.PendingEvents(h.ctx, 10)
+		if err != nil || len(events) != 2 {
+			t.Fatal(events, err)
+		}
+		if events[0].Data.Revision != 2 || events[1].Data.Revision != 3 || events[1].Sequence <= events[0].Sequence {
+			t.Fatalf("upgraded revisions %d,%d; seq %d,%d", events[0].Data.Revision, events[1].Data.Revision, events[0].Sequence, events[1].Sequence)
+		}
+	}
+	before, err := h.repo.PendingEvents(h.ctx, 10)
+	if err != nil || len(before) != 2 {
+		t.Fatal(before, err)
+	}
+	h.instance(t, "after-upgrade", "platform", "platform", 4096)
+	tail, err := h.repo.PendingEventsAfter(h.ctx, 10, before[1].Sequence, nil)
+	if err != nil || len(tail) != 1 || tail[0].Subject != "instance/after-upgrade" {
+		t.Fatalf("new event missing after backfill cursor: %+v %v", tail, err)
+	}
+
+}
