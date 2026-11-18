@@ -391,24 +391,21 @@ func (s *Service) status(tx Transaction, o Object) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	now := s.now()
 	count := 0
-	accounts := map[string]bool{}
-	owners := map[string]bool{}
+	seen := newIndependentSet()
 	for _, r := range replicas {
-		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) {
+		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(now.Add(-s.cfg.VerificationAge)) {
 			continue
 		}
 		i, err := tx.Instance(r.InstanceID)
 		if err != nil {
 			return Status{}, err
 		}
-		if !i.Allows(o.Protection, s.now()) || r.CredentialRevision != i.CredentialRevision || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
+		if !healthyVerifiedReplica(r, o, i, now, s.cfg.VerificationAge) || seen.seen(i) {
 			continue
 		}
-		accounts[i.AccountDomain] = true
-		if i.Ownership == "contributor" {
-			owners[i.OwnerDomain] = true
-		}
+		seen.add(i)
 		count++
 	}
 	state := o.State

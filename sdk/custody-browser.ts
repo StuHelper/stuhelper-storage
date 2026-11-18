@@ -5,7 +5,15 @@ export type CustodyPage = components['schemas']['CustodyPage'];
 export type CustodyPolicy = components['schemas']['CustodyPolicy'];
 export type CustodyRequest = components['schemas']['CustodyRequest'];
 type Code = 'conflict' | 'forbidden' | 'incompatible' | 'invalid' | 'network' | 'unauthenticated' | 'unavailable';
-export class CustodyError extends Error { constructor(public readonly code: Code, public readonly uncertain = false) { super(code); } }
+export class CustodyError extends Error {
+  readonly code: Code;
+  readonly uncertain: boolean;
+  constructor(code: Code, uncertain = false) {
+    super(code);
+    this.code = code;
+    this.uncertain = uncertain;
+  }
+}
 function record(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new CustodyError('incompatible');
   return v as Record<string, unknown>; // Narrowed object; every consumed field is checked below.

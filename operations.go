@@ -107,32 +107,26 @@ func (s *Service) Operations(ctx context.Context, p Principal, limit int, after,
 					if st.Healthy == 0 {
 						h.Reason = "no_healthy_source"
 					} else {
-						accounts := map[string]bool{}
-						owners := map[string]bool{}
+						now := s.now()
+						seen := newIndependentSet()
 						copies, e := tx.Replicas(o.ID)
 						if e != nil {
 							return e
 						}
 						for _, r := range copies {
 							for _, i := range instances {
-								if i.ID == r.InstanceID && r.State == "healthy" && r.ObjectRevision == o.Revision && r.CredentialRevision == i.CredentialRevision && !r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) && i.Allows(o.Protection, s.now()) {
-									accounts[i.AccountDomain] = true
-									if i.Ownership == "contributor" {
-										owners[i.OwnerDomain] = true
-									}
+								if i.ID == r.InstanceID && healthyVerifiedReplica(r, o, i, now, s.cfg.VerificationAge) && !seen.seen(i) {
+									seen.add(i)
 								}
 							}
 						}
 						for _, i := range instances {
-							if !i.CanWrite(o.Protection, o.Size, s.now()) || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
+							if !i.CanWrite(o.Protection, o.Size, now) || seen.seen(i) {
 								continue
 							}
-							accounts[i.AccountDomain] = true
-							if i.Ownership == "contributor" {
-								owners[i.OwnerDomain] = true
-							}
+							seen.add(i)
 						}
-						if len(accounts) < o.Policy.Target {
+						if len(seen.accounts) < o.Policy.Target {
 							h.Reason = "insufficient_eligible_capacity"
 						}
 					}

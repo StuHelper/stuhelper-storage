@@ -10,7 +10,8 @@ try {
   fs.mkdirSync('sdk', { recursive: true });
   const goOutput = check ? path.join(temporary, 'storage.gen.go') : 'sdk/storage.gen.go';
   const tsOutput = check ? path.join(temporary, 'storage.gen.ts') : 'sdk/storage.gen.ts';
-  execFileSync('go', ['run', 'github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0', '-generate', 'types,client', '-package', 'sdk', '-o', goOutput, 'contracts/storage.openapi.json'], { stdio: 'inherit' });
+  const goEnv = { ...process.env, GOWORK: 'off' };
+  execFileSync('go', ['tool', 'oapi-codegen', '-generate', 'types,client', '-package', 'sdk', '-o', goOutput, 'contracts/storage.openapi.json'], { stdio: 'inherit', env: goEnv });
   execFileSync('pnpm', ['exec', 'openapi-typescript', 'contracts/storage.openapi.json', '-o', tsOutput], { stdio: 'inherit' });
   if (check) {
     for (const [expected, actual] of [['sdk/storage.gen.go', goOutput], ['sdk/storage.gen.ts', tsOutput]]) {
