@@ -49,6 +49,9 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 				return nil, ErrDenied
 			}
 			if command.Action == "resume" {
+				if i.Ownership == "contributor" && (i.ContributionControl == nil || i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(s.now())) {
+					return nil, ErrDenied
+				}
 				if i.State != "paused" {
 					return nil, ErrConflict
 				}
@@ -65,6 +68,9 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 			}
 			i.State, i.Authorized = "revoked", false
 		case "quota":
+			if i.Ownership == "contributor" && i.ContributionControl == nil && *command.LimitBytes > 0 {
+				return nil, ErrDenied
+			}
 			if i.ContributionControl != nil && *command.LimitBytes > i.ContributionControl.LimitBytes {
 				return nil, ErrDenied
 			}
@@ -80,7 +86,7 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 		if err = tx.SaveInstance(i); err != nil {
 			return nil, err
 		}
-		if err = s.emit(tx, p, "storage.instance."+command.Action, i.ID, i.Revision); err != nil {
+		if err = s.emit(ctx, tx, p, "storage.instance."+command.Action, i.ID, i.Revision); err != nil {
 			return nil, err
 		}
 		return instanceHealth(i, s.now()), nil
@@ -164,6 +170,9 @@ func (s *Service) RetryJob(ctx context.Context, p Principal, objectID, jobID, ke
 			if !i.Allows(object.Protection, s.now()) {
 				return nil, ErrDenied
 			}
+			if (j.Kind == "ingest" || j.Kind == "replicate") && i.ContributionControl != nil && (i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(s.now())) {
+				return nil, ErrDenied
+			}
 		default:
 			return nil, ErrInput
 		}
@@ -176,7 +185,7 @@ func (s *Service) RetryJob(ctx context.Context, p Principal, objectID, jobID, ke
 		if err = s.queue(tx, j); err != nil {
 			return nil, err
 		}
-		if err = tx.Event(Event{ID: newID(), Type: "storage.job.retried", ObjectID: object.ID, JobID: j.ID, Revision: object.Revision, Time: s.now(), Actor: p}); err != nil {
+		if err = tx.Event(Event{ID: newID(), Type: "storage.job.retried", ObjectID: object.ID, JobID: j.ID, Revision: object.Revision, Time: s.now(), Actor: p, TraceParent: TraceParentFromContext(ctx), SchoolID: eventSchoolID(object.Protection), AuditResult: "success", AuditSchool: object.Protection.Scope}); err != nil {
 			return nil, err
 		}
 		return jobFailure(j), nil
@@ -337,7 +346,7 @@ func (s *Service) WriteOffUnknownReplica(ctx context.Context, p Principal, objec
 			r.Accounted = false
 		}
 		r.State = "deleted"
-		i.Revision++
+		// Releasing a reservation does not change instance admission or fence other uploads.
 		if err := tx.SaveInstance(i); err != nil {
 			return nil, err
 		}
@@ -363,7 +372,7 @@ func (s *Service) WriteOffUnknownReplica(ctx context.Context, p Principal, objec
 				}
 			}
 		}
-		if err := tx.Event(Event{ID: newID(), Type: "storage.replica.writeoff", ObjectID: object.ID, Revision: object.Revision, Time: s.now(), Actor: p, Reason: strings.TrimSpace(input.Reason)}); err != nil {
+		if err := tx.Event(Event{ID: newID(), Type: "storage.replica.writeoff", ObjectID: object.ID, Revision: object.Revision, Time: s.now(), Actor: p, Reason: strings.TrimSpace(input.Reason), AuditResult: "success", AuditSchool: object.Protection.Scope, TraceParent: TraceParentFromContext(ctx), SchoolID: eventSchoolID(object.Protection)}); err != nil {
 			return nil, err
 		}
 		st, err := s.status(tx, object)

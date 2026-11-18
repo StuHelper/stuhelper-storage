@@ -127,25 +127,26 @@ func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.P
 		ErrorCode:     q.Get("error_code"),
 	})
 }
-func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoint) {
+
+type routeOptions struct {
+	auth            Authenticator
+	public          bool
+	timeout         time.Duration
+	maxBodyBytes    int64
+	unavailableCode string
+
+	successStatus func(*http.Request) int
+}
+
+func mountEndpoint(mux *http.ServeMux, path string, opts routeOptions, run endpoint) {
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if h.auth == nil {
-			problem(w, 503, "identity_unavailable")
-			return
-		}
-		p, err := h.auth.Authenticate(r)
-		if err != nil || !p.Valid() {
-			if errors.Is(err, storage.ErrUnavailable) {
-				problem(w, 503, "identity_unavailable")
-			} else {
-				problem(w, 401, "authentication_required")
-			}
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(r.Context(), opts.timeout)
 		defer cancel()
+		if tp := r.Header.Get("Traceparent"); tp != "" {
+			ctx = storage.WithTraceParent(ctx, tp)
+		}
 		controller := http.NewResponseController(w)
 		deadline, _ := ctx.Deadline()
 		_ = controller.SetReadDeadline(deadline)
@@ -156,20 +157,54 @@ func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoi
 		})
 		defer stopIO()
 		r = r.WithContext(ctx)
-		limit := int64(1 << 20)
-		if upload {
-			limit = h.limit
+		r.Body = http.MaxBytesReader(w, r.Body, opts.maxBodyBytes)
+		var p storage.Principal
+		if !opts.public {
+			if opts.auth == nil {
+				problem(w, 503, opts.unavailableCode)
+				return
+			}
+			var err error
+			p, err = opts.auth.Authenticate(r)
+			if err != nil || !p.Valid() {
+				if errors.Is(err, storage.ErrUnavailable) {
+					problem(w, 503, opts.unavailableCode)
+				} else {
+					problem(w, 401, "authentication_required")
+				}
+				return
+			}
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		if len(r.Header.Values("Idempotency-Key")) > 1 {
+			respondError(w, storage.ErrInput)
+			return
+		}
 		out, err := run(w, r, p)
 		if err != nil {
 			respondError(w, err)
 			return
 		}
 		if out != nil {
-			writeJSON(w, 200, out)
+			status := 200
+			if opts.successStatus != nil {
+				status = opts.successStatus(r)
+			}
+			writeJSON(w, status, out)
 		}
 	})
+}
+
+func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoint) {
+	limit := int64(1 << 20)
+	if upload {
+		limit = h.limit
+	}
+	mountEndpoint(mux, path, routeOptions{
+		auth:            h.auth,
+		timeout:         5 * time.Minute,
+		maxBodyBytes:    limit,
+		unavailableCode: "identity_unavailable",
+	}, run)
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Del("Content-Length")
@@ -186,7 +221,7 @@ func respondError(w http.ResponseWriter, err error) {
 	for _, entry := range []struct {
 		err    error
 		status int
-	}{{storage.ErrInput, 400}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404}, {storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
+	}{{storage.ErrInput, 400}, {storage.ErrChallenge, 403}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404}, {storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
 		if errors.Is(err, entry.err) {
 			status, code = entry.status, entry.err.Error()
 			break
@@ -195,6 +230,13 @@ func respondError(w http.ResponseWriter, err error) {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
 		status, code = 413, "storage_upload_too_large"
+	}
+	var retryAfter storage.RetryAfterError
+	if errors.As(err, &retryAfter) && retryAfter.RetryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter.RetryAfterSeconds))
+		w.Header().Del("Content-Disposition")
+		writeJSON(w, status, map[string]any{"code": code, "retry_after_seconds": retryAfter.RetryAfterSeconds})
+		return
 	}
 	problem(w, status, code)
 }
@@ -308,20 +350,23 @@ type trackingWriter struct {
 	started bool
 }
 
+func (w *trackingWriter) WriteHeader(statusCode int) {
+	w.started = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
 func (w *trackingWriter) Write(b []byte) (int, error) {
 	w.started = true
 	return w.ResponseWriter.Write(b)
 }
 func (h *handler) download(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
-	status, err := h.s.Status(r.Context(), p, r.PathValue("id"))
-	if err != nil {
-		return nil, err
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(status.Size, 10))
-	w.Header().Set("Content-Disposition", "attachment")
 	writer := &trackingWriter{ResponseWriter: w}
-	err = h.s.Download(r.Context(), p, status.ID, writer)
+	err := h.s.OpenDownload(r.Context(), p, r.PathValue("id"), func(content storage.VerifiedContent) error {
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Content-Disposition", "attachment")
+		writer.Header().Set("ETag", `"`+content.SHA256+`"`)
+		http.ServeContent(writer, r, "", time.Time{}, content.Body)
+		return nil
+	})
 	if err != nil && writer.started {
 		panic(http.ErrAbortHandler)
 	}

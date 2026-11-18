@@ -90,68 +90,42 @@ func instanceHealth(i Instance, now time.Time) InstanceHealth {
 	return out
 }
 
-func (s *Service) evaluateObjectHealth(o Object, replicas []Replica, instances []Instance, byID map[string]Instance, now time.Time) ObjectHealth {
-	count := 0
-	accounts := map[string]bool{}
-	owners := map[string]bool{}
-	for _, r := range replicas {
-		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(now.Add(-s.cfg.VerificationAge)) {
-			continue
-		}
-		i, ok := byID[r.InstanceID]
-		if !ok || !i.Allows(o.Protection, now) || r.CredentialRevision != i.CredentialRevision || accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) {
-			continue
-		}
-		accounts[i.AccountDomain] = true
-		if i.Ownership == "contributor" {
-			owners[i.OwnerDomain] = true
-		}
-		count++
+func (s *Service) evaluateObjectHealth(o Object, copies []Replica, instances []Instance, lookup func(string) (Instance, error), now time.Time) (ObjectHealth, error) {
+	st, err := s.statusFromLoaded(o, copies, lookup, now)
+	if err != nil {
+		return ObjectHealth{}, err
 	}
-	state := o.State
-	if state != "deleting" && state != "deleted" {
-		state = "pending"
-		if count >= o.Policy.Target {
-			state = "ready"
-		} else if o.Published || count >= o.Policy.Publish {
-			state = "degraded"
-		}
-		if o.Published && count == 0 {
-			state = "unavailable"
-		}
-	}
-	h := ObjectHealth{ID: o.ID, State: state, Healthy: count, Desired: o.Policy.Target}
-	if state != "deleted" && state != "deleting" {
-		h.Missing = max(0, h.Desired-h.Healthy)
+	h := ObjectHealth{ID: o.ID, State: st.State, Healthy: st.Healthy, Desired: st.Desired}
+	if st.State != "deleted" && st.State != "deleting" {
+		h.Missing = max(0, st.Desired-st.Healthy)
 		if h.Missing > 0 {
 			h.Reason = "replica_shortage"
-			if h.Healthy == 0 {
+			if st.Healthy == 0 {
 				h.Reason = "no_healthy_source"
 			} else {
-				eligible := map[string]bool{}
-				eligibleOwners := map[string]bool{}
-				for k, v := range accounts {
-					eligible[k] = v
-				}
-				for k, v := range owners {
-					eligibleOwners[k] = v
+				seen := newIndependentSet()
+				for _, r := range copies {
+					i, e := lookup(r.InstanceID)
+					if e != nil {
+						return ObjectHealth{}, e
+					}
+					if healthyVerifiedReplica(r, o, i, now, s.cfg.VerificationAge) {
+						seen.add(i)
+					}
 				}
 				for _, i := range instances {
-					if !i.CanWrite(o.Protection, o.Size, now) || eligible[i.AccountDomain] || (i.Ownership == "contributor" && eligibleOwners[i.OwnerDomain]) {
+					if !i.CanWrite(o.Protection, o.Size, now) || seen.seen(i) {
 						continue
 					}
-					eligible[i.AccountDomain] = true
-					if i.Ownership == "contributor" {
-						eligibleOwners[i.OwnerDomain] = true
-					}
+					seen.add(i)
 				}
-				if len(eligible) < o.Policy.Target {
+				if len(seen.accounts) < o.Policy.Target {
 					h.Reason = "insufficient_eligible_capacity"
 				}
 			}
 		}
 	}
-	return h
+	return h, nil
 }
 
 func isProblematicObject(h ObjectHealth) bool {
@@ -165,6 +139,8 @@ func (s *Service) Operations(ctx context.Context, p Principal, limit int, after,
 }
 
 func (s *Service) QueryOperations(ctx context.Context, p Principal, q OperationsQuery) (Operations, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	out := Operations{GeneratedAt: s.now(), Instances: []InstanceHealth{}, Objects: []ObjectHealth{}, Failures: []JobFailure{}}
 	if q.Limit < 1 || q.Limit > 100 || (q.After != "" && !validID(q.After)) || (q.FailuresAfter != "" && !validID(q.FailuresAfter)) || (q.ErrorCode != "" && !validID(q.ErrorCode)) {
 		return out, ErrInput
@@ -187,7 +163,7 @@ func (s *Service) QueryOperations(ctx context.Context, p Principal, q Operations
 	if err := s.authorize(ctx, p, "storage.operations.read", "", Protection{}); err != nil {
 		return out, err
 	}
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
+	err := s.readTx(ctx, func(tx Transaction) error {
 		now := s.now()
 		instances, err := tx.Instances(100, "")
 		if err != nil {
@@ -199,9 +175,22 @@ func (s *Service) QueryOperations(ctx context.Context, p Principal, q Operations
 			out.Instances = append(out.Instances, instanceHealth(i, now))
 		}
 
+		lookup := func(id string) (Instance, error) {
+			if inst, ok := byID[id]; ok {
+				return inst, nil
+			}
+			inst, e := tx.InstanceSnapshot(id)
+			if e == nil {
+				byID[id] = inst
+			}
+			return inst, e
+		}
 		// Aggregate active object totals and optionally collect filtered problematic objects.
 		cursor := ""
-		for page := 0; page < 1000; page++ {
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			batch, err := tx.ActiveObjects(200, cursor)
 			if err != nil {
 				return err
@@ -218,7 +207,10 @@ func (s *Service) QueryOperations(ctx context.Context, p Principal, q Operations
 				return err
 			}
 			for _, o := range batch {
-				h := s.evaluateObjectHealth(o, replicasMap[o.ID], instances, byID, now)
+				h, err := s.evaluateObjectHealth(o, replicasMap[o.ID], instances, lookup, now)
+				if err != nil {
+					return err
+				}
 				switch h.State {
 				case "pending":
 					out.ObjectTotals.Pending++
@@ -235,7 +227,11 @@ func (s *Service) QueryOperations(ctx context.Context, p Principal, q Operations
 					out.Objects = append(out.Objects, h)
 				}
 			}
-			cursor = batch[len(batch)-1].ID
+			next := batch[len(batch)-1].ID
+			if next <= cursor {
+				return ErrUnavailable
+			}
+			cursor = next
 			if len(batch) < 200 {
 				break
 			}
@@ -255,7 +251,11 @@ func (s *Service) QueryOperations(ctx context.Context, p Principal, q Operations
 				return err
 			}
 			for _, o := range objects {
-				out.Objects = append(out.Objects, s.evaluateObjectHealth(o, replicasMap[o.ID], instances, byID, now))
+				h, err := s.evaluateObjectHealth(o, replicasMap[o.ID], instances, lookup, now)
+				if err != nil {
+					return err
+				}
+				out.Objects = append(out.Objects, h)
 			}
 		}
 		if len(out.Objects) == q.Limit {

@@ -44,13 +44,14 @@ func (e ContributionControlState) Valid() bool {
 
 // Defines values for CustodyBindingLastError.
 const (
-	CustodyBindingLastErrorAttemptsExhausted     CustodyBindingLastError = "attempts_exhausted"
-	CustodyBindingLastErrorAuthorizationRejected CustodyBindingLastError = "authorization_rejected"
-	CustodyBindingLastErrorConflict              CustodyBindingLastError = "conflict"
-	CustodyBindingLastErrorCredentialsRequired   CustodyBindingLastError = "credentials_required"
-	CustodyBindingLastErrorDependencyUnavailable CustodyBindingLastError = "dependency_unavailable"
-	CustodyBindingLastErrorEmpty                 CustodyBindingLastError = ""
-	CustodyBindingLastErrorResultUnknown         CustodyBindingLastError = "result_unknown"
+	CustodyBindingLastErrorAttemptsExhausted               CustodyBindingLastError = "attempts_exhausted"
+	CustodyBindingLastErrorAuthorizationRejected           CustodyBindingLastError = "authorization_rejected"
+	CustodyBindingLastErrorConflict                        CustodyBindingLastError = "conflict"
+	CustodyBindingLastErrorCredentialsRequired             CustodyBindingLastError = "credentials_required"
+	CustodyBindingLastErrorDependencyUnavailable           CustodyBindingLastError = "dependency_unavailable"
+	CustodyBindingLastErrorEmpty                           CustodyBindingLastError = ""
+	CustodyBindingLastErrorInteractiveVerificationRequired CustodyBindingLastError = "interactive_verification_required"
+	CustodyBindingLastErrorResultUnknown                   CustodyBindingLastError = "result_unknown"
 )
 
 // Valid indicates whether the value is a known member of the CustodyBindingLastError enum.
@@ -67,6 +68,8 @@ func (e CustodyBindingLastError) Valid() bool {
 	case CustodyBindingLastErrorDependencyUnavailable:
 		return true
 	case CustodyBindingLastErrorEmpty:
+		return true
+	case CustodyBindingLastErrorInteractiveVerificationRequired:
 		return true
 	case CustodyBindingLastErrorResultUnknown:
 		return true
@@ -350,6 +353,8 @@ type ContributionCandidate struct {
 	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
 	AvailableBytes         int64     `json:"available_bytes"`
 	Id                     string    `json:"id"`
+	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
+	Reason                 string    `json:"reason"`
 }
 
 // ContributionCandidates defines model for ContributionCandidates.
@@ -648,7 +653,8 @@ type Policy struct {
 
 // Problem defines model for Problem.
 type Problem struct {
-	Code string `json:"code"`
+	Code              string `json:"code"`
+	RetryAfterSeconds *int   `json:"retry_after_seconds,omitempty"`
 }
 
 // Protection defines model for Protection.
@@ -725,6 +731,11 @@ type CreateCustodyParams struct {
 type ListCustodyOperationsParams struct {
 	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
 	After *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
+// DeleteOwnCustodyParams defines parameters for DeleteOwnCustody.
+type DeleteOwnCustodyParams struct {
+	IdempotencyKey openapi_types.UUID `json:"Idempotency-Key"`
 }
 
 // ReauthorizeCustodyParams defines parameters for ReauthorizeCustody.
@@ -1001,6 +1012,11 @@ type ClientInterface interface {
 	//
 	// Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
 	GetOwnCustodyRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteOwnCustody performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+	//
+	// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+	DeleteOwnCustody(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReauthorizeCustodyWithBody performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 	// with any type of body and a specified content type.
@@ -1326,6 +1342,21 @@ func (c *Client) GetCustodyPolicy(ctx context.Context, reqEditors ...RequestEdit
 // Storage custody only. No contribution consent, admission expansion, or secret readback. Password input is write-only and excluded from logs. Original request IDs are retained for recovery.
 func (c *Client) GetOwnCustodyRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetOwnCustodyRequestRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteOwnCustody performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+//
+// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+func (c *Client) DeleteOwnCustody(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteOwnCustodyRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2269,6 +2300,53 @@ func NewGetOwnCustodyRequestRequest(server string, id string) (*http.Request, er
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteOwnCustodyRequest constructs an http.Request for the DeleteOwnCustody method
+func NewDeleteOwnCustodyRequest(server string, id openapi_types.UUID, params *DeleteOwnCustodyParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/custody/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: "uuid"})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
 	}
 
 	return req, nil
@@ -3492,6 +3570,13 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetOwnCustodyRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOwnCustodyRequestResponse, error)
 
+	// DeleteOwnCustodyWithResponse performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+	//
+	// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DeleteOwnCustodyWithResponse(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error)
+
 	// ReauthorizeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -3953,11 +4038,60 @@ type ListOwnCustodyResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *CustodyPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListOwnCustodyResponse) GetJSON200() *CustodyPage {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListOwnCustodyResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -3994,11 +4128,60 @@ type CreateCustodyResponse struct {
 	HTTPResponse *http.Response
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *CustodyBinding
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
 func (r CreateCustodyResponse) GetJSON202() *CustodyBinding {
 	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateCustodyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateCustodyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateCustodyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateCustodyResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateCustodyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r CreateCustodyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateCustodyResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4035,11 +4218,60 @@ type ListCustodyOperationsResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *CustodyPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListCustodyOperationsResponse) GetJSON200() *CustodyPage {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListCustodyOperationsResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4076,11 +4308,60 @@ type ResumeCustodyOperationResponse struct {
 	HTTPResponse *http.Response
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *CustodyBinding
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
 func (r ResumeCustodyOperationResponse) GetJSON202() *CustodyBinding {
 	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ResumeCustodyOperationResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4117,11 +4398,60 @@ type GetCustodyPolicyResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *CustodyPolicy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetCustodyPolicyResponse) GetJSON200() *CustodyPolicy {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCustodyPolicyResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4158,11 +4488,60 @@ type GetOwnCustodyRequestResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *CustodyBinding
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetOwnCustodyRequestResponse) GetJSON200() *CustodyBinding {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetOwnCustodyRequestResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4194,16 +4573,162 @@ func (r GetOwnCustodyRequestResponse) ContentType() string {
 	return ""
 }
 
+// DeleteOwnCustodyResponse503Headers the declared response headers of an HTTP 503 response for DeleteOwnCustody
+type DeleteOwnCustodyResponse503Headers struct {
+	RetryAfter *int
+}
+
+type DeleteOwnCustodyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustodyBinding
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *DeleteOwnCustodyResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON200() *CustodyBinding {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteOwnCustodyResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteOwnCustodyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteOwnCustodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteOwnCustodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteOwnCustodyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ReauthorizeCustodyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *CustodyBinding
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
 func (r ReauthorizeCustodyResponse) GetJSON202() *CustodyBinding {
 	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ReauthorizeCustodyResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4240,11 +4765,60 @@ type ResumeCustodyResponse struct {
 	HTTPResponse *http.Response
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *CustodyBinding
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
 func (r ResumeCustodyResponse) GetJSON202() *CustodyBinding {
 	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResumeCustodyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResumeCustodyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResumeCustodyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResumeCustodyResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ResumeCustodyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ResumeCustodyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ResumeCustodyResponse) GetJSON503() *Problem {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4906,6 +5480,31 @@ func (r ObjectStatusResponse) ContentType() string {
 	return ""
 }
 
+// DownloadContentResponse200Headers the declared response headers of an HTTP 200 response for DownloadContent
+type DownloadContentResponse200Headers struct {
+	AcceptRanges  *string
+	ContentLength *int64
+	ETag          *string
+}
+
+// DownloadContentResponse206Headers the declared response headers of an HTTP 206 response for DownloadContent
+type DownloadContentResponse206Headers struct {
+	AcceptRanges  *string
+	ContentLength *int64
+	ContentRange  *string
+	ETag          *string
+}
+
+// DownloadContentResponse304Headers the declared response headers of an HTTP 304 response for DownloadContent
+type DownloadContentResponse304Headers struct {
+	ETag *string
+}
+
+// DownloadContentResponse416Headers the declared response headers of an HTTP 416 response for DownloadContent
+type DownloadContentResponse416Headers struct {
+	ContentRange *string
+}
+
 type DownloadContentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4923,6 +5522,14 @@ type DownloadContentResponse struct {
 	JSON413 *Problem
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *DownloadContentResponse200Headers
+	// Headers206 the parsed response headers for an HTTP 206 response
+	Headers206 *DownloadContentResponse206Headers
+	// Headers304 the parsed response headers for an HTTP 304 response
+	Headers304 *DownloadContentResponse304Headers
+	// Headers416 the parsed response headers for an HTTP 416 response
+	Headers416 *DownloadContentResponse416Headers
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -5948,6 +6555,19 @@ func (c *ClientWithResponses) GetOwnCustodyRequestWithResponse(ctx context.Conte
 	return ParseGetOwnCustodyRequestResponse(rsp)
 }
 
+// DeleteOwnCustodyWithResponse performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
+//
+// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DeleteOwnCustodyWithResponse(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error) {
+	rsp, err := c.DeleteOwnCustody(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteOwnCustodyResponse(rsp)
+}
+
 // ReauthorizeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -6571,20 +7191,54 @@ func ParseListOwnCustodyResponse(rsp *http.Response) (*ListOwnCustodyResponse, e
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 503:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -6612,20 +7266,54 @@ func ParseCreateCustodyResponse(rsp *http.Response) (*CreateCustodyResponse, err
 		}
 		response.JSON202 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 503:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -6653,20 +7341,54 @@ func ParseListCustodyOperationsResponse(rsp *http.Response) (*ListCustodyOperati
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 503:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -6694,20 +7416,54 @@ func ParseResumeCustodyOperationResponse(rsp *http.Response) (*ResumeCustodyOper
 		}
 		response.JSON202 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 503:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -6735,20 +7491,54 @@ func ParseGetCustodyPolicyResponse(rsp *http.Response) (*GetCustodyPolicyRespons
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 503:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -6776,21 +7566,143 @@ func ParseGetOwnCustodyRequestResponse(rsp *http.Response) (*GetOwnCustodyReques
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteOwnCustodyResponse parses an HTTP response from a DeleteOwnCustodyWithResponse call
+func ParseDeleteOwnCustodyResponse(rsp *http.Response) (*DeleteOwnCustodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteOwnCustodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustodyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
 	case rsp.StatusCode == 503:
-		break // No content-type
-
+		var headers DeleteOwnCustodyResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -6817,20 +7729,54 @@ func ParseReauthorizeCustodyResponse(rsp *http.Response) (*ReauthorizeCustodyRes
 		}
 		response.JSON202 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 503:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -6858,20 +7804,54 @@ func ParseResumeCustodyResponse(rsp *http.Response) (*ResumeCustodyResponse, err
 		}
 		response.JSON202 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 401:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
-	case rsp.StatusCode == 403:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
-	case rsp.StatusCode == 409:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 503:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -7417,6 +8397,9 @@ func ParseDownloadContentResponse(rsp *http.Response) (*DownloadContentResponse,
 	}
 
 	switch {
+	case rsp.StatusCode == 304:
+		break // No content-type
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -7459,6 +8442,9 @@ func ParseDownloadContentResponse(rsp *http.Response) (*DownloadContentResponse,
 		}
 		response.JSON413 = &dest
 
+	case rsp.StatusCode == 416:
+		break // No content-type
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -7466,6 +8452,84 @@ func ParseDownloadContentResponse(rsp *http.Response) (*DownloadContentResponse,
 		}
 		response.JSON503 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers DownloadContentResponse200Headers
+		if values := rsp.Header.Values("Accept-Ranges"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Accept-Ranges", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.AcceptRanges = &value
+		}
+		if values := rsp.Header.Values("Content-Length"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Length", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.ContentLength = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 206:
+		var headers DownloadContentResponse206Headers
+		if values := rsp.Header.Values("Accept-Ranges"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Accept-Ranges", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.AcceptRanges = &value
+		}
+		if values := rsp.Header.Values("Content-Length"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Length", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.ContentLength = &value
+		}
+		if values := rsp.Header.Values("Content-Range"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Range", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentRange = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers206 = &headers
+	case rsp.StatusCode == 304:
+		var headers DownloadContentResponse304Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers304 = &headers
+	case rsp.StatusCode == 416:
+		var headers DownloadContentResponse416Headers
+		if values := rsp.Header.Values("Content-Range"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Range", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentRange = &value
+		}
+		response.Headers416 = &headers
 	}
 
 	return response, nil

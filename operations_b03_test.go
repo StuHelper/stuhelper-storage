@@ -258,6 +258,9 @@ func TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff(t *testing.T) {
 	if err != nil || woResp.JSON200 == nil {
 		t.Fatalf("write-off failed: status=%d err=%v body=%s", woResp.StatusCode(), err, string(woResp.Body))
 	}
+	if woResp.JSON200.Instance.Revision != i1Rev {
+		t.Errorf("capacity write-off changed active upload revision from %d to %d", i1Rev, woResp.JSON200.Instance.Revision)
+	}
 	if woResp.JSON200.Instance.ReservedBytes != 0 {
 		t.Fatalf("expected 0 reserved bytes after write-off, got %d", woResp.JSON200.Instance.ReservedBytes)
 	}
@@ -296,5 +299,19 @@ func TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff(t *testing.T) {
 	}
 	if !sawReviewAudit || !sawWriteOffReason {
 		t.Fatalf("missing audit records: review=%v writeoff=%v records=%+v", sawReviewAudit, sawWriteOffReason, batch.Records)
+	}
+}
+
+func TestOperationsTotalsAndFilterBeyondTwoHundredThousand(t *testing.T) {
+	h := harnessFor(t)
+	_, err := h.db.Exec(`INSERT INTO storage.objects(id,data)
+ SELECT id,jsonb_build_object('id',id,'state','pending','policy',jsonb_build_object('target',1,'publish',1),'published',n=200001)
+ FROM generate_series(1,200001) n CROSS JOIN LATERAL (SELECT lpad(n::text,6,'0') id) x`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops, err := h.s.QueryOperations(h.ctx, h.actor, storage.OperationsQuery{Limit: 1, After: "200000", ObjectFilter: "problematic"})
+	if err != nil || ops.ObjectTotals.Pending != 200000 || ops.ObjectTotals.Unavailable != 1 || len(ops.Objects) != 1 || ops.Objects[0].ID != "200001" {
+		t.Fatalf("unexpected final page: %+v %v", ops, err)
 	}
 }
