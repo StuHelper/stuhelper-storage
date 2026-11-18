@@ -206,6 +206,10 @@
       "operations_b03_test.go#TestOperationsTotalsAndFilterBeyondTwoHundredThousand",
       "operations_b03_test.go#TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff"
     ],
+    "STORAGE-39": [
+      "contribution_summary_test.go#TestContributionSummaryRejectsUnrepresentableCapacity",
+      "contribution_summary_test.go#TestContributionTransparencySummaryLeastPrivilegeAndAggregation"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"
