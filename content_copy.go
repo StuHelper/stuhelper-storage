@@ -10,7 +10,6 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 	var g ContentGroup
 	var out Status
 	cancelledGroup := ""
-	noop := false
 	err := s.mutation(ctx, p, "storage.protection.change", id, key, struct {
 		Revision   int64
 		Protection Protection
@@ -39,8 +38,6 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 				if e := s.emit(tx, p, "storage.content.protection.cancelled", id, h.Revision); e != nil {
 					return nil, e
 				}
-			} else {
-				noop = true
 			}
 			return s.contentView(tx, h, g)
 		}
@@ -69,10 +66,10 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 		}
 		return s.contentStatusAction(ctx, p, id, "storage.protection.change")
 	}
-	if noop {
+	if out.Protection == protection {
 		return out, nil
 	}
-	if err = s.resumeContentCopy(ctx, p, id); err != nil {
+	if err = s.resumeContentCopy(ctx, p, id, h.PendingGroup, revision); err != nil {
 		return out, err
 	}
 	return s.contentStatusAction(ctx, p, id, "storage.protection.change")
@@ -81,7 +78,7 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 // A pending destination and source pin are durable. Copying is resumable after
 // timeout, response loss or restart; the immutable destination is reconciled
 // before any new provider write. Restrictive changes block the handle immediately.
-func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string) error {
+func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id, pendingGroup string, revision int64) error {
 	var h ContentHandle
 	var source Object
 	var target ContentGroup
@@ -105,7 +102,7 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string)
 		if h.Owner != p {
 			return ErrDenied
 		}
-		if h.State != "active" {
+		if h.State != "active" || h.PendingGroup != pendingGroup || (revision != 0 && (h.Revision != revision || pendingGroup == "")) {
 			return nil
 		}
 		target = previous

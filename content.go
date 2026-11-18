@@ -222,7 +222,7 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 	if err != nil {
 		return out, err
 	}
-	if err = s.resumeContentCopy(ctx, p, out.ID); err != nil {
+	if err = s.resumeContentCopy(ctx, p, out.ID, "", 0); err != nil {
 		return out, err
 	}
 	return s.contentStatus(ctx, p, out.ID)

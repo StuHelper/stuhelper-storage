@@ -464,6 +464,19 @@ func TestSharedContentProtectionChangeLeastPrivilegeAndRollback(t *testing.T) {
 		t.Fatalf("reverting stuck protection change failed: %+v err=%v", reverted, err)
 	}
 
+	// Start a distinct migration while the destination still has no capacity.
+	if _, err = svc.ChangeProtection(base.ctx, actor, created.ID, "to-quarantine-ok", reverted.Revision, quarantine); !errors.Is(err, storage.ErrCapacity) {
+		t.Fatal(err)
+	}
+	replay, err := svc.ChangeProtection(base.ctx, actor, created.ID, "cancel-quarantine", created.Revision, req.Protection)
+	if err != nil || replay.Revision != reverted.Revision {
+		t.Fatalf("old cancellation resumed the subsequent migration: %+v %v", replay, err)
+	}
+	var pending string
+	if err = base.db.QueryRow("SELECT pending_group_id FROM storage.content_handles WHERE id=$1", created.ID).Scan(&pending); err != nil || pending == "" {
+		t.Fatalf("pending migration changed on replay: %v", err)
+	}
+
 	// 2. Admit quarantine on instance, then ChangeProtection with ONLY protection.change + protection.assign!
 	auth.mu.Lock()
 	auth.allowed["service"]["storage.instances.manage"] = true
@@ -483,6 +496,11 @@ func TestSharedContentProtectionChangeLeastPrivilegeAndRollback(t *testing.T) {
 	if err != nil || migrated.Protection != quarantine {
 		t.Fatalf("ChangeProtection demanded extra object permissions: %+v err=%v", migrated, err)
 	}
+	again, err := svc.ChangeProtection(base.ctx, actor, created.ID, "to-quarantine-ok", reverted.Revision, quarantine)
+	if err != nil || again != migrated {
+		t.Fatalf("completed migration replay returned %+v instead of %+v: %v", again, migrated, err)
+	}
+
 }
 
 func TestSharedContentCleanupUsesActualActorWithoutOwnerPermissions(t *testing.T) {
