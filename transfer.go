@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -14,6 +14,14 @@ type VerifiedContent struct {
 	Size   int64
 	SHA256 string
 	Body   io.ReadSeeker
+}
+
+func streamErr(err error) error {
+	var maxBytes *http.MaxBytesError
+	if errors.As(err, &maxBytes) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return ErrUnavailable
 }
 
 type boundedWriter struct {
@@ -34,10 +42,10 @@ func stageFromReader(ctx context.Context, dst *stagedFile, src io.Reader, global
 	h := sha256.New()
 	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(&pacedReader{ctx: ctx, src: src, global: global}, size+1))
 	if err != nil {
-		if errors.Is(err, ErrIntegrity) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, ErrIntegrity) {
 			return err
 		}
-		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return streamErr(err)
 	}
 	if n != size || hex.EncodeToString(h.Sum(nil)) != expectedSHA256 {
 		return ErrIntegrity
@@ -88,32 +96,6 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 	return s.commitStagedIngest(ctx, p, id, o, f)
 }
 
-func (s *Service) ingestStaged(ctx context.Context, p Principal, id string, f *stagedFile) (Status, error) {
-	ctx, release, err := s.begin(ctx)
-	if err != nil {
-		return Status{}, err
-	}
-	defer release()
-	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return Status{}, ErrUnavailable
-	}
-	var o Object
-	if err = s.repo.Transaction(ctx, func(tx Transaction) error {
-		var e error
-		o, e = s.objectGuard(ctx, tx, p, "storage.objects.upload", id)
-		if e != nil {
-			return e
-		}
-		if o.State == "deleted" || o.State == "deleting" {
-			return ErrConflict
-		}
-		return nil
-	}); err != nil {
-		return Status{}, err
-	}
-	return s.commitStagedIngest(ctx, p, id, o, f)
-}
-
 func (s *Service) commitStagedIngest(ctx context.Context, p Principal, id string, o Object, f *stagedFile) (Status, error) {
 	var job Job
 	var replica Replica
@@ -158,18 +140,19 @@ func (s *Service) commitStagedIngest(ctx context.Context, p Principal, id string
 		return Status{}, err
 	}
 	if already {
-		return s.Status(ctx, p, id)
+		return s.statusWithAction(ctx, p, id, "storage.objects.upload")
 	}
 	workCtx, cancel := context.WithTimeout(ctx, s.cfg.Lease)
 	defer cancel()
 	err = s.writeReplica(workCtx, job, f)
 	if err != nil {
+		s.observe("ingest", id, job.ID, err)
 		cleanupCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
 		_ = s.failJob(cleanupCtx, job, err)
 		return Status{}, err
 	}
-	return s.Status(ctx, p, id)
+	return s.statusWithAction(ctx, p, id, "storage.objects.upload")
 }
 
 // Download buffers within the configured size/concurrency budget so corrupted
@@ -190,8 +173,23 @@ func (s *Service) OpenDownload(ctx context.Context, p Principal, id string, serv
 	return s.openDownload(ctx, p, id, false, serve)
 }
 
+// DownloadWithSize reports the verified size before copying the first byte.
+func (s *Service) DownloadWithSize(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer) error {
+	if dst == nil {
+		return ErrInput
+	}
+	return s.OpenDownload(ctx, p, id, func(c VerifiedContent) error {
+		if beforeWrite != nil {
+			beforeWrite(c.Size)
+		}
+		_, err := io.Copy(dst, c.Body)
+		return err
+	})
+}
+
 // ReviewDownload uses a separate permission to inspect an unpublished verified
-// copy. It never changes publication, references, replica policy or protection.
+// copy. It never changes publication, references, replica policy or protection,
+// and records an audit entry when verified content is released to the reviewer.
 func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, dst io.Writer) error {
 	if dst == nil {
 		return ErrInput
@@ -209,10 +207,10 @@ func (s *Service) openDownload(ctx context.Context, p Principal, id string, revi
 	if contentID(id) {
 		return s.openContentDownload(ctx, p, id, review, serve)
 	}
-	return s.openObjectDownload(ctx, p, id, review, serve)
+	return s.openObjectDownload(ctx, p, id, review, review, serve)
 }
 
-func (s *Service) openObjectDownload(ctx context.Context, p Principal, id string, review bool, serve func(VerifiedContent) error) error {
+func (s *Service) openObjectDownload(ctx context.Context, p Principal, id string, review, recordAudit bool, serve func(VerifiedContent) error) error {
 	action := "storage.objects.download"
 	if review {
 		action = "storage.objects.review"
@@ -243,6 +241,7 @@ func (s *Service) openObjectDownload(ctx context.Context, p Principal, id string
 	}
 	f, err := s.readSource(ctx, o, "")
 	if err != nil {
+		s.observe(action, id, "", err)
 		return err
 	}
 	defer removeTemporary(f)
@@ -253,6 +252,9 @@ func (s *Service) openObjectDownload(ctx context.Context, p Principal, id string
 		}
 		if current.Revision != o.Revision || current.State == "deleting" || current.State == "deleted" {
 			return ErrStale
+		}
+		if review && recordAudit {
+			return s.emitScoped(ctx, tx, p, "storage.object.reviewed", o.ID, current.Revision, "success", current.Protection.Scope)
 		}
 		return nil
 	})
@@ -299,6 +301,9 @@ func (s *Service) readSource(ctx context.Context, o Object, excluded string) (*s
 		}
 		f, err := s.readRemote(ctx, o, instance, r.Remote)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			if errors.Is(err, ErrIntegrity) || errors.Is(err, ErrNotFound) {
 				_ = s.markCorrupt(ctx, o, r)
 			}
@@ -353,6 +358,10 @@ func (s *Service) markCorrupt(ctx context.Context, o Object, r Replica) error {
 		if err := tx.Lock("object:" + o.ID); err != nil {
 			return err
 		}
+		object, err := tx.Object(o.ID)
+		if err != nil {
+			return err
+		}
 		replicas, err := tx.Replicas(o.ID)
 		if err != nil {
 			return err
@@ -368,7 +377,7 @@ func (s *Service) markCorrupt(ctx context.Context, o Object, r Replica) error {
 		if err := tx.SaveReplica(current); err != nil {
 			return err
 		}
-		return s.emit(tx, Principal{}, "storage.replica.corrupt", o.ID, o.Revision)
+		return s.emitScoped(ctx, tx, Principal{}, "storage.replica.corrupt", object.ID, object.Revision, "failed", object.Protection.Scope)
 	})
 }
 
@@ -444,37 +453,39 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 	}
 	// A retry first reconciles the exact persisted intent. It never blindly starts
 	// another remote upload after an ambiguous response or process death.
-	remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
-	if err == nil {
-		f, err := s.readRemote(ctx, o, i, remote)
-		if err != nil {
+	if r.IssuedWrite || r.Remote.ID != "" {
+		remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
+		if err == nil {
+			f, err := s.readRemote(ctx, o, i, remote)
+			if err != nil {
+				return ErrUnknown
+			}
+			removeTemporary(f)
+			return s.complete(ctx, j, remote)
+		}
+		if !errors.Is(err, ErrNotFound) {
 			return ErrUnknown
 		}
-		removeTemporary(f)
-		return s.complete(ctx, j, remote)
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return ErrUnknown
-	}
-	if r.IssuedWrite {
-		return ErrUnknown
+		if r.IssuedWrite {
+			return ErrUnknown
+		}
 	}
 	if src == nil {
 		return ErrNotFound
 	}
-	if err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		_, current, _, _, err := s.jobState(ctx, tx, j, false)
-		if err != nil {
-			return err
-		}
-		if current.IssuedWrite {
-			return ErrUnknown
-		}
-		current.IssuedWrite = true
-		current.State = "writing"
-		return tx.SaveReplica(current)
-	}); err != nil {
-		return err
+	issue := func() error {
+		return s.repo.Transaction(ctx, func(tx Transaction) error {
+			_, current, _, _, err := s.jobState(ctx, tx, j, false)
+			if err != nil {
+				return err
+			}
+			if current.IssuedWrite {
+				return ErrUnknown
+			}
+			current.IssuedWrite = true
+			current.State = "writing"
+			return tx.SaveReplica(current)
+		})
 	}
 	checkpoint := func(remote Locator) error {
 		if remote.ID == "" || len(remote.ID) > 2048 || len(remote.Revision) > 512 {
@@ -490,7 +501,7 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 			return tx.SaveReplica(current)
 		})
 	}
-	remote, err = driver.Write(ctx, i, r.Intent, o.Size, src, checkpoint)
+	remote, err := writeWithFence(ctx, driver, i, r.Intent, o.Size, src, issue, checkpoint)
 	if err != nil {
 		return err
 	}
@@ -504,6 +515,16 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 	removeTemporary(f)
 	return s.complete(ctx, j, remote)
 }
+func writeWithFence(ctx context.Context, driver Driver, i Instance, intent string, size int64, src io.Reader, issue func() error, checkpoint func(Locator) error) (Locator, error) {
+	if writer, ok := driver.(FencedWriter); ok {
+		return writer.WriteWithFence(ctx, i, intent, size, src, issue, checkpoint)
+	}
+	if err := issue(); err != nil {
+		return Locator{}, err
+	}
+	return driver.Write(ctx, i, intent, size, src, checkpoint)
+}
+
 func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 	return s.repo.Transaction(ctx, func(tx Transaction) error {
 		o, r, i, current, err := s.jobState(ctx, tx, j, false)
@@ -534,10 +555,11 @@ func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 			return err
 		}
 		current.State = "done"
+		current.CompletedAt = s.now()
 		if err := tx.SaveJob(current); err != nil {
 			return err
 		}
-		return s.emit(tx, Principal{}, "storage.replica.verified", o.ID, o.Revision)
+		return s.emitScoped(ctx, tx, Principal{}, "storage.replica.verified", o.ID, o.Revision, "success", o.Protection.Scope)
 	})
 }
 
@@ -596,6 +618,7 @@ func (s *Service) RunOne(ctx context.Context, worker string) (bool, error) {
 		err = ErrInput
 	}
 	if err != nil {
+		s.observe("job_"+j.Kind, j.ObjectID, j.ID, err)
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if recordErr := s.failJob(cleanupCtx, j, err); recordErr != nil {
@@ -616,6 +639,37 @@ func (s *Service) failJob(ctx context.Context, expected Job, cause error) error 
 		if j.Generation != expected.Generation || j.LeaseOwner != expected.LeaseOwner || j.State != "running" {
 			return ErrStale
 		}
+		// An ingest has no durable source to retry. If the provider has not
+		// received an upload, release the reservation so the caller can resubmit.
+		if j.Kind == "ingest" {
+			copies, err := tx.Replicas(j.ObjectID)
+			if err != nil {
+				return err
+			}
+			r, err := findReplica(copies, j.ReplicaID)
+			if err != nil {
+				return err
+			}
+			if r.Intent == j.Intent && r.Reserved && !r.Accounted && !r.IssuedWrite && r.Remote.ID == "" && r.State == "writing" {
+				i, err := tx.Instance(r.InstanceID)
+				if err != nil {
+					return err
+				}
+				i.Reserved -= r.Size
+				r.Reserved = false
+				r.State = "deleted"
+				if err = tx.SaveInstance(i); err != nil {
+					return err
+				}
+				if err = tx.SaveReplica(r); err != nil {
+					return err
+				}
+				j.State = "done"
+				j.CompletedAt = s.now()
+				j.ErrorCode = errorCode(cause)
+				return tx.SaveJob(j)
+			}
+		}
 		j.ErrorCode = errorCode(cause)
 		j.State = "pending"
 		j.AvailableAt = s.now().Add(time.Duration(min(j.Attempts, 60)) * 5 * time.Second)
@@ -626,6 +680,7 @@ func (s *Service) failJob(ctx context.Context, expected Job, cause error) error 
 		// cannot succeed by retrying and must not remain an actionable blockage.
 		if errors.Is(cause, ErrStale) {
 			j.State = "done"
+			j.CompletedAt = s.now()
 		}
 		return tx.SaveJob(j)
 	})
@@ -639,27 +694,29 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 	if err != nil {
 		return err
 	}
-	remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
-	if err == nil {
-		if _, _, _, err = s.snapshotJob(ctx, j, true); err != nil {
+	if r.IssuedWrite || r.Remote.ID != "" {
+		remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
+		if err == nil {
+			if _, _, _, err = s.snapshotJob(ctx, j, true); err != nil {
+				return err
+			}
+			if err = driver.Remove(ctx, i, remote); err != nil {
+				return err
+			}
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if err = driver.Remove(ctx, i, remote); err != nil {
-			return err
-		}
-	}
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	if errors.Is(err, ErrNotFound) && r.IssuedWrite && r.Remote.ID == "" {
-		return ErrUnknown
-	}
-	// Remove's success must mean permanent absence, not a recycle-bin move.
-	if _, checkErr := driver.Find(ctx, i, r.Intent, r.Remote); !errors.Is(checkErr, ErrNotFound) {
-		if checkErr == nil {
+		if errors.Is(err, ErrNotFound) && r.IssuedWrite && r.Remote.ID == "" {
 			return ErrUnknown
 		}
-		return checkErr
+		// Remove's success must mean permanent absence, not a recycle-bin move.
+		if _, checkErr := driver.Find(ctx, i, r.Intent, r.Remote); !errors.Is(checkErr, ErrNotFound) {
+			if checkErr == nil {
+				return ErrUnknown
+			}
+			return checkErr
+		}
 	}
 	return s.repo.Transaction(ctx, func(tx Transaction) error {
 		o, r, i, current, err := s.jobState(ctx, tx, j, true)
@@ -683,6 +740,7 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 			return err
 		}
 		current.State = "done"
+		current.CompletedAt = s.now()
 		if err := tx.SaveJob(current); err != nil {
 			return err
 		}
@@ -704,6 +762,6 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 				}
 			}
 		}
-		return s.emit(tx, Principal{}, "storage.replica.deleted", o.ID, o.Revision)
+		return s.emitScoped(ctx, tx, Principal{}, "storage.replica.deleted", o.ID, o.Revision, "success", o.Protection.Scope)
 	})
 }

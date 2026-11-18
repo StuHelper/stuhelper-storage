@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -18,44 +16,21 @@ func NewCustody(s *custody.Service, a Authenticator) (http.Handler, error) {
 	m := http.NewServeMux()
 	base := "/api/v1/storage/custody"
 	mount := func(path string, public bool, run func(*http.Request, storage.Principal) (any, error)) {
-		m.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-			defer cancel()
-			r = r.WithContext(ctx)
-			deadline, _ := ctx.Deadline()
-			controller := http.NewResponseController(w)
-			_ = controller.SetReadDeadline(deadline)
-			_ = controller.SetWriteDeadline(deadline)
-			r.Body = http.MaxBytesReader(w, r.Body, 16384)
-			var p storage.Principal
-			if !public {
-				var e error
-				p, e = a.Authenticate(r)
-				if e != nil || !p.Valid() {
-					if errors.Is(e, storage.ErrUnavailable) {
-						respondError(w, e)
-					} else {
-						problem(w, 401, "authentication_required")
-					}
-					return
+		mountEndpoint(m, path, routeOptions{
+			auth:            a,
+			public:          public,
+			timeout:         time.Minute,
+			maxBodyBytes:    16384,
+			unavailableCode: "identity_unavailable",
+
+			successStatus: func(r *http.Request) int {
+				if r.Method == "POST" {
+					return 202
 				}
-			}
-			if len(r.Header.Values("Idempotency-Key")) > 1 {
-				respondError(w, storage.ErrInput)
-				return
-			}
-			out, e := run(r, p)
-			if e != nil {
-				respondError(w, e)
-				return
-			}
-			status := 200
-			if r.Method == "POST" {
-				status = 202
-			}
-			writeJSON(w, status, out)
+				return 200
+			},
+		}, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+			return run(r, p)
 		})
 	}
 	mount("GET "+base+"/policy", true, func(*http.Request, storage.Principal) (any, error) { return s.Policy(), nil })

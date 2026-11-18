@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -370,5 +371,216 @@ func TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle(t 
 	}
 	if remaining != 1 {
 		t.Fatal("cancelled destination retained bytes", remaining)
+	}
+}
+
+type scopedActionAuth struct {
+	mu      sync.Mutex
+	allowed map[string]map[string]bool
+}
+
+func (a *scopedActionAuth) Authorize(_ context.Context, p storage.Principal, action, _ string, _ storage.Protection) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.allowed[p.Subject]["*"] || a.allowed[p.Subject][action] {
+		return nil
+	}
+	return storage.ErrDenied
+}
+
+func TestSharedContentProtectionChangeLeastPrivilegeAndRollback(t *testing.T) {
+	base := harnessFor(t)
+	auth := &scopedActionAuth{
+		allowed: map[string]map[string]bool{
+			"service": {"*": true},
+		},
+	}
+	svc, err := storage.New(base.repo, auth, base.provider, base.provider, storage.Config{
+		Clock:              base.clock.Now,
+		MaxObjectSize:      1 << 20,
+		TemporaryDirectory: t.TempDir(),
+		ParallelTransfers:  4,
+		Lease:              time.Minute,
+		VerificationAge:    time.Hour,
+		MaxAttempts:        3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close(base.ctx) })
+
+	actor := storage.Principal{Issuer: "test-issuer", Subject: "service"}
+	until := base.clock.Now().Add(24 * time.Hour)
+	inst, err := svc.Register(base.ctx, actor, "reg-pub", storage.Instance{
+		ID:                 "pub-only",
+		Adapter:            "test",
+		OwnerDomain:        "platform",
+		Ownership:          "platform",
+		CredentialRef:      "pub-only",
+		CredentialRevision: 1,
+		Root:               "isolated",
+		State:              "active",
+		Authorized:         true,
+		Limit:              4096,
+		ExpiresAt:          until,
+		Admissions:         []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: until}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte("protection rollback and least privilege")
+	req := sharedRequest(data)
+	created, err := svc.Create(base.ctx, actor, "create-h", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Ingest(base.ctx, actor, created.ID, "ingest-h", bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restrict actor to ONLY protection.change + protection.assign + objects.review.
+	auth.mu.Lock()
+	auth.allowed["service"] = map[string]bool{
+		"storage.protection.change": true,
+		"storage.protection.assign": true,
+		"storage.objects.review":    true,
+	}
+	auth.mu.Unlock()
+
+	// 1. No quarantine capacity yet -> ChangeProtection fails with ErrCapacity, leaving PendingGroup.
+	quarantine := storage.Protection{Class: "quarantine", Scope: "school-a"}
+	if _, err = svc.ChangeProtection(base.ctx, actor, created.ID, "to-quarantine-no-cap", created.Revision, quarantine); !errors.Is(err, storage.ErrCapacity) {
+		t.Fatalf("expected ErrCapacity when destination has no instance, got %v", err)
+	}
+	// ReviewDownload must still read verified source while pending migration is stuck!
+	var reviewed bytes.Buffer
+	if err = svc.ReviewDownload(base.ctx, actor, created.ID, &reviewed); err != nil || !bytes.Equal(reviewed.Bytes(), data) {
+		t.Fatalf("ReviewDownload blocked by failed PendingGroup: err=%v", err)
+	}
+	// Revert back to original protection must cancel PendingGroup and restore handle!
+	reverted, err := svc.ChangeProtection(base.ctx, actor, created.ID, "cancel-quarantine", created.Revision, req.Protection)
+	if err != nil || reverted.Protection != req.Protection || reverted.Revision != created.Revision+1 {
+		t.Fatalf("reverting stuck protection change failed: %+v err=%v", reverted, err)
+	}
+
+	// Start a distinct migration while the destination still has no capacity.
+	if _, err = svc.ChangeProtection(base.ctx, actor, created.ID, "to-quarantine-ok", reverted.Revision, quarantine); !errors.Is(err, storage.ErrCapacity) {
+		t.Fatal(err)
+	}
+	replay, err := svc.ChangeProtection(base.ctx, actor, created.ID, "cancel-quarantine", created.Revision, req.Protection)
+	if err != nil || replay.Revision != reverted.Revision {
+		t.Fatalf("old cancellation resumed the subsequent migration: %+v %v", replay, err)
+	}
+	var pending string
+	if err = base.db.QueryRow("SELECT pending_group_id FROM storage.content_handles WHERE id=$1", created.ID).Scan(&pending); err != nil || pending == "" {
+		t.Fatalf("pending migration changed on replay: %v", err)
+	}
+
+	// 2. Admit quarantine on instance, then ChangeProtection with ONLY protection.change + protection.assign!
+	auth.mu.Lock()
+	auth.allowed["service"]["storage.instances.manage"] = true
+	auth.mu.Unlock()
+	inst.Admissions = append(inst.Admissions, storage.Admission{Class: "quarantine", Scope: "school-a", Plaintext: true, ExpiresAt: until})
+	if _, err = svc.UpdateInstance(base.ctx, actor, "admit-quarantine", inst); err != nil {
+		t.Fatal(err)
+	}
+	auth.mu.Lock()
+	auth.allowed["service"] = map[string]bool{
+		"storage.protection.change": true,
+		"storage.protection.assign": true,
+	}
+	auth.mu.Unlock()
+
+	migrated, err := svc.ChangeProtection(base.ctx, actor, created.ID, "to-quarantine-ok", reverted.Revision, quarantine)
+	if err != nil || migrated.Protection != quarantine {
+		t.Fatalf("ChangeProtection demanded extra object permissions: %+v err=%v", migrated, err)
+	}
+	again, err := svc.ChangeProtection(base.ctx, actor, created.ID, "to-quarantine-ok", reverted.Revision, quarantine)
+	if err != nil || again != migrated {
+		t.Fatalf("completed migration replay returned %+v instead of %+v: %v", again, migrated, err)
+	}
+
+}
+
+func TestSharedContentCleanupUsesActualActorWithoutOwnerPermissions(t *testing.T) {
+	base := harnessFor(t)
+	auth := &scopedActionAuth{
+		allowed: map[string]map[string]bool{
+			"creator":    {"*": true},
+			"maintainer": {"storage.maintenance": true},
+		},
+	}
+	svc, err := storage.New(base.repo, auth, base.provider, base.provider, storage.Config{
+		Clock:              base.clock.Now,
+		MaxObjectSize:      1 << 20,
+		TemporaryDirectory: t.TempDir(),
+		ParallelTransfers:  4,
+		Lease:              time.Minute,
+		VerificationAge:    time.Hour,
+		MaxAttempts:        3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close(base.ctx) })
+
+	creator := storage.Principal{Issuer: "test-issuer", Subject: "creator"}
+	maintainer := storage.Principal{Issuer: "test-issuer", Subject: "maintainer"}
+	until := base.clock.Now().Add(48 * time.Hour)
+	if _, err = svc.Register(base.ctx, creator, "reg-1", storage.Instance{
+		ID:                 "inst-1",
+		Adapter:            "test",
+		OwnerDomain:        "platform",
+		Ownership:          "platform",
+		CredentialRef:      "inst-1",
+		CredentialRevision: 1,
+		Root:               "isolated",
+		State:              "active",
+		Authorized:         true,
+		Limit:              4096,
+		ExpiresAt:          until,
+		Admissions:         []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: until}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte("expire after creator permissions revoked")
+	h1, err := svc.Create(base.ctx, creator, "c1", sharedRequest(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Ingest(base.ctx, creator, h1.ID, "u1", bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Revoke all permissions of creator except status read; maintainer runs 24h expiry cleanup.
+	auth.mu.Lock()
+	auth.allowed["creator"] = map[string]bool{"storage.objects.read": true}
+	auth.mu.Unlock()
+
+	base.clock.Add(25 * time.Hour)
+	if _, err = svc.Reconcile(base.ctx, maintainer, 100, ""); err != nil {
+		t.Fatalf("maintenance cleanup failed when creator lost permissions: %v", err)
+	}
+	for range 10 {
+		ok, err := svc.RunOne(base.ctx, "maint-worker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+	}
+	if _, err = svc.Reconcile(base.ctx, maintainer, 100, ""); err != nil {
+		t.Fatal(err)
+	}
+	st, err := svc.Status(base.ctx, creator, h1.ID)
+	if err != nil || st.State != "deleted" {
+		t.Fatalf("shared handle not cleaned up: %+v err=%v", st, err)
+	}
+	var actorSubject string
+	if err = base.db.QueryRow(`SELECT data->'actor'->>'subject' FROM storage.audit WHERE data->'event'->>'type'='storage.object.deleting.v1'`).Scan(&actorSubject); err != nil || actorSubject != "maintainer" {
+		t.Fatalf("cleanup audit impersonated creator instead of maintainer: actor=%q err=%v", actorSubject, err)
 	}
 }
