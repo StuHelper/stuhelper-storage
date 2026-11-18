@@ -46,11 +46,19 @@
     ],
     "STORAGE-11": [
       "drivers/bhpan/bhpan_test.go#TestCheckpointReadAndPermanentDeletion",
-      "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed"
+      "drivers/bhpan/bhpan_test.go#TestForeignRootRevisionAndAmbiguousRecycleFailClosed",
+      "bhpan_recovery_test.go#TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories",
+      "drivers/bhpan/bhpan_test.go#TestFindLegacyIntentAfterShardCached",
+      "bhpan_recovery_test.go#TestRecoverFlatIntentAfterShardCached",
+      "drivers/bhpan/bhpan_test.go#TestWriteWithExistingShardInOversizedLegacyRoot"
     ],
     "STORAGE-12": [
       "drivers/bhpan/bhpan_test.go#TestRevokedSessionCannotSendGrantedUpload",
-      "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline"
+      "drivers/bhpan/bhpan_test.go#TestExplicitSessionDeadline",
+      "drivers/bhpan/bhpan_test.go#TestCallerCancellationAndLeaseDeadlinePreserveSession",
+      "drivers/bhpan/bhpan_test.go#TestProvisionDoesNotBlockPoolOrLeakRefCapacity",
+      "drivers/bhpan/bhpan_test.go#TestRevokedReferencesReleasePoolSlots",
+      "drivers/bhpan/restore_test.go#TestOlderRevocationPreservesNewerCredentialWork"
     ],
     "STORAGE-13": [
       "staging_test.go#TestStagingBudgetOwnershipAndRestartCleanup",
@@ -65,7 +73,8 @@
     "STORAGE-15": [
       "executor/executor_test.go#TestBoundedWorkersAndGracefulStop",
       "executor/executor_test.go#TestStopDeadlineCancelsAndWaitsForCleanup",
-      "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas"
+      "runtime_integration_test.go#TestExecutorRestartFinishesDurableReplicas",
+      "bhpan_recovery_test.go#TestBHpanShutdownCancellationRecoversWithoutBlockingJob"
     ],
     "STORAGE-16": [
       "runtime_integration_test.go#TestQueueBudgetDefersReplicationAndDeletion"
@@ -95,7 +104,8 @@
     ],
     "STORAGE-23": [
       "operations_commands_test.go#TestOperatorInstanceCommandsFenceReplayAndPreserveCustody",
-      "operations_commands_test.go#TestOperatorCommandHTTPContract"
+      "operations_commands_test.go#TestOperatorCommandHTTPContract",
+      "operations_commands_test.go#TestOperatorCommandCannotBypassContributorConsent"
     ],
     "STORAGE-24": [
       "operations_commands_test.go#TestOperatorRetryPreservesUnknownWriteAndIsIdempotent",
@@ -104,21 +114,30 @@
     ],
     "STORAGE-25": [
       "contribution_test.go#TestContributionControlFencesOwnershipReplayAndConsentExpiry",
-      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup"
+      "contribution_test.go#TestContributionExitWaitsForRecordedReplicaCleanup",
+      "contribution_test.go#TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone"
     ],
     "STORAGE-26": [
-      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe"
+      "contribution_test.go#TestContributionCandidatesAreOwnedEmptyAndDoNotProbe",
+      "contribution_test.go#TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone"
     ],
     "STORAGE-27": [
       "custody_test.go#TestCustodyConsentOwnershipIdempotencyAndIsolation",
       "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses"
     ],
     "STORAGE-28": [
-      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance"
+      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance",
+      "custody_test.go#TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota",
+      "custody_test.go#TestInstanceUpdatePreservesNewerQuotaSample"
     ],
     "STORAGE-29": [
       "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination",
-      "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart"
+      "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart",
+      "custody_test.go#TestCustodyUnknownPreparationKeepsAccountClaim",
+      "custody_test.go#TestCustodyBlockedRecoveryReauthorizeReplayQuotaAndSlidingBudget",
+      "custody_test.go#TestFailedCustodyRequestsReleaseOperationBudget",
+      "custody_test.go#TestCustodyRecoveryReacquiresReleasedSlot",
+      "custody_test.go#TestCustodyInterruptedLastAttemptAllowsNewRevision"
     ],
     "STORAGE-30": [
       "scheduling_test.go#TestConfiguredQuotaValidityControlsWritesAndRefresh",

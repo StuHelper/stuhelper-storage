@@ -113,6 +113,39 @@ func validKey(key string) bool {
 	return true
 }
 
+func (s *Service) checkIdempotency(ctx context.Context, p Principal, action, id, key string, request any, guard func(Transaction) error, out any) (bool, error) {
+	if !validKey(key) || !p.Valid() {
+		return false, ErrInput
+	}
+	operation := requestHash([]string{p.Issuer, p.Subject, action, id, key})
+	hash := requestHash(request)
+	hit := false
+	err := s.repo.Transaction(ctx, func(tx Transaction) error {
+		if err := tx.Lock("operation:" + operation); err != nil {
+			return err
+		}
+		if err := guard(tx); err != nil {
+			return err
+		}
+		previous, err := tx.Idempotency(operation)
+		if errors.Is(err, ErrNotFound) || (err == nil && !previous.ExpiresAt.After(s.now())) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if previous.Digest != hash {
+			return ErrConflict
+		}
+		if json.Unmarshal(previous.Result, out) != nil {
+			return ErrUnavailable
+		}
+		hit = true
+		return nil
+	})
+	return hit, err
+}
+
 // mutation persists the exact replay response with its audit/outbox effects.
 // Current authorization is checked even when returning an earlier response.
 func (s *Service) mutation(ctx context.Context, p Principal, action, id, key string, request any, guard func(Transaction) error, apply func(Transaction) (any, error), out any) error {
@@ -190,11 +223,16 @@ func validateInstance(v Instance, now time.Time) bool {
 // claims. An alias or a second directory under the same account cannot add capacity.
 func (s *Service) Register(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
-	if !validateInstance(v, s.now()) || v.Revision != 0 || v.ContributionControl != nil {
+	if !validID(v.ID) || v.Revision != 0 || v.ContributionControl != nil {
 		return result, ErrInput
 	}
-	if err := s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}); err != nil {
+	guard := func(Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }
+	request := v
+	if hit, err := s.checkIdempotency(ctx, p, "storage.instances.register", v.ID, key, request, guard, &result); err != nil || hit {
 		return result, err
+	}
+	if !validateInstance(v, s.now()) {
+		return result, ErrInput
 	}
 	evidence, err := s.verifier.Verify(ctx, v)
 	if err != nil {
@@ -203,8 +241,7 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 	if evidence.AccountDomain == "" || len(evidence.AccountDomain) > 256 || evidence.ProviderFree < 0 || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {
 		return result, ErrUnavailable
 	}
-	request := v
-	err = s.mutation(ctx, p, "storage.instances.register", v.ID, key, request, func(tx Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }, func(tx Transaction) (any, error) {
+	err = s.mutation(ctx, p, "storage.instances.register", v.ID, key, request, guard, func(tx Transaction) (any, error) {
 		if err := tx.Lock("instance-registry"); err != nil {
 			return nil, err
 		}
@@ -240,26 +277,57 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 	return result, err
 }
 
+// The provider call runs outside the transaction. A concurrent sample or
+// transfer owns newer ledger evidence even if no reservation remains at commit.
+func (s *Service) applyQuotaEvidence(current *Instance, before Instance, sample InstanceEvidence) {
+	if sample.ProviderFree < 0 || before.Reserved != 0 || current.Reserved != 0 ||
+		current.QuotaRevision != before.QuotaRevision || current.Used != before.Used {
+		return
+	}
+	current.ProviderFree = sample.ProviderFree
+	current.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
+	current.QuotaRevision++
+}
+
 func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
-	if !validateInstance(v, s.now()) || v.Revision < 1 {
+	if !validID(v.ID) || v.Revision < 1 {
 		return result, ErrInput
 	}
-	if err := s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}); err != nil {
+	guard := func(Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }
+	if hit, err := s.checkIdempotency(ctx, p, "storage.instances.update", v.ID, key, v, guard, &result); err != nil || hit {
 		return result, err
+	}
+	if !validateInstance(v, s.now()) {
+		return result, ErrInput
 	}
 	// Every renewal or credential change is revalidated with the provider. A
 	// caller cannot extend authorization by changing only a timestamp.
+	var evidence InstanceEvidence
+	var before Instance
+	verified := false
 	if v.Authorized && v.State != "revoked" {
-		evidence, err := s.verifier.Verify(ctx, v)
+		err := s.repo.Transaction(ctx, func(tx Transaction) error {
+			var err error
+			before, err = tx.Instance(v.ID)
+			return err
+		})
+		if err != nil {
+			return result, err
+		}
+		if before.Revision != v.Revision {
+			return result, ErrConflict
+		}
+		evidence, err = s.verifier.Verify(ctx, v)
 		if err != nil {
 			return result, err
 		}
 		if evidence.AccountDomain != v.AccountDomain || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {
 			return result, ErrDenied
 		}
+		verified = true
 	}
-	err := s.mutation(ctx, p, "storage.instances.update", v.ID, key, v, func(tx Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }, func(tx Transaction) (any, error) {
+	err := s.mutation(ctx, p, "storage.instances.update", v.ID, key, v, guard, func(tx Transaction) (any, error) {
 		old, err := tx.Instance(v.ID)
 		if err != nil {
 			return nil, err
@@ -280,6 +348,9 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 		v.Used = old.Used
 		v.Reserved = old.Reserved
 		v.QuotaExpiresAt = old.QuotaExpiresAt
+		if verified {
+			s.applyQuotaEvidence(&v, before, evidence)
+		}
 		v.Revision++
 		if v.Limit < v.Used+v.Reserved && v.State == "active" {
 			v.State = "paused"

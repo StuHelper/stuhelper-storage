@@ -234,6 +234,12 @@ type Verifier interface {
 	Verify(context.Context, Instance) (InstanceEvidence, error)
 }
 
+// FencedWriter lets drivers finish directory setup before recording the first
+// possibly ambiguous file write. Other drivers are fenced before Write.
+type FencedWriter interface {
+	WriteWithFence(context.Context, Instance, string, int64, io.Reader, func() error, func(Locator) error) (Locator, error)
+}
+
 // Driver's intent is a unique, platform-owned name in an isolated root. Find
 // reconciles a write whose result was lost. Checkpoint must run before data write.
 // Errors must be sanitized; absence must be explicit ErrNotFound.
@@ -270,7 +276,7 @@ type Transaction interface {
 	Lock(string) error
 	Instance(string) (Instance, error)
 	Instances(int, string) ([]Instance, error)
-	ContributionCandidates(string, int, string) ([]Instance, error)
+	ContributionCandidates(string, time.Time, int, string) ([]Instance, error)
 	SaveInstance(Instance) error
 	InstanceReplicas(string) (int64, error)
 	Object(string) (Object, error)
