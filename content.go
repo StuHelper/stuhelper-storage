@@ -225,7 +225,7 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 	if err = s.resumeContentCopy(ctx, p, out.ID); err != nil {
 		return out, err
 	}
-	return s.contentStatus(ctx, p, out.ID)
+	return s.contentStatusAction(ctx, p, out.ID, "storage.objects.create")
 }
 func (s *Service) contentSource(ctx context.Context, tx Transaction, p Principal, id string) (Object, string, error) {
 	var o Object
@@ -264,10 +264,7 @@ func (s *Service) contentSource(ctx context.Context, tx Transaction, p Principal
 	return o, group, nil
 }
 func (s *Service) ensureContentObject(ctx context.Context, g ContentGroup) (Status, error) {
-	if _, err := s.Create(ctx, g.Owner, "content-create:"+g.ID, CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy, ContentGroup: g.ID}); err != nil {
-		return Status{}, err
-	}
-	return s.Status(ctx, g.Owner, g.ObjectID)
+	return s.Create(ctx, g.Owner, "content-create:"+g.ID, CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy, ContentGroup: g.ID})
 }
 func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string, src io.Reader) (Status, error) {
 	if !validKey(key) || src == nil {
@@ -302,6 +299,9 @@ func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string
 	}
 	defer removeTemporary(f)
 	_, err = io.Copy(f, io.LimitReader(&pacedReader{ctx: ctx, src: src, global: s.bandwidth}, g.Size+1))
+	if err != nil {
+		err = streamErr(err)
+	}
 	if err == nil {
 		err = verifyFile(ctx, f, Object{Size: g.Size, SHA256: g.SHA256})
 	}
@@ -340,7 +340,7 @@ func (s *Service) ingestContent(ctx context.Context, p Principal, id, key string
 	if _, err = s.Ingest(ctx, p, g.ObjectID, key, f); err != nil {
 		return Status{}, err
 	}
-	return s.contentStatus(ctx, p, id)
+	return s.contentStatusAction(ctx, p, id, "storage.objects.upload")
 }
 func (s *Service) contentReference(ctx context.Context, p Principal, id, key string, ref Reference, attach bool) (Status, error) {
 	if !validID(ref.Module) || !validID(ref.ID) {
@@ -470,7 +470,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 	}
 	return s.contentStatusAction(ctx, p, id, "storage.objects.delete")
 }
-func (s *Service) downloadContent(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
+func (s *Service) downloadContent(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer, review bool) error {
 	if dst == nil {
 		return ErrInput
 	}
@@ -508,19 +508,31 @@ func (s *Service) downloadContent(ctx context.Context, p Principal, id string, d
 		return e
 	}
 	// The handle gate above prevents inheriting another handle's publication.
-	return s.download(ctx, p, object, &contentWriter{check: check, dst: dst}, review)
+	cw := &contentWriter{check: check, beforeWrite: beforeWrite, dst: dst}
+	return s.download(ctx, p, object, cw.setSize, cw, review)
 }
 
 type contentWriter struct {
-	check   func() error
-	dst     io.Writer
-	checked bool
+	check       func() error
+	beforeWrite func(int64)
+	size        int64
+	sizeSet     bool
+	dst         io.Writer
+	checked     bool
+}
+
+func (w *contentWriter) setSize(size int64) {
+	w.size = size
+	w.sizeSet = true
 }
 
 func (w *contentWriter) Write(b []byte) (int, error) {
 	if !w.checked {
 		if e := w.check(); e != nil {
 			return 0, e
+		}
+		if w.beforeWrite != nil && w.sizeSet {
+			w.beforeWrite(w.size)
 		}
 		w.checked = true
 	}

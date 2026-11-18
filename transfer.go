@@ -6,8 +6,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 )
+
+func streamErr(err error) error {
+	var maxBytes *http.MaxBytesError
+	if errors.As(err, &maxBytes) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return ErrUnavailable
+}
 
 type boundedWriter struct {
 	w         io.Writer
@@ -30,13 +39,15 @@ func verifyFile(ctx context.Context, f *stagedFile, o Object) error {
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(&pacedReader{ctx: ctx, src: f}, o.Size+1))
 	if err != nil {
-		return ErrUnavailable
+		return streamErr(err)
 	}
 	if n != o.Size || hex.EncodeToString(h.Sum(nil)) != o.SHA256 {
 		return ErrIntegrity
 	}
-	_, err = f.Seek(0, io.SeekStart)
-	return err
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 // Ingest hashes bounded local staging before any provider write. The staging
@@ -74,7 +85,7 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 	}
 	defer removeTemporary(f)
 	if _, err = io.Copy(f, io.LimitReader(&pacedReader{ctx: ctx, src: src, global: s.bandwidth}, o.Size+1)); err != nil {
-		return Status{}, ErrUnavailable
+		return Status{}, streamErr(err)
 	}
 	if err = verifyFile(ctx, f, o); err != nil {
 		return Status{}, err
@@ -122,7 +133,7 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 		return Status{}, err
 	}
 	if already {
-		return s.Status(ctx, p, id)
+		return s.statusWithAction(ctx, p, id, "storage.objects.upload")
 	}
 	workCtx, cancel := context.WithTimeout(ctx, s.cfg.Lease)
 	defer cancel()
@@ -133,23 +144,29 @@ func (s *Service) Ingest(ctx context.Context, p Principal, id, key string, src i
 		_ = s.failJob(cleanupCtx, job, err)
 		return Status{}, err
 	}
-	return s.Status(ctx, p, id)
+	return s.statusWithAction(ctx, p, id, "storage.objects.upload")
 }
 
 // Download buffers within the configured size/concurrency budget so corrupted
 // or replaced remote content cannot partially escape before checksum validation.
 func (s *Service) Download(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, false)
+	return s.download(ctx, p, id, nil, dst, false)
+}
+
+// DownloadWithSize invokes beforeWrite with the verified byte size after staging
+// validation and authorization recheck, before writing any content bytes.
+func (s *Service) DownloadWithSize(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer) error {
+	return s.download(ctx, p, id, beforeWrite, dst, false)
 }
 
 // ReviewDownload uses a separate permission to inspect an unpublished verified
 // copy. It never changes publication, references, replica policy or protection.
 func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, dst io.Writer) error {
-	return s.download(ctx, p, id, dst, true)
+	return s.download(ctx, p, id, nil, dst, true)
 }
-func (s *Service) download(ctx context.Context, p Principal, id string, dst io.Writer, review bool) error {
+func (s *Service) download(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer, review bool) error {
 	if contentID(id) {
-		return s.downloadContent(ctx, p, id, dst, review)
+		return s.downloadContent(ctx, p, id, beforeWrite, dst, review)
 	}
 	action := "storage.objects.download"
 	if review {
@@ -199,6 +216,9 @@ func (s *Service) download(ctx context.Context, p Principal, id string, dst io.W
 	})
 	if err != nil {
 		return err
+	}
+	if beforeWrite != nil {
+		beforeWrite(o.Size)
 	}
 	_, err = io.Copy(&pacedWriter{ctx: ctx, dst: dst, global: s.bandwidth}, f)
 	return err

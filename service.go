@@ -426,12 +426,15 @@ func (s *Service) status(tx Transaction, o Object) (Status, error) {
 	return Status{o.ID, o.Size, o.SHA256, o.Protection, o.Policy, o.Revision, state, o.Published, count, o.Policy.Target}, nil
 }
 func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, error) {
+	return s.statusWithAction(ctx, p, id, "storage.objects.read")
+}
+func (s *Service) statusWithAction(ctx context.Context, p Principal, id, action string) (Status, error) {
 	if contentID(id) {
-		return s.contentStatus(ctx, p, id)
+		return s.contentStatusAction(ctx, p, id, action)
 	}
 	var out Status
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		o, err := s.objectGuard(ctx, tx, p, "storage.objects.read", id)
+		o, err := s.objectGuard(ctx, tx, p, action, id)
 		if err != nil {
 			return err
 		}

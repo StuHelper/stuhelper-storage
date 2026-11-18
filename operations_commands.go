@@ -161,6 +161,9 @@ func (s *Service) RetryJob(ctx context.Context, p Principal, objectID, jobID, ke
 			if !i.Allows(object.Protection, s.now()) {
 				return nil, ErrDenied
 			}
+			if (j.Kind == "ingest" || j.Kind == "replicate") && i.ContributionControl != nil && (i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(s.now())) {
+				return nil, ErrDenied
+			}
 		default:
 			return nil, ErrInput
 		}
