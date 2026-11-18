@@ -268,6 +268,11 @@ func TestCustodyRecoveryAndRenewalPreserveExistingInstance(t *testing.T) {
 	next.CredentialRevision = old.CredentialRevision
 	next.ExpiresAt = old.ExpiresAt
 	next.Revision = old.Revision
+	if next.QuotaRevision != old.QuotaRevision+1 || next.QuotaExpiresAt.Before(old.QuotaExpiresAt) {
+		t.Fatalf("renewal did not record the new sample: quota revision %d -> %d", old.QuotaRevision, next.QuotaRevision)
+	}
+	next.QuotaRevision = old.QuotaRevision
+	next.QuotaExpiresAt = old.QuotaExpiresAt
 	if !reflect.DeepEqual(old, next) {
 		t.Fatal("renewal modified contribution, admissions, root or quota")
 	}
@@ -446,5 +451,148 @@ func TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota(t *testin
 	})
 	if err != nil || !renewed.QuotaExpiresAt.After(h.clock.Now()) {
 		t.Fatalf("ReauthorizeInstance left expired quota sample stale: %+v err=%v", renewed, err)
+	}
+}
+
+func TestFailedCustodyRequestsReleaseOperationBudget(t *testing.T) {
+	h, s, provider, _, user, q := custodyFixture(t)
+	provider.failPrepare.Store(true)
+	v, err := s.Submit(h.ctx, user, "", "90000000-0000-4000-8000-000000000001", q)
+	if err != nil || v.State != "credentials_required" {
+		t.Fatal(v, err)
+	}
+	repo := &postgres.CustodyRepository{Repository: h.repo}
+	err = repo.Transaction(h.ctx, func(tx custody.Tx) error {
+		count, err := tx.OperationCount()
+		if err == nil && count != 0 {
+			t.Errorf("terminal requests charged to operation budget: %d", count)
+		}
+		if err != nil {
+			return err
+		}
+		op, err := tx.Operation(v.RequestID)
+		if err == nil && op.Attempts != 1 {
+			t.Errorf("lost login budget evidence: %d", op.Attempts)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCustodyRecoveryReacquiresReleasedSlot(t *testing.T) {
+	h, s, provider, _, user, q := custodyFixture(t)
+	h.provider.verificationClock = h.clock.Now
+	provider.failPrepare.Store(true)
+	v, err := s.Submit(h.ctx, user, "", "91000000-0000-4000-8000-000000000000", q)
+	if err != nil || v.State != "credentials_required" {
+		t.Fatal(v, err)
+	}
+	provider.failPrepare.Store(false)
+	h.clock.Add(6 * time.Minute)
+	for n := 1; n <= 5; n++ {
+		result, err := s.Submit(h.ctx, user, "", fmt.Sprintf("91000000-0000-4000-8000-%012d", n), q)
+		if err != nil || result.State != "ready" {
+			t.Fatal(result, err)
+		}
+	}
+	h.clock.Add(6 * time.Minute)
+	if _, err = s.Resume(h.ctx, user, v.ID, custody.ResumeRequest{RequestID: v.RequestID, Revision: v.Revision}, false); !errors.Is(err, storage.ErrCapacity) {
+		t.Errorf("resume with all slots occupied: %v", err)
+	}
+	q.Revision = v.Revision
+	if _, err = s.Submit(h.ctx, user, v.ID, "91000000-0000-4000-8000-000000000006", q); !errors.Is(err, storage.ErrCapacity) {
+		t.Errorf("replacement with all slots occupied: %v", err)
+	}
+	var count int
+	if err = h.db.QueryRow("SELECT count(*) FROM storage.instances").Scan(&count); err != nil || count != 5 || provider.creates.Load() != 5 {
+		t.Fatalf("registered %d, created roots %d, err %v", count, provider.creates.Load(), err)
+	}
+}
+
+func TestCustodyInterruptedLastAttemptAllowsNewRevision(t *testing.T) {
+	h, s, provider, _, user, q := custodyFixture(t)
+	provider.failPrepare.Store(true)
+	v, err := s.Submit(h.ctx, user, "", "92000000-0000-4000-8000-000000000001", q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &postgres.CustodyRepository{Repository: h.repo}
+	err = repo.Transaction(h.ctx, func(tx custody.Tx) error {
+		b, err := tx.Binding(v.ID)
+		if err != nil {
+			return err
+		}
+		op, err := tx.Operation(v.RequestID)
+		if err != nil {
+			return err
+		}
+		b.State = "pending"
+		op.Attempts = 5
+		op.LeaseUntil = h.clock.Now().Add(time.Minute)
+		if err := tx.SaveOperation(op); err != nil {
+			return err
+		}
+		return tx.SaveBinding(b)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Revision = v.Revision
+	key := "92000000-0000-4000-8000-000000000002"
+	if _, err = s.Submit(h.ctx, user, v.ID, key, q); !errors.Is(err, storage.ErrConflict) {
+		t.Fatal(err)
+	}
+	h.clock.Add(6 * time.Minute)
+	provider.failPrepare.Store(false)
+	h.provider.verificationClock = h.clock.Now
+	next, err := s.Submit(h.ctx, user, v.ID, key, q)
+	if err != nil || next.State != "ready" || next.Revision != v.Revision+1 || provider.creates.Load() != 1 {
+		t.Fatal(next, err)
+	}
+}
+
+type updatingVerifier struct {
+	storage.Verifier
+	after func()
+}
+
+func (v updatingVerifier) Verify(ctx context.Context, i storage.Instance) (storage.InstanceEvidence, error) {
+	sample, err := v.Verifier.Verify(ctx, i)
+	if err == nil {
+		v.after()
+	}
+	return sample, err
+}
+
+func TestInstanceUpdatePreservesNewerQuotaSample(t *testing.T) {
+	h := harnessFor(t)
+	i := h.instance(t, "sampling", "platform", "platform", 4096)
+	verifier := updatingVerifier{h.provider, func() {
+		err := h.repo.Transaction(h.ctx, func(tx storage.Transaction) error {
+			current, err := tx.Instance(i.ID)
+			if err != nil {
+				return err
+			}
+			current.QuotaRevision++
+			current.ProviderFree = 42
+			return tx.SaveInstance(current)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}}
+	cfg := h.cfg
+	cfg.TemporaryDirectory = t.TempDir()
+	s, err := storage.New(h.repo, h.auth, h.provider, verifier, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(h.ctx) })
+	i.Limit = 2048
+	updated, err := s.UpdateInstance(h.ctx, h.actor, "sampling-update", i)
+	if err != nil || updated.ProviderFree != 42 || updated.QuotaRevision != i.QuotaRevision+1 || updated.Limit != 2048 {
+		t.Fatalf("quota=%d revision=%d error=%v", updated.ProviderFree, updated.QuotaRevision, err)
 	}
 }

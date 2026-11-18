@@ -114,12 +114,16 @@
     ],
     "STORAGE-28": [
       "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance",
-      "custody_test.go#TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota"
+      "custody_test.go#TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota",
+      "custody_test.go#TestInstanceUpdatePreservesNewerQuotaSample"
     ],
     "STORAGE-29": [
       "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination",
       "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart",
-      "custody_test.go#TestCustodyBlockedRecoveryReauthorizeReplayQuotaAndSlidingBudget"
+      "custody_test.go#TestCustodyBlockedRecoveryReauthorizeReplayQuotaAndSlidingBudget",
+      "custody_test.go#TestFailedCustodyRequestsReleaseOperationBudget",
+      "custody_test.go#TestCustodyRecoveryReacquiresReleasedSlot",
+      "custody_test.go#TestCustodyInterruptedLastAttemptAllowsNewRevision"
     ],
     "STORAGE-30": [
       "scheduling_test.go#TestConfiguredQuotaValidityControlsWritesAndRefresh",

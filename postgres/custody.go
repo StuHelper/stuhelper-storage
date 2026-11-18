@@ -65,7 +65,7 @@ func (t *custodyTx) Count(p storage.Principal) (int, error) {
 }
 func (t *custodyTx) OperationCount() (int, error) {
 	var n int
-	e := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM storage.custody_operations o WHERE NOT COALESCE((o.data->>'Complete')::boolean,false) AND EXISTS(SELECT 1 FROM storage.custody_bindings b WHERE b.id=o.data->>'BindingID' AND b.data->>'request_id'=o.id)`).Scan(&n)
+	e := t.tx.QueryRowContext(t.ctx, `SELECT count(*) FROM storage.custody_operations o WHERE NOT COALESCE((o.data->>'Complete')::boolean,false) AND EXISTS(SELECT 1 FROM storage.custody_bindings b WHERE b.id=o.data->>'BindingID' AND b.data->>'request_id'=o.id AND (b.data->>'state'='pending' OR (b.data->>'state'='blocked' AND o.data->'Result'<>'null'::jsonb)))`).Scan(&n)
 	return n, safe(e)
 }
 

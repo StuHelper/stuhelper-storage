@@ -65,10 +65,8 @@ func (s *Service) ReauthorizeInstance(ctx context.Context, p Principal, key stri
 		current.CredentialRevision = q.CredentialRevision
 		current.ExpiresAt = q.Until
 		current.Authorized = true
-		if verified && current.Reserved == 0 && evidence.ProviderFree >= 0 && !current.QuotaExpiresAt.After(s.now()) {
-			current.ProviderFree = evidence.ProviderFree
-			current.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
-			current.QuotaRevision++
+		if verified {
+			s.applyQuotaEvidence(&current, old, evidence)
 		}
 		current.Revision++
 		if e = tx.SaveInstance(current); e != nil {

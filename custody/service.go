@@ -112,26 +112,8 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 		} else if !errors.Is(e, storage.ErrNotFound) {
 			return e
 		}
-		count, e := tx.OperationCount()
-		if e != nil {
-			return e
-		}
-		if count >= 1000 {
-			return storage.ErrCapacity
-		}
 		var b Binding
 		if target == "" {
-			count, e = tx.Count(storage.Principal{})
-			if e != nil {
-				return e
-			}
-			owned, e := tx.Count(p)
-			if e != nil {
-				return e
-			}
-			if count >= 100 || owned >= 5 {
-				return storage.ErrCapacity
-			}
 			target = key
 			b = Binding{View: View{ID: target, Adapter: q.Adapter}, Owner: p}
 		} else {
@@ -142,24 +124,23 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 			if b.Owner != p {
 				return storage.ErrDenied
 			}
-			if b.Revision != q.Revision || b.State == "pending" {
+			if b.Revision != q.Revision {
 				return storage.ErrConflict
 			}
-			if b.State == "blocked" {
+			if b.State == "blocked" || b.State == "pending" {
 				now := s.cfg.Clock()
 				prevOp, opErr := tx.Operation(b.RequestID)
-				if opErr != nil && !errors.Is(opErr, storage.ErrNotFound) {
+				if opErr != nil {
 					return opErr
 				}
-				if opErr == nil {
-					if prevOp.LeaseUntil.After(now) {
-						return storage.ErrConflict
-					}
-					if !prevOp.Complete && prevOp.Result != nil && prevOp.Attempts < 5 && prevOp.Until.After(now) {
-						return storage.ErrConflict
-					}
+				if prevOp.LeaseUntil.After(now) {
+					return storage.ErrConflict
 				}
-				if b.Instance.ID == "" && (opErr != nil || prevOp.Result == nil) {
+				canResume := !prevOp.Complete && prevOp.Attempts < 5 && prevOp.Until.After(now)
+				if canResume && (b.State == "pending" || prevOp.Result != nil) {
+					return storage.ErrConflict
+				}
+				if b.Instance.ID == "" && prevOp.Result == nil {
 					b.AccountDomain = ""
 				}
 			}
@@ -179,6 +160,9 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 		if e = tx.SaveOperation(o); e != nil {
 			return e
 		}
+		if e := checkCapacity(tx, b.Owner); e != nil {
+			return e
+		}
 		out = b.View
 		return s.event(tx, p, b, "requested")
 	})
@@ -190,6 +174,32 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 	}
 	return s.run(ctx, p, out.ID, ResumeRequest{key, out.Revision}, q.Credential, false)
 }
+
+// Check after recording the pending state inside the registry transaction.
+// Replacing or resuming a failed request must reserve its released slot again.
+func checkCapacity(tx Tx, owner storage.Principal) error {
+	for _, scope := range []struct {
+		principal storage.Principal
+		limit     int
+	}{{owner, 5}, {storage.Principal{}, 100}} {
+		count, err := tx.Count(scope.principal)
+		if err != nil {
+			return err
+		}
+		if count > scope.limit {
+			return storage.ErrCapacity
+		}
+	}
+	count, err := tx.OperationCount()
+	if err != nil {
+		return err
+	}
+	if count > 1000 {
+		return storage.ErrCapacity
+	}
+	return nil
+}
+
 func (s *Service) Resume(ctx context.Context, p storage.Principal, target string, q ResumeRequest, admin bool) (View, error) {
 	return s.run(ctx, p, target, q, nil, admin)
 }
@@ -241,6 +251,22 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		}
 		if recent >= 5 {
 			return storage.ErrCapacity
+		}
+		if b.State != "pending" {
+			b.State = "pending"
+			if e := tx.SaveBinding(b); e != nil {
+				return e
+			}
+			if e := checkCapacity(tx, b.Owner); e != nil {
+				return e
+			}
+		}
+		// Old records only have the last attempt time. Preserve their previous
+		// conservative window until those attempts have aged out.
+		if len(op.AttemptTimes) == 0 && op.Attempts > 0 {
+			for range op.Attempts {
+				op.AttemptTimes = append(op.AttemptTimes, op.AttemptedAt.UTC())
+			}
 		}
 		op.AttemptedAt = now
 		op.AttemptTimes = append(op.AttemptTimes, now.UTC())

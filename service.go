@@ -277,6 +277,18 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 	return result, err
 }
 
+// The provider call runs outside the transaction. A concurrent sample or
+// transfer owns newer ledger evidence even if no reservation remains at commit.
+func (s *Service) applyQuotaEvidence(current *Instance, before Instance, sample InstanceEvidence) {
+	if sample.ProviderFree < 0 || before.Reserved != 0 || current.Reserved != 0 ||
+		current.QuotaRevision != before.QuotaRevision || current.Used != before.Used {
+		return
+	}
+	current.ProviderFree = sample.ProviderFree
+	current.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
+	current.QuotaRevision++
+}
+
 func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
 	if !validID(v.ID) || v.Revision < 1 {
@@ -292,9 +304,20 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 	// Every renewal or credential change is revalidated with the provider. A
 	// caller cannot extend authorization by changing only a timestamp.
 	var evidence InstanceEvidence
+	var before Instance
 	verified := false
 	if v.Authorized && v.State != "revoked" {
-		var err error
+		err := s.repo.Transaction(ctx, func(tx Transaction) error {
+			var err error
+			before, err = tx.Instance(v.ID)
+			return err
+		})
+		if err != nil {
+			return result, err
+		}
+		if before.Revision != v.Revision {
+			return result, ErrConflict
+		}
 		evidence, err = s.verifier.Verify(ctx, v)
 		if err != nil {
 			return result, err
@@ -325,10 +348,8 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 		v.Used = old.Used
 		v.Reserved = old.Reserved
 		v.QuotaExpiresAt = old.QuotaExpiresAt
-		if verified && old.Reserved == 0 && evidence.ProviderFree >= 0 {
-			v.ProviderFree = evidence.ProviderFree
-			v.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
-			v.QuotaRevision = old.QuotaRevision + 1
+		if verified {
+			s.applyQuotaEvidence(&v, before, evidence)
 		}
 		v.Revision++
 		if v.Limit < v.Used+v.Reserved && v.State == "active" {
