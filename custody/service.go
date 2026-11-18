@@ -142,8 +142,26 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 			if b.Owner != p {
 				return storage.ErrDenied
 			}
-			if b.Revision != q.Revision || b.State == "pending" || b.State == "blocked" {
+			if b.Revision != q.Revision || b.State == "pending" {
 				return storage.ErrConflict
+			}
+			if b.State == "blocked" {
+				now := s.cfg.Clock()
+				prevOp, opErr := tx.Operation(b.RequestID)
+				if opErr != nil && !errors.Is(opErr, storage.ErrNotFound) {
+					return opErr
+				}
+				if opErr == nil {
+					if prevOp.LeaseUntil.After(now) {
+						return storage.ErrConflict
+					}
+					if !prevOp.Complete && prevOp.Result != nil && prevOp.Attempts < 5 && prevOp.Until.After(now) {
+						return storage.ErrConflict
+					}
+				}
+				if b.Instance.ID == "" && (opErr != nil || prevOp.Result == nil) {
+					b.AccountDomain = ""
+				}
 			}
 		}
 		b.Revision++
@@ -216,16 +234,18 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		if op.Attempts >= 5 {
 			return storage.ErrCapacity
 		}
-		recent, e := tx.RecentAttempts(op.Owner, s.cfg.Clock().Add(-5*time.Minute))
+		now := s.cfg.Clock()
+		recent, e := tx.RecentAttempts(op.Owner, now.Add(-5*time.Minute))
 		if e != nil {
 			return e
 		}
 		if recent >= 5 {
 			return storage.ErrCapacity
 		}
-		op.AttemptedAt = s.cfg.Clock()
+		op.AttemptedAt = now
+		op.AttemptTimes = append(op.AttemptTimes, now.UTC())
 		op.Attempts++
-		op.LeaseUntil = s.cfg.Clock().Add(2 * time.Minute)
+		op.LeaseUntil = now.Add(2 * time.Minute)
 		return tx.SaveOperation(op)
 	})
 	if e != nil || op.Complete {
@@ -382,6 +402,11 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			b.Instance = applied
 		} else if op.Result == nil && (errors.Is(resultErr, storage.ErrDenied) || errors.Is(resultErr, storage.ErrNotFound)) {
 			b.State = "credentials_required"
+			if b.Instance.ID == "" {
+				b.AccountDomain = ""
+			}
+		} else if b.Instance.ID == "" && op.Result == nil && (!errors.Is(resultErr, storage.ErrUnknown) || op.Attempts >= 5 || !op.Until.After(s.cfg.Clock())) {
+			b.AccountDomain = ""
 		}
 		if err = tx.SaveOperation(op); err != nil {
 			return err

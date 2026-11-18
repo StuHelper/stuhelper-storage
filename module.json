@@ -113,11 +113,13 @@
       "custody_test.go#TestCustodyHTTPBoundaryAndSecretFreeResponses"
     ],
     "STORAGE-28": [
-      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance"
+      "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance",
+      "custody_test.go#TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota"
     ],
     "STORAGE-29": [
       "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination",
-      "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart"
+      "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart",
+      "custody_test.go#TestCustodyBlockedRecoveryReauthorizeReplayQuotaAndSlidingBudget"
     ],
     "STORAGE-30": [
       "scheduling_test.go#TestConfiguredQuotaValidityControlsWritesAndRefresh",
