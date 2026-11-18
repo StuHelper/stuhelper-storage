@@ -733,3 +733,36 @@ func TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission(t *
 		t.Fatal("revoked review read", e)
 	}
 }
+
+func TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion(t *testing.T) {
+	h := harnessFor(t)
+	h.instance(t, "contrib-only", "owner-1", "contributor", 1024)
+	data := []byte("public-then-restricted")
+
+	// Case 1: explicit Delete on object whose sole historical replica is already "deleted".
+	o1 := h.object(t, "obj-del-history", data)
+	h.ingest(t, o1.ID, data)
+	moved, err := h.s.ChangeProtection(h.ctx, h.actor, o1.ID, "restrict-1", o1.Revision, storage.Protection{Class: "internal", Scope: "school-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.run(t) // cleans up old incompatible replica -> r.State == "deleted"
+	deleted, err := h.s.Delete(h.ctx, h.actor, o1.ID, "delete-1", moved.Revision)
+	if err != nil || deleted.State != "deleted" {
+		t.Fatalf("object with only deleted replicas stuck in %q (err=%v)", deleted.State, err)
+	}
+
+	// Case 2: 24-hour unreferenced expiry in Reconcile on object whose sole historical replica is "deleted".
+	o2 := h.object(t, "obj-exp-history", data)
+	h.ingest(t, o2.ID, data)
+	if _, err = h.s.ChangeProtection(h.ctx, h.actor, o2.ID, "restrict-2", o2.Revision, storage.Protection{Class: "internal", Scope: "school-a"}); err != nil {
+		t.Fatal(err)
+	}
+	h.run(t)
+	h.clock.Add(25 * time.Hour)
+	h.reconcile(t)
+	expired, err := h.s.Status(h.ctx, h.actor, o2.ID)
+	if err != nil || expired.State != "deleted" {
+		t.Fatalf("expired object with only deleted replicas stuck in %q (err=%v)", expired.State, err)
+	}
+}
