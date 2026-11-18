@@ -18,6 +18,12 @@ type Backend interface {
 	Instances(context.Context, storage.Principal, int, string) ([]storage.Instance, error)
 	RefreshInstance(context.Context, storage.Principal, string) error
 }
+
+// BudgetedBackend optionally exposes storage budget settings so Executor.New
+// can reject maintenance schedules that would let instance quota samples expire.
+type BudgetedBackend interface {
+	BudgetSummary() storage.BudgetSummary
+}
 type Config struct {
 	Clock                                                 func() time.Time
 	ID                                                    string
@@ -59,6 +65,18 @@ func New(b Backend, cfg Config) (*Executor, error) {
 	for _, c := range cfg.ID {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
 			return nil, storage.ErrInput
+		}
+	}
+	if budgeted, ok := b.(BudgetedBackend); ok {
+		summary := budgeted.BudgetSummary()
+		if summary.QuotaValidity > 0 {
+			if cfg.QuotaRefreshAhead >= summary.QuotaValidity {
+				return nil, fmt.Errorf("%w: quota_refresh_ahead %s must be shorter than quota_validity %s", storage.ErrInput, cfg.QuotaRefreshAhead, summary.QuotaValidity)
+			}
+			window := summary.QuotaValidity - cfg.QuotaRefreshAhead
+			if cfg.MaintenanceInterval > window {
+				return nil, fmt.Errorf("%w: maintenance_interval %s exceeds quota refresh window %s", storage.ErrInput, cfg.MaintenanceInterval, window)
+			}
 		}
 	}
 	clock := cfg.Clock

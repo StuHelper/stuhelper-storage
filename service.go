@@ -46,6 +46,41 @@ type Service struct {
 	bandwidth *pacer
 }
 
+type BudgetSummary struct {
+	MaxObjectSize         int64
+	Lease                 time.Duration
+	QuotaValidity         time.Duration
+	VerificationAge       time.Duration
+	ParallelTransfers     int
+	BytesPerSecond        int64
+	AccountBytesPerSecond int64
+}
+
+func (s *Service) BudgetSummary() BudgetSummary {
+	return BudgetSummary{
+		MaxObjectSize:         s.cfg.MaxObjectSize,
+		Lease:                 s.cfg.Lease,
+		QuotaValidity:         s.cfg.QuotaValidity,
+		VerificationAge:       s.cfg.VerificationAge,
+		ParallelTransfers:     s.cfg.ParallelTransfers,
+		BytesPerSecond:        s.cfg.BytesPerSecond,
+		AccountBytesPerSecond: s.cfg.AccountBytesPerSecond,
+	}
+}
+
+func minTransferLease(maxObjectSize, effectiveRate int64) time.Duration {
+	totalBytes := uint64(maxObjectSize) * 2
+	rate := uint64(effectiveRate)
+	wholeSeconds := totalBytes / rate
+	remBytes := totalBytes % rate
+	const maxLeaseSeconds = uint64(30*60 + 1)
+	if wholeSeconds > maxLeaseSeconds {
+		return 31 * time.Minute
+	}
+	nanos := wholeSeconds*uint64(time.Second) + (remBytes*uint64(time.Second)+rate-1)/rate
+	return time.Duration(nanos)
+}
+
 func New(repo Repository, auth Authorizer, resolver Resolver, verifier Verifier, cfg Config) (*Service, error) {
 	if cfg.QuotaValidity == 0 {
 		cfg.QuotaValidity = 5 * time.Minute
@@ -73,6 +108,10 @@ func New(repo Repository, auth Authorizer, resolver Resolver, verifier Verifier,
 	}
 	if cfg.TemporaryBytes < 2*(cfg.MaxObjectSize+1) || cfg.MaxOutstandingJobs < 1 || cfg.MaxOutstandingJobs > 100000 || cfg.AccountTransfers < 1 || cfg.AccountTransfers > cfg.ParallelTransfers || cfg.BytesPerSecond < 1 || cfg.AccountBytesPerSecond < 1 {
 		return nil, ErrInput
+	}
+	effectiveRate := min(cfg.BytesPerSecond, cfg.AccountBytesPerSecond)
+	if requiredLease := minTransferLease(cfg.MaxObjectSize, effectiveRate); cfg.Lease < requiredLease {
+		return nil, fmt.Errorf("%w: lease %s is shorter than minimum transfer duration %s", ErrInput, cfg.Lease, requiredLease)
 	}
 	staging, err := openStaging(cfg.TemporaryDirectory, cfg.TemporaryBytes)
 	if err != nil {
