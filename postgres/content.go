@@ -23,7 +23,7 @@ func (t *transaction) SaveContentHandle(h storage.ContentHandle) error {
 func (t *transaction) ContentGroupHeld(id string) (bool, error) {
 	var held bool
 	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.content_handles WHERE group_id=$1 AND active) OR EXISTS(SELECT 1 FROM storage.content_handles WHERE source_group_id=$1 AND active) OR EXISTS(SELECT 1 FROM storage.content_handles WHERE pending_group_id=$1 AND active)`, id).Scan(&held)
-	return held, safe(err)
+	return held, t.safe("content_group_held", err)
 }
 func (t *transaction) ContentCleanup(limit int, after string) ([]storage.ContentGroup, error) {
 	return list[storage.ContentGroup](t, `SELECT data FROM storage.content_groups WHERE NOT active AND data->>'state'='deleting' AND id>$1 ORDER BY data->>'cleanup_checked_at',id LIMIT $2`, after, limit)

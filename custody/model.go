@@ -71,6 +71,8 @@ type Operation struct {
 	ExpectedRevision int64
 	Attempts         int
 	AttemptedAt      time.Time
+	CompletedAt      time.Time
+	AttemptTimes     []time.Time
 	LeaseUntil       time.Time
 	Result           *storage.Instance
 	Complete         bool
@@ -78,13 +80,20 @@ type Operation struct {
 type Tx interface {
 	Binding(string) (Binding, error)
 	SaveBinding(Binding) error
+	DeleteBinding(string, storage.Principal, time.Time) error
 	Operation(string) (Operation, error)
 	SaveOperation(Operation) error
 	List(storage.Principal, int, string) ([]Binding, error)
 	Count(storage.Principal) (int, error)
 	RecentAttempts(storage.Principal, time.Time) (int, error)
+	OldestRecentAttempt(storage.Principal, time.Time) (time.Time, error)
 	OperationCount() (int, error)
+	Idempotency(string) (storage.Idempotency, error)
+	SaveIdempotency(storage.Idempotency) error
 	Event(storage.Event) error
+}
+type InstancePurger interface {
+	PurgeRevokedCustodyInstance(context.Context, storage.Principal, string, string, string) error
 }
 type Repository interface {
 	Transaction(context.Context, func(Tx) error) error
@@ -108,6 +117,7 @@ type Config struct {
 	PublicScopes []string
 	Clock        func() time.Time
 	Timeout      time.Duration
+	Observer     storage.Observer
 }
 type Service struct {
 	repo     Repository

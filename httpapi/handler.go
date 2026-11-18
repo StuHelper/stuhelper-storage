@@ -44,7 +44,7 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 		}
 		return s.ListContributionCandidates(r.Context(), p, r.URL.Query().Get("owner_domain"), n, r.URL.Query().Get("after"))
 	})
-	h.mount(mux, "GET /api/v1/storage/contributions/summary", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	h.mount(mux, "GET /api/v1/storage/contributions/community/summary", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 		return h.s.SummarizeContributions(r.Context(), p)
 	})
 	h.mount(mux, "GET /api/v1/storage/contributions/{id}", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
@@ -63,6 +63,7 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	})
 	h.mount(mux, "POST /api/v1/storage/operations/instances/{id}/commands", false, h.commandInstance)
 	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry", false, h.retryJob)
+	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff", false, h.writeOffReplica)
 	h.mount(mux, "GET /api/v1/storage/instances", false, h.instances)
 	h.mount(mux, "POST /api/v1/storage/instances", false, h.register)
 	h.mount(mux, "PUT /api/v1/storage/instances/{id}", false, h.update)
@@ -73,6 +74,7 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h.mount(mux, "DELETE /api/v1/storage/objects/{id}", false, h.remove)
 	h.mount(mux, "PUT /api/v1/storage/objects/{id}/content", true, h.upload)
 	h.mount(mux, "GET /api/v1/storage/objects/{id}/content", false, h.download)
+	h.mount(mux, "GET /api/v1/storage/objects/{id}/review-content", false, h.reviewDownload)
 	h.mount(mux, "POST /api/v1/storage/objects/{id}/references", false, h.reference)
 	h.mount(mux, "DELETE /api/v1/storage/objects/{id}/references", false, h.reference)
 	h.mount(mux, "PUT /api/v1/storage/objects/{id}/protection", false, h.protection)
@@ -97,6 +99,17 @@ func (h *handler) retryJob(_ http.ResponseWriter, r *http.Request, p storage.Pri
 	}
 	return h.s.RetryJob(r.Context(), p, r.PathValue("object_id"), r.PathValue("job_id"), r.Header.Get("Idempotency-Key"), input.Generation)
 }
+func (h *handler) writeOffReplica(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	input, err := decode[sdk.ReplicaWriteOff](r)
+	if err != nil {
+		return nil, err
+	}
+	req, err := convert[sdk.ReplicaWriteOff, storage.ReplicaWriteOff](input)
+	if err != nil {
+		return nil, err
+	}
+	return h.s.WriteOffUnknownReplica(r.Context(), p, r.PathValue("object_id"), r.PathValue("replica_id"), r.Header.Get("Idempotency-Key"), req)
+}
 func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	limit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -106,27 +119,37 @@ func (h *handler) operations(_ http.ResponseWriter, r *http.Request, p storage.P
 			return nil, storage.ErrInput
 		}
 	}
-	return h.s.Operations(r.Context(), p, limit, r.URL.Query().Get("after"), r.URL.Query().Get("failures_after"))
+	q := r.URL.Query()
+	return h.s.QueryOperations(r.Context(), p, storage.OperationsQuery{
+		Limit:         limit,
+		After:         q.Get("after"),
+		FailuresAfter: q.Get("failures_after"),
+		ObjectFilter:  q.Get("object_filter"),
+		FailureState:  q.Get("failure_state"),
+		FailureKind:   q.Get("failure_kind"),
+		ErrorCode:     q.Get("error_code"),
+	})
 }
-func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoint) {
+
+type routeOptions struct {
+	auth            Authenticator
+	public          bool
+	timeout         time.Duration
+	maxBodyBytes    int64
+	unavailableCode string
+
+	successStatus func(*http.Request) int
+}
+
+func mountEndpoint(mux *http.ServeMux, path string, opts routeOptions, run endpoint) {
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if h.auth == nil {
-			problem(w, 503, "identity_unavailable")
-			return
-		}
-		p, err := h.auth.Authenticate(r)
-		if err != nil || !p.Valid() {
-			if errors.Is(err, storage.ErrUnavailable) {
-				problem(w, 503, "identity_unavailable")
-			} else {
-				problem(w, 401, "authentication_required")
-			}
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(r.Context(), opts.timeout)
 		defer cancel()
+		if tp := r.Header.Get("Traceparent"); tp != "" {
+			ctx = storage.WithTraceParent(ctx, tp)
+		}
 		controller := http.NewResponseController(w)
 		deadline, _ := ctx.Deadline()
 		_ = controller.SetReadDeadline(deadline)
@@ -137,20 +160,54 @@ func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoi
 		})
 		defer stopIO()
 		r = r.WithContext(ctx)
-		limit := int64(1 << 20)
-		if upload {
-			limit = h.limit
+		r.Body = http.MaxBytesReader(w, r.Body, opts.maxBodyBytes)
+		var p storage.Principal
+		if !opts.public {
+			if opts.auth == nil {
+				problem(w, 503, opts.unavailableCode)
+				return
+			}
+			var err error
+			p, err = opts.auth.Authenticate(r)
+			if err != nil || !p.Valid() {
+				if errors.Is(err, storage.ErrUnavailable) {
+					problem(w, 503, opts.unavailableCode)
+				} else {
+					problem(w, 401, "authentication_required")
+				}
+				return
+			}
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		if len(r.Header.Values("Idempotency-Key")) > 1 {
+			respondError(w, storage.ErrInput)
+			return
+		}
 		out, err := run(w, r, p)
 		if err != nil {
 			respondError(w, err)
 			return
 		}
 		if out != nil {
-			writeJSON(w, 200, out)
+			status := 200
+			if opts.successStatus != nil {
+				status = opts.successStatus(r)
+			}
+			writeJSON(w, status, out)
 		}
 	})
+}
+
+func (h *handler) mount(mux *http.ServeMux, path string, upload bool, run endpoint) {
+	limit := int64(1 << 20)
+	if upload {
+		limit = h.limit
+	}
+	mountEndpoint(mux, path, routeOptions{
+		auth:            h.auth,
+		timeout:         5 * time.Minute,
+		maxBodyBytes:    limit,
+		unavailableCode: "identity_unavailable",
+	}, run)
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Del("Content-Length")
@@ -167,7 +224,7 @@ func respondError(w http.ResponseWriter, err error) {
 	for _, entry := range []struct {
 		err    error
 		status int
-	}{{storage.ErrInput, 400}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404}, {storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
+	}{{storage.ErrInput, 400}, {storage.ErrChallenge, 403}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404}, {storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
 		if errors.Is(err, entry.err) {
 			status, code = entry.status, entry.err.Error()
 			break
@@ -176,6 +233,13 @@ func respondError(w http.ResponseWriter, err error) {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
 		status, code = 413, "storage_upload_too_large"
+	}
+	var retryAfter storage.RetryAfterError
+	if errors.As(err, &retryAfter) && retryAfter.RetryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter.RetryAfterSeconds))
+		w.Header().Del("Content-Disposition")
+		writeJSON(w, status, map[string]any{"code": code, "retry_after_seconds": retryAfter.RetryAfterSeconds})
+		return
 	}
 	problem(w, status, code)
 }
@@ -289,20 +353,35 @@ type trackingWriter struct {
 	started bool
 }
 
+func (w *trackingWriter) WriteHeader(statusCode int) {
+	w.started = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
 func (w *trackingWriter) Write(b []byte) (int, error) {
 	w.started = true
 	return w.ResponseWriter.Write(b)
 }
 func (h *handler) download(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
-	status, err := h.s.Status(r.Context(), p, r.PathValue("id"))
-	if err != nil {
-		return nil, err
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(status.Size, 10))
-	w.Header().Set("Content-Disposition", "attachment")
 	writer := &trackingWriter{ResponseWriter: w}
-	err = h.s.Download(r.Context(), p, status.ID, writer)
+	err := h.s.OpenDownload(r.Context(), p, r.PathValue("id"), func(content storage.VerifiedContent) error {
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Content-Disposition", "attachment")
+		writer.Header().Set("ETag", `"`+content.SHA256+`"`)
+		http.ServeContent(writer, r, "", time.Time{}, content.Body)
+		return nil
+	})
+	if err != nil && writer.started {
+		panic(http.ErrAbortHandler)
+	}
+	return nil, err
+}
+func (h *handler) reviewDownload(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	writer := &trackingWriter{ResponseWriter: w}
+	err := h.s.ReviewDownloadWithSize(r.Context(), p, r.PathValue("id"), func(size int64) {
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		writer.Header().Set("Content-Disposition", "attachment")
+	}, writer)
 	if err != nil && writer.started {
 		panic(http.ErrAbortHandler)
 	}

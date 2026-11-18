@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,8 +98,26 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 		t.Fatal(err)
 	}
 
+	// A legacy unbound contributor can still hold bytes. Its usage must
+	// not be counted as consented community capacity.
+	if err := h.repo.Transaction(h.ctx, func(tx storage.Transaction) error {
+		i, e := tx.Instance(custodyOnly.ID)
+		if e != nil {
+			return e
+		}
+		i.Used = 19
+		i.Reserved = 3
+		return tx.SaveInstance(i)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	unbound, err := svc.SummarizeContributions(h.ctx, viewer)
+	if err != nil || unbound.UsedBytes != 0 || unbound.ReservedBytes != 0 || unbound.RegisteredInstances != 0 {
+		t.Fatal(unbound, err)
+	}
+
 	// Register two consented contributor instances: c1 (active, 2048 B) and c2 (paused, 1024 B).
-	c1 := h.instance(t, "contrib-secret-1", "owner-secret-1", "contributor", 0)
+	c1 := h.instance(t, "summary", "owner-secret-1", "contributor", 0)
 	c1.State = "paused"
 	c1, err = svc.UpdateInstance(h.ctx, h.actor, "prep-c1", c1)
 	if err != nil {
@@ -113,6 +133,18 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 		Until:            h.clock.Now().Add(2 * time.Hour),
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	operatorClient, err := sdk.NewClientWithResponses(server.URL, sdk.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
+		r.Header.Set("Authorization", "Bearer operator")
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := operatorClient.InspectContributionInstanceWithResponse(h.ctx, "summary", &sdk.InspectContributionInstanceParams{OwnerDomain: c1.OwnerDomain})
+	if err != nil || instance.JSON200 == nil || instance.JSON200.InstanceId != "summary" {
+		t.Fatal(instance, err)
 	}
 
 	// Upload 10 bytes onto c1 (pause platform-node first so c1 receives the replica).
@@ -182,5 +214,25 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 	s3 := staleResp.JSON200
 	if s3.Status != sdk.Unavailable || s3.ActiveInstances != 0 || s3.AvailableBytes != 0 || s3.DeclaredBytes != 3072 || s3.UsedBytes != 10 {
 		t.Fatalf("stale quota sample was counted as available: %+v", s3)
+	}
+}
+
+func TestContributionSummaryRejectsUnrepresentableCapacity(t *testing.T) {
+	h := harnessFor(t)
+	for n := 0; n < 8; n++ {
+		id := fmt.Sprintf("large-%d", n)
+		i := h.instance(t, id, id, "contributor", 0)
+		i.State = "paused"
+		i, err := h.s.UpdateInstance(h.ctx, h.actor, "pause-"+id, i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = h.s.ApplyContribution(h.ctx, h.actor, id, storage.ContributionControl{ID: id, OwnerDomain: id, Revision: 1, ExpectedRevision: i.Revision, State: "active", LimitBytes: 1 << 60, Until: h.clock.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, err := h.s.SummarizeContributions(h.ctx, h.actor)
+	if !errors.Is(err, storage.ErrUnavailable) || summary != (storage.ContributionSummary{}) {
+		t.Fatal(summary, err)
 	}
 }

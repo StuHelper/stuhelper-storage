@@ -146,6 +146,15 @@ func removeTemporary(f *stagedFile) {
 		}
 	})
 }
+func (s *staging) stats() (limit, reserved int64, files int) {
+	if s == nil {
+		return 0, 0, 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.limit, s.reserved, len(s.files)
+}
+
 func (s *staging) close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
