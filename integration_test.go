@@ -902,3 +902,127 @@ func TestOutboxUpgradePreservesPendingRevisions(t *testing.T) {
 	}
 
 }
+
+func TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion(t *testing.T) {
+	h := harnessFor(t)
+	h.instance(t, "contrib-only", "owner-1", "contributor", 1024)
+	data := []byte("public-then-restricted")
+
+	// Case 1: explicit Delete on object whose sole historical replica is already "deleted".
+	o1 := h.object(t, "obj-del-history", data)
+	h.ingest(t, o1.ID, data)
+	moved, err := h.s.ChangeProtection(h.ctx, h.actor, o1.ID, "restrict-1", o1.Revision, storage.Protection{Class: "internal", Scope: "school-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.run(t) // cleans up old incompatible replica -> r.State == "deleted"
+	deleted, err := h.s.Delete(h.ctx, h.actor, o1.ID, "delete-1", moved.Revision)
+	if err != nil || deleted.State != "deleted" {
+		t.Fatalf("object with only deleted replicas stuck in %q (err=%v)", deleted.State, err)
+	}
+
+	// Case 2: 24-hour unreferenced expiry in Reconcile on object whose sole historical replica is "deleted".
+	o2 := h.object(t, "obj-exp-history", data)
+	h.ingest(t, o2.ID, data)
+	if _, err = h.s.ChangeProtection(h.ctx, h.actor, o2.ID, "restrict-2", o2.Revision, storage.Protection{Class: "internal", Scope: "school-a"}); err != nil {
+		t.Fatal(err)
+	}
+	h.run(t)
+	h.clock.Add(25 * time.Hour)
+	h.reconcile(t)
+	expired, err := h.s.Status(h.ctx, h.actor, o2.ID)
+	if err != nil || expired.State != "deleted" {
+		t.Fatalf("expired object with only deleted replicas stuck in %q (err=%v)", expired.State, err)
+	}
+}
+
+func TestProtectionAuditUsesCommittedSchool(t *testing.T) {
+	h := harnessFor(t)
+	i := h.instance(t, "audit-race", "platform", "platform", 4096)
+	data := []byte("audit race content")
+	shared := sharedCreate(t, h, "shared-school", sharedRequest(data))
+	h.ingest(t, shared.ID, data)
+	next := storage.Protection{Class: "public", Scope: "school-b", Public: true}
+	if _, err := h.s.ChangeProtection(h.ctx, h.actor, shared.ID, "request-b", shared.Revision, next); !errors.Is(err, storage.ErrCapacity) {
+		t.Fatalf("copy without destination: %v", err)
+	}
+	school := func(target, action string) string {
+		t.Helper()
+		var s string
+		if err := h.db.QueryRow("SELECT audit_school FROM storage.audit WHERE audit_target=$1 AND audit_action=$2", target, action).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	if got := school(shared.ID, "storage.content.protection.requested.v1"); got != "school-a" {
+		t.Errorf("pending move belongs to %s", got)
+	}
+	i.Admissions = append(i.Admissions, storage.Admission{Class: "public", Scope: "school-b", Plaintext: true, ExpiresAt: i.ExpiresAt})
+	// Refresh the instance revision and counters before adding the second school.
+	current, err := h.s.Instances(h.ctx, h.actor, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := current[0]
+	updated.Admissions = i.Admissions
+	if _, err = h.s.UpdateInstance(h.ctx, h.actor, "admit-b", updated); err != nil {
+		t.Fatal(err)
+	}
+	o := h.object(t, "object-school", data)
+	h.ingest(t, o.ID, data)
+	h.provider.mu.Lock()
+	for id := range h.provider.files[i.ID] {
+		h.provider.files[i.ID][id] = []byte("incomplete")
+	}
+	h.provider.mu.Unlock()
+	h.provider.readStarted = make(chan struct{}, 1)
+	wait := make(chan struct{})
+	h.provider.readWait = wait
+	result := make(chan error, 1)
+	go func() { result <- h.s.ReviewDownload(h.ctx, h.actor, o.ID, io.Discard) }()
+	select {
+	case <-h.provider.readStarted:
+	case <-time.After(5 * time.Second):
+		close(wait)
+		t.Fatal("read did not start")
+	}
+	_, err = h.s.ChangeProtection(h.ctx, h.actor, o.ID, "move-before-corruption", o.Revision, next)
+	close(wait)
+	downloadErr := <-result
+	if err != nil || downloadErr == nil {
+		t.Fatalf("move=%v download=%v", err, downloadErr)
+	}
+	if got := school(o.ID, "storage.replica.corrupt.v1"); got != "school-b" {
+		t.Fatalf("committed corruption belongs to %s", got)
+	}
+}
+func TestOutboxDeliveryResumesOlderCommittedAndExcludedEvents(t *testing.T) {
+	h := harnessFor(t)
+	// Allocate an older sequence in an open transaction. The other subject
+	// commits independently and is acknowledged before the first becomes visible.
+	tx, err := h.admin.BeginTx(h.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`INSERT INTO storage.outbox(id,data) VALUES('late','{"id":"late","subject":"object/late"}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.admin.Exec(`INSERT INTO storage.outbox(id,data) VALUES('blocked','{"id":"blocked","subject":"object/blocked"}'),('ready','{"id":"ready","subject":"object/ready"}')`); err != nil {
+		t.Fatal(err)
+	}
+	first, err := h.repo.PendingEventsExcluding(h.ctx, 10, []string{"object/blocked"})
+	if err != nil || len(first) != 1 || first[0].ID != "ready" {
+		t.Fatal(first, err)
+	}
+	if err = h.repo.AcknowledgeEvent(h.ctx, first[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := h.repo.PendingEvents(h.ctx, 10)
+	if err != nil || len(next) != 2 || next[0].ID != "late" || next[1].ID != "blocked" {
+		t.Fatal(next, err)
+	}
+}

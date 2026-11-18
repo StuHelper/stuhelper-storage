@@ -241,6 +241,9 @@ func (s *Service) readSource(ctx context.Context, o Object, excluded string) (*s
 		}
 		f, err := s.readRemote(ctx, o, instance, r.Remote)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			if errors.Is(err, ErrIntegrity) || errors.Is(err, ErrNotFound) {
 				_ = s.markCorrupt(ctx, o, r)
 			}
@@ -292,6 +295,10 @@ func (s *Service) markCorrupt(ctx context.Context, o Object, r Replica) error {
 		if err := tx.Lock("object:" + o.ID); err != nil {
 			return err
 		}
+		object, err := tx.Object(o.ID)
+		if err != nil {
+			return err
+		}
 		replicas, err := tx.Replicas(o.ID)
 		if err != nil {
 			return err
@@ -307,7 +314,7 @@ func (s *Service) markCorrupt(ctx context.Context, o Object, r Replica) error {
 		if err := tx.SaveReplica(current); err != nil {
 			return err
 		}
-		return s.emitScoped(tx, Principal{}, "storage.replica.corrupt", o.ID, o.Revision, "failed", o.Protection.Scope)
+		return s.emitScoped(tx, Principal{}, "storage.replica.corrupt", object.ID, object.Revision, "failed", object.Protection.Scope)
 	})
 }
 
@@ -383,37 +390,39 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 	}
 	// A retry first reconciles the exact persisted intent. It never blindly starts
 	// another remote upload after an ambiguous response or process death.
-	remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
-	if err == nil {
-		f, err := s.readRemote(ctx, o, i, remote)
-		if err != nil {
+	if r.IssuedWrite || r.Remote.ID != "" {
+		remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
+		if err == nil {
+			f, err := s.readRemote(ctx, o, i, remote)
+			if err != nil {
+				return ErrUnknown
+			}
+			removeTemporary(f)
+			return s.complete(ctx, j, remote)
+		}
+		if !errors.Is(err, ErrNotFound) {
 			return ErrUnknown
 		}
-		removeTemporary(f)
-		return s.complete(ctx, j, remote)
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return ErrUnknown
-	}
-	if r.IssuedWrite {
-		return ErrUnknown
+		if r.IssuedWrite {
+			return ErrUnknown
+		}
 	}
 	if src == nil {
 		return ErrNotFound
 	}
-	if err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		_, current, _, _, err := s.jobState(ctx, tx, j, false)
-		if err != nil {
-			return err
-		}
-		if current.IssuedWrite {
-			return ErrUnknown
-		}
-		current.IssuedWrite = true
-		current.State = "writing"
-		return tx.SaveReplica(current)
-	}); err != nil {
-		return err
+	issue := func() error {
+		return s.repo.Transaction(ctx, func(tx Transaction) error {
+			_, current, _, _, err := s.jobState(ctx, tx, j, false)
+			if err != nil {
+				return err
+			}
+			if current.IssuedWrite {
+				return ErrUnknown
+			}
+			current.IssuedWrite = true
+			current.State = "writing"
+			return tx.SaveReplica(current)
+		})
 	}
 	checkpoint := func(remote Locator) error {
 		if remote.ID == "" || len(remote.ID) > 2048 || len(remote.Revision) > 512 {
@@ -429,7 +438,7 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 			return tx.SaveReplica(current)
 		})
 	}
-	remote, err = driver.Write(ctx, i, r.Intent, o.Size, src, checkpoint)
+	remote, err := writeWithFence(ctx, driver, i, r.Intent, o.Size, src, issue, checkpoint)
 	if err != nil {
 		return err
 	}
@@ -443,6 +452,16 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 	removeTemporary(f)
 	return s.complete(ctx, j, remote)
 }
+func writeWithFence(ctx context.Context, driver Driver, i Instance, intent string, size int64, src io.Reader, issue func() error, checkpoint func(Locator) error) (Locator, error) {
+	if writer, ok := driver.(FencedWriter); ok {
+		return writer.WriteWithFence(ctx, i, intent, size, src, issue, checkpoint)
+	}
+	if err := issue(); err != nil {
+		return Locator{}, err
+	}
+	return driver.Write(ctx, i, intent, size, src, checkpoint)
+}
+
 func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 	return s.repo.Transaction(ctx, func(tx Transaction) error {
 		o, r, i, current, err := s.jobState(ctx, tx, j, false)
@@ -555,6 +574,36 @@ func (s *Service) failJob(ctx context.Context, expected Job, cause error) error 
 		if j.Generation != expected.Generation || j.LeaseOwner != expected.LeaseOwner || j.State != "running" {
 			return ErrStale
 		}
+		// An ingest has no durable source to retry. If the provider has not
+		// received an upload, release the reservation so the caller can resubmit.
+		if j.Kind == "ingest" {
+			copies, err := tx.Replicas(j.ObjectID)
+			if err != nil {
+				return err
+			}
+			r, err := findReplica(copies, j.ReplicaID)
+			if err != nil {
+				return err
+			}
+			if r.Intent == j.Intent && r.Reserved && !r.Accounted && !r.IssuedWrite && r.Remote.ID == "" && r.State == "writing" {
+				i, err := tx.Instance(r.InstanceID)
+				if err != nil {
+					return err
+				}
+				i.Reserved -= r.Size
+				r.Reserved = false
+				r.State = "deleted"
+				if err = tx.SaveInstance(i); err != nil {
+					return err
+				}
+				if err = tx.SaveReplica(r); err != nil {
+					return err
+				}
+				j.State = "done"
+				j.ErrorCode = errorCode(cause)
+				return tx.SaveJob(j)
+			}
+		}
 		j.ErrorCode = errorCode(cause)
 		j.State = "pending"
 		j.AvailableAt = s.now().Add(time.Duration(min(j.Attempts, 60)) * 5 * time.Second)
@@ -578,27 +627,29 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 	if err != nil {
 		return err
 	}
-	remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
-	if err == nil {
-		if _, _, _, err = s.snapshotJob(ctx, j, true); err != nil {
+	if r.IssuedWrite || r.Remote.ID != "" {
+		remote, err := driver.Find(ctx, i, r.Intent, r.Remote)
+		if err == nil {
+			if _, _, _, err = s.snapshotJob(ctx, j, true); err != nil {
+				return err
+			}
+			if err = driver.Remove(ctx, i, remote); err != nil {
+				return err
+			}
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if err = driver.Remove(ctx, i, remote); err != nil {
-			return err
-		}
-	}
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	if errors.Is(err, ErrNotFound) && r.IssuedWrite && r.Remote.ID == "" {
-		return ErrUnknown
-	}
-	// Remove's success must mean permanent absence, not a recycle-bin move.
-	if _, checkErr := driver.Find(ctx, i, r.Intent, r.Remote); !errors.Is(checkErr, ErrNotFound) {
-		if checkErr == nil {
+		if errors.Is(err, ErrNotFound) && r.IssuedWrite && r.Remote.ID == "" {
 			return ErrUnknown
 		}
-		return checkErr
+		// Remove's success must mean permanent absence, not a recycle-bin move.
+		if _, checkErr := driver.Find(ctx, i, r.Intent, r.Remote); !errors.Is(checkErr, ErrNotFound) {
+			if checkErr == nil {
+				return ErrUnknown
+			}
+			return checkErr
+		}
 	}
 	return s.repo.Transaction(ctx, func(tx Transaction) error {
 		o, r, i, current, err := s.jobState(ctx, tx, j, true)
