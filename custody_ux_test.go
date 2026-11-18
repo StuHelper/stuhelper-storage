@@ -43,6 +43,7 @@ func (challengeBHClient) Identity(context.Context) (protocol.Identity, error) {
 
 func TestCustodyChallengeCooldownCleanupAndCandidateReasons(t *testing.T) {
 	h := harnessFor(t)
+	h.clock.now = h.clock.now.Truncate(time.Second).Add(999_999_900 * time.Nanosecond)
 	h.provider.verificationClock = h.clock.Now
 	baseProvider := &custodyProvider{h: h}
 	prov := &challengeCustodyProvider{custodyProvider: baseProvider, challenge: true}

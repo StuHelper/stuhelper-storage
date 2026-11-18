@@ -85,13 +85,23 @@ func (t *custodyTx) OperationCount() (int, error) {
 
 func (t *custodyTx) RecentAttempts(p storage.Principal, since time.Time) (int, error) {
 	var n int
-	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(sum((data->>'Attempts')::int),0) FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3`, p.Issuer, p.Subject, since).Scan(&n)
+	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(sum((data->>'Attempts')::int),0) FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3`, p.Issuer, p.Subject, since.UTC().Truncate(time.Microsecond)).Scan(&n)
 	return n, safe(e)
 }
 func (t *custodyTx) OldestRecentAttempt(p storage.Principal, since time.Time) (time.Time, error) {
-	var oldest time.Time
-	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(MIN((data->>'AttemptedAt')::timestamptz), 'epoch'::timestamptz) FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3`, p.Issuer, p.Subject, since).Scan(&oldest)
-	return oldest, safe(e)
+	var raw string
+	e := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE((SELECT data->>'AttemptedAt' FROM storage.custody_operations WHERE data->'Owner'->>'issuer'=$1 AND data->'Owner'->>'subject'=$2 AND (data->>'AttemptedAt')::timestamptz >= $3 ORDER BY (data->>'AttemptedAt')::timestamptz ASC, data->>'AttemptedAt' ASC LIMIT 1), '')`, p.Issuer, p.Subject, since.UTC().Truncate(time.Microsecond)).Scan(&raw)
+	if e != nil {
+		return time.Time{}, safe(e)
+	}
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	parsed, parseErr := time.Parse(time.RFC3339Nano, raw)
+	if parseErr != nil {
+		return time.Time{}, storage.ErrUnavailable
+	}
+	return parsed, nil
 }
 func (t *custodyTx) Idempotency(key string) (storage.Idempotency, error) {
 	return t.transaction.Idempotency(key)
