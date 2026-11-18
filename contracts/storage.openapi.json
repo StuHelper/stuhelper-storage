@@ -990,6 +990,110 @@
         }
       }
     },
+    "/api/v1/storage/objects/{id}/review-content": {
+      "get": {
+        "operationId": "reviewObjectContent",
+        "description": "Authorized moderation/review download requiring storage.objects.review. Serves a verified complete copy even before initial publication threshold, without altering publication or references, and records an audit entry.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified complete content for review; no provider URL",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/storage/objects/{id}/references": {
       "post": {
         "operationId": "attachReference",
@@ -1492,6 +1596,49 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "object_filter",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "problematic"
+              ]
+            }
+          },
+          {
+            "name": "failure_state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "running",
+                "blocked"
+              ]
+            }
+          },
+          {
+            "name": "failure_kind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ingest",
+                "replicate",
+                "verify",
+                "delete"
+              ]
+            }
+          },
+          {
+            "name": "error_code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1837,6 +1984,142 @@
           }
         },
         "description": "Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization."
+      }
+    },
+    "/api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff": {
+      "post": {
+        "operationId": "writeOffUnknownReplica",
+        "description": "Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "object_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "replica_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[ -~]+$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplicaWriteOff"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplicaWriteOffResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/storage/contributions/{id}": {
@@ -3832,6 +4115,44 @@
           }
         }
       },
+      "ObjectTotals": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pending",
+          "ready",
+          "degraded",
+          "unavailable",
+          "deleting"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ready": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "degraded": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unavailable": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deleting": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "JobTotals": {
         "type": "object",
         "additionalProperties": false,
@@ -3878,6 +4199,9 @@
           "object_id": {
             "type": "string"
           },
+          "replica_id": {
+            "type": "string"
+          },
           "kind": {
             "type": "string"
           },
@@ -3910,6 +4234,7 @@
           "generated_at",
           "instances",
           "objects",
+          "object_totals",
           "jobs",
           "failures",
           "next_cursor",
@@ -3932,6 +4257,9 @@
               "$ref": "#/components/schemas/ObjectHealth"
             }
           },
+          "object_totals": {
+            "$ref": "#/components/schemas/ObjectTotals"
+          },
           "jobs": {
             "$ref": "#/components/schemas/JobTotals"
           },
@@ -3946,6 +4274,48 @@
           },
           "failures_next_cursor": {
             "type": "string"
+          }
+        }
+      },
+      "ReplicaWriteOff": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "object_revision",
+          "instance_revision",
+          "reason"
+        ],
+        "properties": {
+          "object_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "instance_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      },
+      "ReplicaWriteOffResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instance",
+          "object"
+        ],
+        "properties": {
+          "instance": {
+            "$ref": "#/components/schemas/InstanceHealth"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ObjectStatus"
           }
         }
       },

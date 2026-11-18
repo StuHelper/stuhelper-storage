@@ -84,6 +84,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/objects/{id}/review-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Authorized moderation/review download requiring storage.objects.review. Serves a verified complete copy even before initial publication threshold, without altering publication or references, and records an audit entry. */
+        get: operations["reviewObjectContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/storage/objects/{id}/references": {
         parameters: {
             query?: never;
@@ -177,6 +194,23 @@ export interface paths {
         put?: never;
         /** @description Requires storage.operations.retry on the job and current object protection. Bounded queue admission and generation fencing. Never changes content access policy or bypasses account authorization. */
         post: operations["retryStorageJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason. */
+        post: operations["writeOffUnknownReplica"];
         delete?: never;
         options?: never;
         head?: never;
@@ -552,6 +586,18 @@ export interface components {
             missing: number;
             reason: string;
         };
+        ObjectTotals: {
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            ready: number;
+            /** Format: int64 */
+            degraded: number;
+            /** Format: int64 */
+            unavailable: number;
+            /** Format: int64 */
+            deleting: number;
+        };
         JobTotals: {
             /** Format: int64 */
             pending: number;
@@ -563,6 +609,7 @@ export interface components {
         JobFailure: {
             id: string;
             object_id: string;
+            replica_id?: string;
             kind: string;
             state: string;
             /** Format: int64 */
@@ -578,10 +625,22 @@ export interface components {
             generated_at: string;
             instances: components["schemas"]["InstanceHealth"][];
             objects: components["schemas"]["ObjectHealth"][];
+            object_totals: components["schemas"]["ObjectTotals"];
             jobs: components["schemas"]["JobTotals"];
             failures: components["schemas"]["JobFailure"][];
             next_cursor: string;
             failures_next_cursor: string;
+        };
+        ReplicaWriteOff: {
+            /** Format: int64 */
+            object_revision: number;
+            /** Format: int64 */
+            instance_revision: number;
+            reason: string;
+        };
+        ReplicaWriteOffResult: {
+            instance: components["schemas"]["InstanceHealth"];
+            object: components["schemas"]["ObjectStatus"];
         };
         /** @description Current instance revision required. limit_bytes is required only for quota. Resume applies only to paused, still-authorized instances; it does not renew authorization. Quota cannot fall below used plus reserved bytes. */
         InstanceCommand: {
@@ -1450,6 +1509,91 @@ export interface operations {
             };
         };
     };
+    reviewObjectContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified complete content for review; no provider URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     attachReference: {
         parameters: {
             query?: never;
@@ -1816,6 +1960,10 @@ export interface operations {
                 after?: string;
                 limit?: number;
                 failures_after?: string;
+                object_filter?: "all" | "problematic";
+                failure_state?: "pending" | "running" | "blocked";
+                failure_kind?: "ingest" | "replicate" | "verify" | "delete";
+                error_code?: string;
             };
             header?: never;
             path?: never;
@@ -2013,6 +2161,98 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobFailure"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    writeOffUnknownReplica: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                object_id: string;
+                replica_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplicaWriteOff"];
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplicaWriteOffResult"];
                 };
             };
             /** @description Stable sanitized error */

@@ -200,6 +200,20 @@ func (s *Service) ReviewDownload(ctx context.Context, p Principal, id string, ds
 	})
 }
 
+// ReviewDownloadWithSize returns the verified byte size after the review audit.
+func (s *Service) ReviewDownloadWithSize(ctx context.Context, p Principal, id string, beforeWrite func(int64), dst io.Writer) error {
+	if dst == nil {
+		return ErrInput
+	}
+	return s.openDownload(ctx, p, id, true, func(content VerifiedContent) error {
+		if beforeWrite != nil {
+			beforeWrite(content.Size)
+		}
+		_, err := io.Copy(dst, content.Body)
+		return err
+	})
+}
+
 func (s *Service) openDownload(ctx context.Context, p Principal, id string, review bool, serve func(VerifiedContent) error) error {
 	if serve == nil {
 		return ErrInput

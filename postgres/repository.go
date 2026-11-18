@@ -247,7 +247,10 @@ func (t *transaction) JobTotals() (storage.JobTotals, error) {
 	return out, t.safe("job_totals", err)
 }
 func (t *transaction) FailedJobs(limit int, after string) ([]storage.Job, error) {
-	return list[storage.Job](t, `SELECT data FROM storage.jobs WHERE id>$1 AND state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'' ORDER BY id LIMIT $2`, after, limit)
+	return t.FailedJobsFiltered(limit, after, "", "", "")
+}
+func (t *transaction) FailedJobsFiltered(limit int, after, state, kind, errorCode string) ([]storage.Job, error) {
+	return list[storage.Job](t, `SELECT data FROM storage.jobs WHERE id>$1 AND state IN ('pending','running','blocked') AND COALESCE(data->>'error_code','')<>'' AND ($2='' OR state=$2) AND ($3='' OR data->>'kind'=$3) AND ($4='' OR data->>'error_code'=$4) ORDER BY id LIMIT $5`, after, state, kind, errorCode, limit)
 }
 func (t *transaction) Idempotency(key string) (storage.Idempotency, error) {
 	return read[storage.Idempotency](t, `SELECT data FROM storage.idempotency WHERE key=$1 FOR UPDATE`, key)

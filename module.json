@@ -202,6 +202,10 @@
       "custody_ux_test.go#TestCustodyDeleteRechecksProvisioningAndExpiresOrphanAttempts",
       "custody_ux_test.go#TestCustodyChallengeCooldownCleanupAndCandidateReasons"
     ],
+    "STORAGE-37": [
+      "operations_b03_test.go#TestOperationsTotalsAndFilterBeyondTwoHundredThousand",
+      "operations_b03_test.go#TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff"
+    ],
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"

@@ -330,6 +330,7 @@ type Transaction interface {
 	ActiveWrites(string, time.Time) (bool, error)
 	JobTotals() (JobTotals, error)
 	FailedJobs(int, string) ([]Job, error)
+	FailedJobsFiltered(int, string, string, string, string) ([]Job, error)
 	Idempotency(string) (Idempotency, error)
 	SaveIdempotency(Idempotency) error
 	PurgeRetention(RetentionCutoffs, int) (RetentionResult, error)
