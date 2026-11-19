@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"math"
 	"time"
 )
 
@@ -10,10 +11,93 @@ type ContributionCandidate struct {
 	Adapter                string    `json:"adapter"`
 	AvailableBytes         int64     `json:"available_bytes"`
 	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
+	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
+	Reason                 string    `json:"reason"`
 }
 type ContributionCandidates struct {
 	Items      []ContributionCandidate `json:"items"`
 	NextCursor string                  `json:"next_cursor"`
+}
+
+type ContributionSummary struct {
+	DeclaredBytes       int64     `json:"declared_bytes"`
+	AvailableBytes      int64     `json:"available_bytes"`
+	UsedBytes           int64     `json:"used_bytes"`
+	ReservedBytes       int64     `json:"reserved_bytes"`
+	ActiveInstances     int       `json:"active_instances"`
+	RegisteredInstances int       `json:"registered_instances"`
+	Status              string    `json:"status"`
+	ObservedAt          time.Time `json:"observed_at"`
+}
+
+// SummarizeContributions aggregates community contributor capacity from the
+// ledger without probing providers or exposing per-instance identifiers.
+func (s *Service) SummarizeContributions(ctx context.Context, p Principal) (ContributionSummary, error) {
+	out := ContributionSummary{Status: "idle"}
+	if err := s.authorize(ctx, p, "storage.contributions.summary", "", Protection{}); err != nil {
+		return out, err
+	}
+	err := s.readTx(ctx, func(tx Transaction) error {
+		now := s.now()
+		out = ContributionSummary{Status: "idle", ObservedAt: now}
+		for page, after := 0, ""; page < 1000; page++ {
+			instances, err := tx.Instances(100, after)
+			if err != nil {
+				return err
+			}
+			for _, i := range instances {
+				if i.Ownership != "contributor" {
+					continue
+				}
+				ctrl := i.ContributionControl
+				if ctrl == nil {
+					continue
+				}
+				if i.Used < 0 || i.Reserved < 0 || i.Used > math.MaxInt64-out.UsedBytes || i.Reserved > math.MaxInt64-out.ReservedBytes {
+					return ErrUnavailable
+				}
+				out.UsedBytes += i.Used
+				out.ReservedBytes += i.Reserved
+				if ctrl.State == "revoked" {
+					continue
+				}
+				out.RegisteredInstances++
+				if ctrl.State != "draining" && ctrl.Until.After(now) {
+					if ctrl.LimitBytes < 0 || ctrl.LimitBytes > math.MaxInt64-out.DeclaredBytes {
+						return ErrUnavailable
+					}
+					out.DeclaredBytes += ctrl.LimitBytes
+				}
+				h := instanceHealth(i, now)
+				if h.Reason == "" || h.Reason == "capacity_exhausted" {
+					out.ActiveInstances++
+					if h.AvailableBytes > math.MaxInt64-out.AvailableBytes {
+						return ErrUnavailable
+					}
+					out.AvailableBytes += h.AvailableBytes
+				}
+			}
+			if len(instances) < 100 {
+				break
+			}
+			after = instances[len(instances)-1].ID
+		}
+		switch {
+		case out.RegisteredInstances == 0:
+			out.Status = "idle"
+		case out.ActiveInstances == out.RegisteredInstances && out.AvailableBytes > 0:
+			out.Status = "healthy"
+		case out.ActiveInstances > 0:
+			out.Status = "degraded"
+		default:
+			out.Status = "unavailable"
+		}
+		return s.authorize(ctx, p, "storage.contributions.summary", "", Protection{})
+	})
+	if err != nil {
+		return ContributionSummary{}, err
+	}
+	return out, nil
 }
 
 func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, owner string, n int, after string) (ContributionCandidates, error) {
@@ -24,8 +108,9 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 	if e := s.authorize(ctx, p, "storage.contributions.read", "", Protection{}); e != nil {
 		return out, e
 	}
-	e := s.repo.Transaction(ctx, func(tx Transaction) error {
-		items, e := tx.ContributionCandidates(owner, n+1, after)
+	e := s.readTx(ctx, func(tx Transaction) error {
+		now := s.now()
+		items, e := tx.ContributionCandidates(owner, now, n+1, after)
 		if e != nil {
 			return e
 		}
@@ -34,14 +119,19 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 			out.NextCursor = items[n-1].ID
 		}
 		for _, i := range items {
-			if !i.Authorized || !i.ExpiresAt.After(s.now()) {
-				continue
-			}
 			i.State = "active" // Compute potential capacity without enabling the instance.
 			if i.Limit == 0 {
 				i.Limit = 1 << 60
 			} // Initial custody has no contribution allocation yet.
-			out.Items = append(out.Items, ContributionCandidate{i.ID, i.Adapter, instanceHealth(i, s.now()).AvailableBytes, i.ExpiresAt})
+			health := instanceHealth(i, now)
+			out.Items = append(out.Items, ContributionCandidate{
+				ID:                     i.ID,
+				Adapter:                i.Adapter,
+				AvailableBytes:         health.AvailableBytes,
+				AuthorizationExpiresAt: i.ExpiresAt,
+				QuotaExpiresAt:         i.QuotaExpiresAt,
+				Reason:                 health.Reason,
+			})
 		}
 		return s.authorize(ctx, p, "storage.contributions.read", "", Protection{})
 	})
@@ -89,8 +179,8 @@ func (s *Service) InspectContribution(ctx context.Context, p Principal, id, owne
 	if err := s.authorize(ctx, p, "storage.contributions.read", id, Protection{}); err != nil {
 		return out, err
 	}
-	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		i, err := tx.Instance(id)
+	err := s.readTx(ctx, func(tx Transaction) error {
+		i, err := tx.InstanceSnapshot(id)
 		if err != nil {
 			return err
 		}
@@ -118,6 +208,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 	if err := s.authorize(ctx, p, "storage.contributions.manage", id, Protection{}); err != nil {
 		return out, err
 	}
+	c.Until = c.Until.UTC()
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
 		i, err := tx.Instance(id)
 		if err != nil {
@@ -130,13 +221,15 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 			if old.ID != c.ID || old.Revision > c.Revision {
 				return ErrStale
 			}
-			if (old.State == "revoked" && c.State != "revoked") || (old.State == "draining" && c.State != "draining" && c.State != "revoked") {
+			if (old.State == "revoked" && c.State != "revoked") || (old.State == "draining" && c.State == "paused") {
 				return ErrConflict
 			}
 			if old.Revision == c.Revision {
 				want, previous := c, *old
 				want.ExpectedRevision = 0
 				previous.ExpectedRevision = 0
+				want.Until = want.Until.UTC()
+				previous.Until = previous.Until.UTC()
 				if requestHash(want) != requestHash(previous) {
 					return ErrConflict
 				}
@@ -161,8 +254,21 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 		if c.State != "revoked" && (!i.Authorized || !i.ExpiresAt.After(s.now()) || i.State == "revoked") {
 			return ErrDenied
 		}
-		if c.State == "active" && (!c.Until.After(s.now()) || i.State == "draining") {
+		if c.State == "active" && !c.Until.After(s.now()) {
 			return ErrConflict
+		}
+		if c.State == "active" && (i.State == "draining" || i.ContributionControl != nil && i.ContributionControl.State == "draining") {
+			// A newer consent may reopen its binding only once this locked instance has completed drainage.
+			if i.ContributionControl == nil || i.ContributionControl.State != "draining" || i.Used != 0 || i.Reserved != 0 {
+				return ErrConflict
+			}
+			remaining, err := tx.InstanceReplicas(id)
+			if err != nil {
+				return err
+			}
+			if remaining != 0 {
+				return ErrConflict
+			}
 		}
 		if c.State == "active" && c.LimitBytes < i.Used+i.Reserved {
 			return ErrConflict
@@ -181,7 +287,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 		if err = tx.SaveInstance(i); err != nil {
 			return err
 		}
-		if err = s.emit(tx, p, "storage.instance.contribution", id, i.Revision); err != nil {
+		if err = s.emit(ctx, tx, p, "storage.instance.contribution", id, i.Revision); err != nil {
 			return err
 		}
 		out, err = s.contributionSnapshot(tx, i)

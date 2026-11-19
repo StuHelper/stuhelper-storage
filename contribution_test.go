@@ -167,6 +167,7 @@ func TestContributionExitWaitsForRecordedReplicaCleanup(t *testing.T) {
 	c.Revision++
 	c.ExpectedRevision = drain.Revision
 	c.State = "active"
+	c.LimitBytes = 1024
 	if _, err = h.s.ApplyContribution(h.ctx, h.actor, i.ID, c); !errors.Is(err, storage.ErrConflict) {
 		t.Fatal("exit cancelled by resume", err)
 	}
@@ -177,5 +178,93 @@ func TestContributionExitWaitsForRecordedReplicaCleanup(t *testing.T) {
 	drain, err = h.s.InspectContribution(h.ctx, h.actor, i.ID, "owner")
 	if err != nil || drain.RemainingReplicas != 0 {
 		t.Fatal("remaining objects", drain, err)
+	}
+	c.ExpectedRevision = drain.Revision
+	foreign := c
+	foreign.ID = "other-contribution"
+	if _, err = h.s.ApplyContribution(h.ctx, h.actor, i.ID, foreign); !errors.Is(err, storage.ErrStale) {
+		t.Fatal("a different contribution took over the drained instance", err)
+	}
+	reopened, err := h.s.ApplyContribution(h.ctx, h.actor, i.ID, c)
+	if err != nil || reopened.Control == nil || reopened.Control.ID != c.ID || reopened.State != "active" || reopened.AvailableBytes != c.LimitBytes {
+		t.Fatal("empty drained instance did not resume under the original binding", reopened, err)
+	}
+	replay, err := h.s.ApplyContribution(h.ctx, h.actor, i.ID, c)
+	if err != nil || replay.Revision != reopened.Revision {
+		t.Fatal("replaying reopen changed the instance", replay, err)
+	}
+
+}
+
+func TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone(t *testing.T) {
+	h := harnessFor(t)
+	h.provider.verificationClock = h.clock.Now
+	shortUntil := h.clock.Now().Add(5 * time.Minute)
+	longUntil := h.clock.Now().Add(24 * time.Hour)
+
+	for _, tc := range []struct {
+		id         string
+		authorized bool
+		until      time.Time
+	}{
+		{"a-unauth", false, longUntil},
+		{"b-valid", true, longUntil},
+		{"c-expiring", true, shortUntil},
+	} {
+		_, err := h.s.Register(h.ctx, h.actor, "reg-"+tc.id, storage.Instance{
+			ID:                 tc.id,
+			Adapter:            "test",
+			OwnerDomain:        "owner",
+			Ownership:          "contributor",
+			CredentialRef:      tc.id,
+			CredentialRevision: 1,
+			Root:               "isolated",
+			State:              "paused",
+			Authorized:         tc.authorized,
+			Limit:              0,
+			ExpiresAt:          tc.until,
+			Admissions:         []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: tc.until}},
+		})
+		if err != nil {
+			t.Fatal(tc.id, err)
+		}
+	}
+
+	// Expire c-expiring so only b-valid remains eligible; limit=1 must return b-valid directly with empty NextCursor!
+	h.clock.Add(6 * time.Minute)
+	page, err := h.s.ListContributionCandidates(h.ctx, h.actor, "owner", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "b-valid" || page.NextCursor != "" {
+		t.Fatalf("SQL pagination did not push down authorized/expiry filter: %+v", page)
+	}
+
+	// Same-revision replay with identical instant in +08:00 vs UTC must succeed idempotently.
+	snap, err := h.s.InspectContribution(h.ctx, h.actor, "b-valid", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	east8 := time.FixedZone("CST", 8*3600)
+	untilEast8 := h.clock.Now().Add(2 * time.Hour).Truncate(time.Second).In(east8)
+	c := storage.ContributionControl{
+		ID:               "consent-tz",
+		OwnerDomain:      "owner",
+		Revision:         1,
+		ExpectedRevision: snap.Revision,
+		State:            "active",
+		LimitBytes:       1024,
+		PersonalReserve:  64,
+		Until:            untilEast8,
+	}
+	applied, err := h.s.ApplyContribution(h.ctx, h.actor, "b-valid", c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ExpectedRevision = applied.Revision
+	c.Until = untilEast8.UTC()
+	replayed, err := h.s.ApplyContribution(h.ctx, h.actor, "b-valid", c)
+	if err != nil || replayed.Revision != applied.Revision {
+		t.Fatalf("same-instant UTC replay failed: %+v err=%v", replayed, err)
 	}
 }

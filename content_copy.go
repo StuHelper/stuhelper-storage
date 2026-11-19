@@ -1,9 +1,6 @@
 package storage
 
-import (
-	"context"
-	"io"
-)
+import "context"
 
 func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, key string, revision int64, protection Protection) (Status, error) {
 	if !protection.Valid() {
@@ -12,6 +9,7 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 	var h ContentHandle
 	var g ContentGroup
 	var out Status
+	cancelledGroup := ""
 	err := s.mutation(ctx, p, "storage.protection.change", id, key, struct {
 		Revision   int64
 		Protection Protection
@@ -27,6 +25,20 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 			return nil, ErrConflict
 		}
 		if g.Protection == protection {
+			if h.PendingGroup != "" {
+				cancelledGroup = h.PendingGroup
+				h.PendingGroup = ""
+				h.Revision++
+				if e := tx.SaveContentHandle(h); e != nil {
+					return nil, e
+				}
+				if e := s.releaseContentGroup(tx, cancelledGroup); e != nil {
+					return nil, e
+				}
+				if e := s.emitScoped(ctx, tx, p, "storage.content.protection.cancelled", id, h.Revision, "success", g.Protection.Scope); e != nil {
+					return nil, e
+				}
+			}
 			return s.contentView(tx, h, g)
 		}
 		target, e := s.contentGroup(tx, p, CreateRequest{Size: g.Size, SHA256: g.SHA256, Protection: protection, Policy: g.Policy})
@@ -40,7 +52,7 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		if e = s.emit(tx, p, "storage.content.protection.requested", id, h.Revision); e != nil {
+		if e = s.emitScoped(ctx, tx, p, "storage.content.protection.requested", id, h.Revision, "success", g.Protection.Scope); e != nil {
 			return nil, e
 		}
 		return s.contentView(tx, h, g)
@@ -48,27 +60,49 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 	if err != nil {
 		return out, err
 	}
-	if err = s.resumeContentCopy(ctx, p, id); err != nil {
+	if cancelledGroup != "" {
+		if err = s.cleanupContentGroup(ctx, p, cancelledGroup); err != nil {
+			return out, err
+		}
+		return s.contentStatusAction(ctx, p, id, "storage.protection.change")
+	}
+	if out.Protection == protection {
+		return out, nil
+	}
+	if err = s.resumeContentCopy(ctx, p, id, h.PendingGroup, revision); err != nil {
 		return out, err
 	}
-	return s.contentStatus(ctx, p, id)
+	return s.contentStatusAction(ctx, p, id, "storage.protection.change")
 }
 
 // A pending destination and source pin are durable. Copying is resumable after
 // timeout, response loss or restart; the immutable destination is reconciled
 // before any new provider write. Restrictive changes block the handle immediately.
-func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string) error {
+func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id, pendingGroup string, revision int64) error {
 	var h ContentHandle
 	var source Object
 	var target ContentGroup
 	var previous ContentGroup
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
+		if !validID(id) {
+			return ErrInput
+		}
+		if e := tx.Lock("content-ledger"); e != nil {
+			return e
+		}
 		var e error
-		h, previous, e = s.contentGuard(ctx, tx, p, "storage.objects.create", id)
+		h, e = tx.ContentHandle(id)
 		if e != nil {
 			return e
 		}
-		if h.State != "active" {
+		previous, e = tx.ContentGroup(h.GroupID)
+		if e != nil {
+			return e
+		}
+		if h.Owner != p {
+			return ErrDenied
+		}
+		if h.State != "active" || h.PendingGroup != pendingGroup || (revision != 0 && (h.Revision != revision || pendingGroup == "")) {
 			return nil
 		}
 		target = previous
@@ -88,6 +122,9 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string)
 				return e
 			}
 		} else if h.SourceObject != "" {
+			if e = s.authorize(ctx, p, "storage.objects.create", id, previous.Protection); e != nil {
+				return e
+			}
 			source, _, e = s.contentSource(ctx, tx, p, h.SourceID)
 			if e != nil {
 				return e
@@ -113,7 +150,7 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string)
 	if err != nil || source.ID == "" {
 		return err
 	}
-	st, err := s.ensureContentObject(ctx, target)
+	st, err := s.ensureContentObject(ctx, p, target)
 	if err != nil {
 		return err
 	}
@@ -131,18 +168,38 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string)
 			return e
 		}
 		defer removeTemporary(f)
-		if _, e = f.Seek(0, io.SeekStart); e != nil {
-			return ErrUnavailable
+		checkAuth := func(tx Transaction) error {
+			if h.PendingGroup != "" {
+				if e := s.authorize(ctx, p, "storage.protection.change", id, previous.Protection); e != nil {
+					return e
+				}
+				return s.authorize(ctx, p, "storage.protection.assign", id, target.Protection)
+			}
+			if e := s.authorize(ctx, p, "storage.objects.create", id, previous.Protection); e != nil {
+				return e
+			}
+			_, _, e := s.contentSource(ctx, tx, p, h.SourceID)
+			return e
 		}
-		if _, e = s.Ingest(ctx, p, target.ObjectID, "content-copy:"+target.ID, f); e != nil {
+		if e = s.writeContentObject(ctx, target, f, checkAuth); e != nil {
 			return e
 		}
 	}
 	var released []string
 	err = s.repo.Transaction(ctx, func(tx Transaction) error {
-		current, g, e := s.contentGuard(ctx, tx, p, "storage.objects.create", id)
+		if e := tx.Lock("content-ledger"); e != nil {
+			return e
+		}
+		current, e := tx.ContentHandle(id)
 		if e != nil {
 			return e
+		}
+		g, e := tx.ContentGroup(current.GroupID)
+		if e != nil {
+			return e
+		}
+		if current.Owner != p {
+			return ErrDenied
 		}
 		if current.State != "active" || current.Revision != h.Revision || current.PendingGroup != h.PendingGroup || current.SourceObject != h.SourceObject || g.ID != previous.ID {
 			return ErrConflict
@@ -159,6 +216,9 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string)
 			current.PendingGroup = ""
 			current.Revision++
 		} else if current.SourceID != "" {
+			if e = s.authorize(ctx, p, "storage.objects.create", id, g.Protection); e != nil {
+				return e
+			}
 			if _, _, e = s.contentSource(ctx, tx, p, current.SourceID); e != nil {
 				return e
 			}
@@ -176,14 +236,14 @@ func (s *Service) resumeContentCopy(ctx context.Context, p Principal, id string)
 				return e
 			}
 		}
-		return s.emit(tx, p, "storage.content.reused", id, current.Revision)
+		return s.emitScoped(ctx, tx, p, "storage.content.reused", id, current.Revision, "success", target.Protection.Scope)
 	})
 	if err != nil {
 		return err
 	}
 	for _, gid := range released {
 		if gid != "" {
-			if e := s.cleanupContentGroup(ctx, gid); e != nil {
+			if e := s.cleanupContentGroup(ctx, p, gid); e != nil {
 				return e
 			}
 		}

@@ -7,6 +7,58 @@ import (
 	"time"
 )
 
+type independentSet struct {
+	accounts map[string]bool
+	owners   map[string]bool
+}
+
+func newIndependentSet() independentSet {
+	return independentSet{accounts: map[string]bool{}, owners: map[string]bool{}}
+}
+
+func (m independentSet) seen(i Instance) bool {
+	return m.accounts[i.AccountDomain] || (i.Ownership == "contributor" && m.owners[i.OwnerDomain])
+}
+
+func (m independentSet) add(i Instance) {
+	m.accounts[i.AccountDomain] = true
+	if i.Ownership == "contributor" {
+		m.owners[i.OwnerDomain] = true
+	}
+}
+
+func healthyVerifiedReplica(r Replica, o Object, i Instance, now time.Time, verificationAge time.Duration) bool {
+	return r.State == "healthy" && r.ObjectRevision == o.Revision && r.CredentialRevision == i.CredentialRevision && !r.VerifiedAt.Before(now.Add(-verificationAge)) && i.Allows(o.Protection, now)
+}
+
+func lockCandidateInstances(tx Transaction, replicas []Replica) ([]Instance, map[string]Instance, error) {
+	candidates, err := tx.Instances(100, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	ids := map[string]bool{}
+	for _, i := range candidates {
+		ids[i.ID] = true
+	}
+	for _, r := range replicas {
+		ids[r.InstanceID] = true
+	}
+	ordered := make([]string, 0, len(ids))
+	for id := range ids {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	instances := make(map[string]Instance, len(ordered))
+	for _, id := range ordered {
+		i, err := tx.Instance(id)
+		if err != nil {
+			return nil, nil, err
+		}
+		instances[id] = i
+	}
+	return candidates, instances, nil
+}
+
 // plan locks the bounded candidate set in a stable order before reserving any
 // bytes. Every process shares the same PostgreSQL ledger and uniqueness checks.
 func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error) {
@@ -17,32 +69,11 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := tx.Instances(100, "")
+	candidates, instances, err := lockCandidateInstances(tx, replicas)
 	if err != nil {
 		return nil, err
 	}
-	ids := map[string]bool{}
-	for _, i := range candidates {
-		ids[i.ID] = true
-	}
-	for _, r := range replicas {
-		ids[r.InstanceID] = true
-	}
-	keys := make([]string, 0, len(ids))
-	for id := range ids {
-		keys = append(keys, id)
-	}
-	sort.Strings(keys)
-	instances := map[string]Instance{}
-	for _, id := range keys {
-		i, err := tx.Instance(id)
-		if err != nil {
-			return nil, err
-		}
-		instances[id] = i
-	}
-	accounts := map[string]bool{}
-	owners := map[string]bool{}
+	seen := newIndependentSet()
 	byInstance := map[string]Replica{}
 	count := 0
 	for _, r := range replicas {
@@ -51,10 +82,7 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 		if r.State == "deleted" {
 			continue
 		}
-		accounts[i.AccountDomain] = true
-		if i.Ownership == "contributor" {
-			owners[i.OwnerDomain] = true
-		}
+		seen.add(i)
 		if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(s.now()) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision {
 			count++
 		}
@@ -65,7 +93,7 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 			break
 		}
 		i := instances[candidate.ID]
-		if accounts[i.AccountDomain] || (i.Ownership == "contributor" && owners[i.OwnerDomain]) || !i.CanWrite(o.Protection, o.Size, s.now()) {
+		if seen.seen(i) || !i.CanWrite(o.Protection, o.Size, s.now()) {
 			continue
 		}
 		r, exists := byInstance[i.ID]
@@ -94,10 +122,7 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 		if err := tx.SaveReplica(r); err != nil {
 			return nil, err
 		}
-		accounts[i.AccountDomain] = true
-		if i.Ownership == "contributor" {
-			owners[i.OwnerDomain] = true
-		}
+		seen.add(i)
 		out = append(out, r)
 		count++
 	}
@@ -124,7 +149,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 		cleanupErr = s.cleanupContents(ctx, p, limit)
 	}
 	var objects []Object
-	err := s.repo.Transaction(ctx, func(tx Transaction) error { var err error; objects, err = tx.Objects(limit, after); return err })
+	err := s.readTx(ctx, func(tx Transaction) error { var err error; objects, err = tx.ActiveObjects(limit, after); return err })
 	if err != nil {
 		return result, err
 	}
@@ -140,22 +165,79 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			if err := s.authorize(ctx, p, "storage.maintenance", o.ID, o.Protection); err != nil {
 				return err
 			}
+			if o.State == "deleted" {
+				return nil
+			}
 			replicas, err := tx.Replicas(o.ID)
 			if err != nil {
 				return err
 			}
-			// Acquire the full bounded candidate set before any per-instance reads,
-			// including instances already used by this object but outside the page.
 			candidates, err := tx.Instances(100, "")
 			if err != nil {
 				return err
 			}
-			ids := map[string]bool{}
+			snapByID := make(map[string]Instance, len(candidates))
 			for _, candidate := range candidates {
-				ids[candidate.ID] = true
+				snapByID[candidate.ID] = candidate
 			}
 			for _, replica := range replicas {
-				ids[replica.InstanceID] = true
+				if _, ok := snapByID[replica.InstanceID]; !ok {
+					inst, e := tx.InstanceSnapshot(replica.InstanceID)
+					if e != nil {
+						return e
+					}
+					snapByID[replica.InstanceID] = inst
+				}
+			}
+			now := s.now()
+			expired := o.State != "deleting" && o.ContentGroup == "" && len(o.References) == 0 && now.Sub(o.CreatedAt) >= 24*time.Hour
+			needsReplicaAction := o.State == "deleting" || expired
+			revisionOrCorrupt := false
+			drainingHealthy := false
+			plannedCount := 0
+			for _, r := range replicas {
+				if r.State == "deleted" {
+					continue
+				}
+				i := snapByID[r.InstanceID]
+				if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(now) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, now) && r.CredentialRevision == i.CredentialRevision {
+					plannedCount++
+				}
+				if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(now) && (i.CredentialRevision != r.CredentialRevision || i.Revision != r.InstanceRevision) {
+					needsReplicaAction = true
+					revisionOrCorrupt = true
+				}
+				if r.State == "cleanup" || r.State == "corrupt" {
+					needsReplicaAction = true
+					revisionOrCorrupt = true
+				}
+				if i.Allows(o.Protection, now) && ((r.State == "healthy" && !r.VerifiedAt.After(now.Add(-s.cfg.VerificationAge/2))) || r.State == "checking") {
+					needsReplicaAction = true
+				}
+				if i.Draining(now) && r.State == "healthy" {
+					drainingHealthy = true
+				}
+			}
+			snapStatus, err := s.statusFromLoaded(o, replicas, func(id string) (Instance, error) { return snapByID[id], nil }, now)
+			if err != nil {
+				return err
+			}
+			needsPlan := !expired && o.State != "deleting" && ((snapStatus.Healthy > 0 && plannedCount < o.Policy.Target) || revisionOrCorrupt)
+			needsDrain := !expired && o.State != "deleting" && drainingHealthy
+			if !needsReplicaAction && !needsPlan && !needsDrain {
+				return nil
+			}
+			// Lock only the required instances in strictly sorted ID order.
+			ids := map[string]bool{}
+			if needsPlan {
+				for _, candidate := range candidates {
+					ids[candidate.ID] = true
+				}
+			}
+			for _, replica := range replicas {
+				if needsPlan || replica.State != "deleted" {
+					ids[replica.InstanceID] = true
+				}
 			}
 			ordered := make([]string, 0, len(ids))
 			for id := range ids {
@@ -167,16 +249,22 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					return err
 				}
 			}
+			remaining := 0
+			for _, r := range replicas {
+				if r.State != "deleted" {
+					remaining++
+				}
+			}
 			if o.State != "deleted" && o.State != "deleting" && o.ContentGroup == "" && len(o.References) == 0 && s.now().Sub(o.CreatedAt) >= 24*time.Hour {
 				o.State = "deleting"
-				if len(replicas) == 0 {
+				if remaining == 0 {
 					o.State = "deleted"
 				}
 				o.Revision++
 				if err := tx.SaveObject(o); err != nil {
 					return err
 				}
-				if err := s.emit(tx, p, "storage.object.expired", o.ID, o.Revision); err != nil {
+				if err := s.emitScoped(ctx, tx, p, "storage.object.expired", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 					return err
 				}
 			}
@@ -227,38 +315,47 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					}
 				}
 			}
+			if o.State == "deleting" && remaining == 0 {
+				o.State = "deleted"
+				return tx.SaveObject(o)
+			}
 			if o.State == "deleting" || o.State == "deleted" {
 				return nil
 			}
-			// Reserve only when at least one validated source is still available.
-			// Ingest jobs without a source are reconciled, never fabricated from metadata.
-			status, err := s.status(tx, o)
-			if err != nil {
-				return err
-			}
-			if status.Healthy == 0 {
-				return nil
-			}
-			if err := tx.Lock("queue-budget"); err != nil {
-				return err
-			}
-			queued, err := tx.OutstandingJobs("", s.cfg.MaxOutstandingJobs)
-			if err != nil {
-				return err
-			}
-			planned, err := s.plan(tx, o, min(o.Policy.Target, s.cfg.MaxOutstandingJobs-queued))
-			if err != nil {
-				return err
-			}
-			for _, r := range planned {
-				if err := s.enqueue(tx, o.ID, r.ID, "replicate"); err != nil {
+			if needsPlan {
+				// Reserve only when at least one validated source is still available.
+				// Ingest jobs without a source are reconciled, never fabricated from metadata.
+				status, err := s.status(tx, o)
+				if err != nil {
 					return err
+				}
+				if status.Healthy == 0 {
+					return nil
+				}
+				if err := tx.Lock("queue-budget"); err != nil {
+					return err
+				}
+				queued, err := tx.OutstandingJobs("", s.cfg.MaxOutstandingJobs)
+				if err != nil {
+					return err
+				}
+				planned, err := s.plan(tx, o, min(o.Policy.Target, s.cfg.MaxOutstandingJobs-queued))
+				if err != nil {
+					return err
+				}
+				for _, r := range planned {
+					if err := s.enqueue(tx, o.ID, r.ID, "replicate"); err != nil {
+						return err
+					}
 				}
 			}
 			// Drain only after replacements are healthy. Revocation can happen sooner,
 			// but does not grant permission to keep using the withdrawn credentials.
 			replacements := 0
 			for _, r := range replicas {
+				if r.State == "deleted" {
+					continue
+				}
 				i, err := tx.Instance(r.InstanceID)
 				if err != nil {
 					return err
@@ -269,6 +366,9 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			}
 			if replacements >= o.Policy.Target {
 				for _, r := range replicas {
+					if r.State == "deleted" {
+						continue
+					}
 					i, err := tx.Instance(r.InstanceID)
 					if err != nil {
 						return err
@@ -287,6 +387,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			return nil
 		})
 		if err != nil {
+			s.observe("reconcile", snapshot.ID, "", err)
 			result.NextCursor = snapshot.ID
 			return result, err
 		}
@@ -324,6 +425,7 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 	}
 	evidence, err := s.verifier.Verify(ctx, snapshot)
 	if err != nil {
+		s.observe("refresh_instance", id, "", err)
 		return err
 	}
 	if evidence.AccountDomain != snapshot.AccountDomain || evidence.ProviderFree < 0 || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {

@@ -24,6 +24,13 @@
       "reason": "insufficient_eligible_capacity"
     }
   ],
+  "object_totals": {
+    "pending": 0,
+    "ready": 0,
+    "degraded": 1,
+    "unavailable": 0,
+    "deleting": 0
+  },
   "jobs": {
     "pending": 1,
     "running": 0,
@@ -33,6 +40,7 @@
     {
       "id": "fixture-job",
       "object_id": "fixture-object",
+      "replica_id": "fixture-replica",
       "kind": "replicate",
       "state": "blocked",
       "generation": 2,

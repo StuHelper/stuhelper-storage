@@ -3,11 +3,17 @@ package executor
 import (
 	"context"
 	"errors"
+
+	storage "github.com/StuHelper/stuhelper-storage"
 )
 
 const maxMaintenancePages = 1000
 
 var errMaintenanceIncomplete = errors.New("storage maintenance sweep incomplete")
+
+type RetentionBackend interface {
+	PurgeExpired(context.Context, storage.Principal, int) (storage.RetentionResult, error)
+}
 
 type maintenancePosition struct {
 	objects, instances string
@@ -17,7 +23,8 @@ type maintenancePosition struct {
 // Each page has its own deadline; the outer deadline and page budget bound the
 // whole sweep. On exhaustion the next sweep resumes from the retained cursors.
 func (e *Executor) maintenanceSweep(ctx context.Context, position *maintenancePosition) error {
-	objectsDone, instancesDone := false, false
+	cleaner, hasRetention := e.backend.(RetentionBackend)
+	objectsDone, instancesDone, retentionDone := false, false, !hasRetention
 	var firstErr error
 	for page := 0; page < maxMaintenancePages; page++ {
 		if err := ctx.Err(); err != nil {
@@ -48,7 +55,16 @@ func (e *Executor) maintenanceSweep(ctx context.Context, position *maintenancePo
 				firstErr = err
 			}
 		}
-		if objectsDone && instancesDone {
+		if !retentionDone {
+			work, cancel := context.WithTimeout(ctx, e.cfg.MaintenanceTimeout)
+			purged, err := cleaner.PurgeExpired(work, e.cfg.Principal, e.cfg.BatchSize)
+			cancel()
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			retentionDone = err != nil || (purged.Idempotency < e.cfg.BatchSize && purged.DeliveredOutbox < e.cfg.BatchSize && purged.CompletedJobs < e.cfg.BatchSize && purged.CustodyOperations < e.cfg.BatchSize)
+		}
+		if objectsDone && instancesDone && retentionDone {
 			return firstErr
 		}
 	}
