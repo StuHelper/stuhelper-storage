@@ -221,7 +221,7 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 			if old.ID != c.ID || old.Revision > c.Revision {
 				return ErrStale
 			}
-			if (old.State == "revoked" && c.State != "revoked") || (old.State == "draining" && c.State != "draining" && c.State != "revoked") {
+			if (old.State == "revoked" && c.State != "revoked") || (old.State == "draining" && c.State == "paused") {
 				return ErrConflict
 			}
 			if old.Revision == c.Revision {
@@ -254,8 +254,21 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 		if c.State != "revoked" && (!i.Authorized || !i.ExpiresAt.After(s.now()) || i.State == "revoked") {
 			return ErrDenied
 		}
-		if c.State == "active" && (!c.Until.After(s.now()) || i.State == "draining") {
+		if c.State == "active" && !c.Until.After(s.now()) {
 			return ErrConflict
+		}
+		if c.State == "active" && (i.State == "draining" || i.ContributionControl != nil && i.ContributionControl.State == "draining") {
+			// A newer consent may reopen its binding only once this locked instance has completed drainage.
+			if i.ContributionControl == nil || i.ContributionControl.State != "draining" || i.Used != 0 || i.Reserved != 0 {
+				return ErrConflict
+			}
+			remaining, err := tx.InstanceReplicas(id)
+			if err != nil {
+				return err
+			}
+			if remaining != 0 {
+				return ErrConflict
+			}
 		}
 		if c.State == "active" && c.LimitBytes < i.Used+i.Reserved {
 			return ErrConflict

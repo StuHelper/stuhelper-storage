@@ -167,6 +167,7 @@ func TestContributionExitWaitsForRecordedReplicaCleanup(t *testing.T) {
 	c.Revision++
 	c.ExpectedRevision = drain.Revision
 	c.State = "active"
+	c.LimitBytes = 1024
 	if _, err = h.s.ApplyContribution(h.ctx, h.actor, i.ID, c); !errors.Is(err, storage.ErrConflict) {
 		t.Fatal("exit cancelled by resume", err)
 	}
@@ -178,6 +179,21 @@ func TestContributionExitWaitsForRecordedReplicaCleanup(t *testing.T) {
 	if err != nil || drain.RemainingReplicas != 0 {
 		t.Fatal("remaining objects", drain, err)
 	}
+	c.ExpectedRevision = drain.Revision
+	foreign := c
+	foreign.ID = "other-contribution"
+	if _, err = h.s.ApplyContribution(h.ctx, h.actor, i.ID, foreign); !errors.Is(err, storage.ErrStale) {
+		t.Fatal("a different contribution took over the drained instance", err)
+	}
+	reopened, err := h.s.ApplyContribution(h.ctx, h.actor, i.ID, c)
+	if err != nil || reopened.Control == nil || reopened.Control.ID != c.ID || reopened.State != "active" || reopened.AvailableBytes != c.LimitBytes {
+		t.Fatal("empty drained instance did not resume under the original binding", reopened, err)
+	}
+	replay, err := h.s.ApplyContribution(h.ctx, h.actor, i.ID, c)
+	if err != nil || replay.Revision != reopened.Revision {
+		t.Fatal("replaying reopen changed the instance", replay, err)
+	}
+
 }
 
 func TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone(t *testing.T) {
