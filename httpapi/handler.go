@@ -33,6 +33,8 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h := &handler{s, auth, maxUpload}
 	mux := http.NewServeMux()
 	h.mount(mux, "GET /api/v1/storage/operations", false, h.operations)
+	h.mount(mux, "GET /api/v1/storage/contribution-admission-policy", false, h.admissionPolicy)
+	h.mount(mux, "PUT /api/v1/storage/contribution-admission-policy", false, h.replaceAdmissionPolicy)
 	h.mount(mux, "GET /api/v1/storage/contributions", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 		n := 25
 		if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -81,6 +83,23 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h.mount(mux, "POST /api/v1/storage/maintenance", false, h.maintenance)
 	return mux, nil
 }
+
+func (h *handler) admissionPolicy(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	return h.s.ContributionAdmissionPolicy(r.Context(), p)
+}
+
+func (h *handler) replaceAdmissionPolicy(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+	value, err := decode[sdk.ContributionAdmissionPolicy](r)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := convert[sdk.ContributionAdmissionPolicy, storage.ContributionAdmissionPolicy](value)
+	if err != nil {
+		return nil, err
+	}
+	return h.s.ReplaceContributionAdmissionPolicy(r.Context(), p, r.Header.Get("Idempotency-Key"), policy)
+}
+
 func (h *handler) commandInstance(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	input, err := decode[sdk.InstanceCommand](r)
 	if err != nil {

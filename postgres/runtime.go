@@ -24,7 +24,7 @@ func (r *Repository) CheckRuntime(ctx context.Context) error {
 	if !allowed {
 		return storage.ErrDenied
 	}
-	for _, table := range []string{"content_groups", "content_handles", "custody_bindings", "custody_operations", "instances", "objects", "replicas", "jobs", "idempotency", "outbox", "event_streams", "audit"} {
+	for _, table := range []string{"content_groups", "content_handles", "custody_bindings", "custody_operations", "instances", "contribution_admission_policy", "objects", "replicas", "jobs", "idempotency", "outbox", "event_streams", "audit"} {
 		privileges := "SELECT,INSERT,UPDATE,DELETE"
 		if table == "audit" {
 			privileges = "SELECT,INSERT"

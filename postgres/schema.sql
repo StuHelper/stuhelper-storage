@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS storage.instances (
     account_domain text NOT NULL UNIQUE,
     data jsonb NOT NULL
 );
+CREATE TABLE IF NOT EXISTS storage.contribution_admission_policy (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
+    data jsonb NOT NULL
+);
 CREATE TABLE IF NOT EXISTS storage.objects (
     id text PRIMARY KEY,
     data jsonb NOT NULL

@@ -119,7 +119,7 @@ func (s *Service) evaluateObjectHealth(o Object, copies []Replica, instances []I
 					}
 					seen.add(i)
 				}
-				if len(seen.accounts) < o.Policy.Target {
+				if len(seen) < o.Policy.Target {
 					h.Reason = "insufficient_eligible_capacity"
 				}
 			}
