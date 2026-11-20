@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"slices"
 	"time"
 )
 
@@ -92,39 +93,58 @@ type Admission struct {
 }
 
 type Instance struct {
-	ContributionControl *ContributionControl `json:"contribution_control,omitempty"`
-	ID                  string               `json:"id"`
-	Adapter             string               `json:"adapter"`
-	AccountDomain       string               `json:"account_domain"`
-	OwnerDomain         string               `json:"owner_domain"`
-	Ownership           string               `json:"ownership"`
-	CredentialRef       string               `json:"credential_ref"`
-	CredentialRevision  int64                `json:"credential_revision"`
-	Root                string               `json:"root"`
-	Revision            int64                `json:"revision"`
-	State               string               `json:"state"`
-	Authorized          bool                 `json:"authorized"`
-	Limit               int64                `json:"limit"`
-	Used                int64                `json:"used"`
-	Reserved            int64                `json:"reserved"`
-	ProviderFree        int64                `json:"provider_free"`
-	PersonalReserve     int64                `json:"personal_reserve"`
-	SafetyMargin        int64                `json:"safety_margin"`
-	QuotaRevision       int64                `json:"quota_revision"`
-	QuotaExpiresAt      time.Time            `json:"quota_expires_at"`
-	ExpiresAt           time.Time            `json:"expires_at"`
-	Admissions          []Admission          `json:"admissions"`
+	ContributionControl  *ContributionControl `json:"contribution_control,omitempty"`
+	ContributionApproval string               `json:"contribution_approval,omitempty"`
+	ContributionLevels   *[]string            `json:"contribution_levels,omitempty"`
+	ID                   string               `json:"id"`
+	Adapter              string               `json:"adapter"`
+	AccountDomain        string               `json:"account_domain"`
+	OwnerDomain          string               `json:"owner_domain"`
+	Ownership            string               `json:"ownership"`
+	CredentialRef        string               `json:"credential_ref"`
+	CredentialRevision   int64                `json:"credential_revision"`
+	Root                 string               `json:"root"`
+	Revision             int64                `json:"revision"`
+	State                string               `json:"state"`
+	Authorized           bool                 `json:"authorized"`
+	Limit                int64                `json:"limit"`
+	Used                 int64                `json:"used"`
+	Reserved             int64                `json:"reserved"`
+	ProviderFree         int64                `json:"provider_free"`
+	PersonalReserve      int64                `json:"personal_reserve"`
+	SafetyMargin         int64                `json:"safety_margin"`
+	QuotaRevision        int64                `json:"quota_revision"`
+	QuotaExpiresAt       time.Time            `json:"quota_expires_at"`
+	ExpiresAt            time.Time            `json:"expires_at"`
+	Admissions           []Admission          `json:"admissions"`
+}
+
+func (i Instance) effectiveContributionLevels() []string {
+	if i.ContributionLevels == nil {
+		return []string{"public"}
+	}
+	return *i.ContributionLevels
+}
+
+func (i Instance) allowsContributionLevel(p Protection) bool {
+	if i.Ownership != "contributor" {
+		return true
+	}
+	if p.Class == "public" && !p.Public {
+		return false
+	}
+	return slices.Contains(i.effectiveContributionLevels(), p.Class)
 }
 
 func (i Instance) Allows(p Protection, now time.Time) bool {
 	if i.ContributionControl != nil && i.ContributionControl.State == "revoked" {
 		return false
 	}
-	if !i.Authorized || !i.ExpiresAt.After(now) || i.State == "revoked" || p.Encrypted {
+	if !i.Authorized || !i.ExpiresAt.After(now) || i.State == "revoked" {
 		return false
 	}
-	// Plaintext restricted custody on user-controlled accounts is deferred.
-	if !p.Public && i.Ownership != "platform" {
+	// Paid restricted placement requires the deferred encryption and key recovery path.
+	if p.Encrypted || p.Class == PaidRestrictedClass || !i.allowsContributionLevel(p) {
 		return false
 	}
 	for _, a := range i.Admissions {
@@ -311,6 +331,8 @@ type Transaction interface {
 	InstanceSnapshot(string) (Instance, error)
 	Instances(int, string) ([]Instance, error)
 	ContributionCandidates(string, time.Time, int, string) ([]Instance, error)
+	ContributionAdmissionPolicy() (ContributionAdmissionPolicy, error)
+	SaveContributionAdmissionPolicy(ContributionAdmissionPolicy) error
 	SaveInstance(Instance) error
 	DeleteRevokedInstance(string) error
 	InstanceReplicas(string) (int64, error)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -273,9 +274,6 @@ func validateInstance(v Instance, now time.Time) bool {
 			return false
 		}
 		seen[k] = true
-		if v.Ownership == "contributor" && (a.Class != "public" || !a.Plaintext) {
-			return false
-		}
 	}
 	return true
 }
@@ -284,7 +282,7 @@ func validateInstance(v Instance, now time.Time) bool {
 // claims. An alias or a second directory under the same account cannot add capacity.
 func (s *Service) Register(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
-	if !validID(v.ID) || v.Revision != 0 || v.ContributionControl != nil {
+	if !validID(v.ID) || v.Revision != 0 || v.ContributionControl != nil || v.ContributionLevels != nil || v.ContributionApproval != "" {
 		return result, ErrInput
 	}
 	guard := func(Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }
@@ -330,6 +328,15 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 		v.Revision = 1
 		v.QuotaRevision = 1
 		v.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
+		if v.Ownership == "contributor" {
+			policy, err := readAdmissionPolicy(tx)
+			if err != nil {
+				return nil, err
+			}
+			if levels := policy.levels(v); !slices.Equal(levels, v.effectiveContributionLevels()) {
+				v.ContributionLevels = &levels
+			}
+		}
 		if err := tx.SaveInstance(v); err != nil {
 			return nil, err
 		}
@@ -401,6 +408,8 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 		}
 		v.ProviderFree = old.ProviderFree
 		v.ContributionControl = old.ContributionControl
+		v.ContributionLevels = old.ContributionLevels
+		v.ContributionApproval = old.ContributionApproval
 		if old.ContributionControl != nil {
 			v.Limit = old.Limit
 			v.PersonalReserve = old.PersonalReserve

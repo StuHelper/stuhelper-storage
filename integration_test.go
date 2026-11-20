@@ -453,7 +453,7 @@ func TestConcurrentCapacityReservationsAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestAccountDeduplicationAndContributorIsolation(t *testing.T) {
+func TestAccountDeduplicationAcrossContributorAccounts(t *testing.T) {
 	h := harnessFor(t)
 	h.provider.accounts["alias"] = "account:first"
 	h.instance(t, "first", "same-owner", "contributor", 1024)
@@ -467,12 +467,15 @@ func TestAccountDeduplicationAndContributorIsolation(t *testing.T) {
 	h.ingest(t, o.ID, data)
 	h.reconcile(t)
 	claimed, err := h.s.RunOne(h.ctx, "worker")
-	if err != nil || claimed {
-		t.Fatalf("same contributor counted twice: %v %v", claimed, err)
+	if err != nil || !claimed {
+		t.Fatalf("independent account was not used: %v %v", claimed, err)
 	}
 	st, _ := h.s.Status(h.ctx, h.actor, o.ID)
-	if st.Healthy != 1 {
+	if st.Healthy != 2 {
 		t.Fatalf("replicas=%d", st.Healthy)
+	}
+	if _, err = h.s.Reference(h.ctx, h.actor, o.ID, "published", storage.Reference{Module: "resources", ID: "public-resource"}, true); err != nil {
+		t.Fatalf("same-contributor accounts failed the publication threshold: %v", err)
 	}
 }
 

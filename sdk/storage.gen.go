@@ -18,6 +18,27 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for ContributionAdmissionRuleSubjectKind.
+const (
+	ContributionAdmissionRuleSubjectKindContributor ContributionAdmissionRuleSubjectKind = "contributor"
+	ContributionAdmissionRuleSubjectKindGroup       ContributionAdmissionRuleSubjectKind = "group"
+	ContributionAdmissionRuleSubjectKindRole        ContributionAdmissionRuleSubjectKind = "role"
+)
+
+// Valid indicates whether the value is a known member of the ContributionAdmissionRuleSubjectKind enum.
+func (e ContributionAdmissionRuleSubjectKind) Valid() bool {
+	switch e {
+	case ContributionAdmissionRuleSubjectKindContributor:
+		return true
+	case ContributionAdmissionRuleSubjectKindGroup:
+		return true
+	case ContributionAdmissionRuleSubjectKindRole:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContributionControlState.
 const (
 	ContributionControlStateActive   ContributionControlState = "active"
@@ -371,6 +392,36 @@ type Admission struct {
 	Scope     string    `json:"scope"`
 }
 
+// ContributionAdmissionMembership defines model for ContributionAdmissionMembership.
+type ContributionAdmissionMembership struct {
+	GroupIds []string `json:"group_ids"`
+
+	// OwnerDomain Opaque contributor key derived from the verified platform principal. Never a provider account or display name.
+	OwnerDomain string   `json:"owner_domain"`
+	RoleIds     []string `json:"role_ids"`
+}
+
+// ContributionAdmissionPolicy Complete policy snapshot. Instance-specific selectors precede global selectors. Contributor selectors precede role and group selectors at the same instance specificity. Equally specific role or group selectors intersect. Empty levels deny; no match defaults to public. Per-account authorization, school and protection controls still apply.
+type ContributionAdmissionPolicy struct {
+	Memberships []ContributionAdmissionMembership `json:"memberships"`
+	Revision    int64                             `json:"revision"`
+	Rules       []ContributionAdmissionRule       `json:"rules"`
+}
+
+// ContributionAdmissionRule defines model for ContributionAdmissionRule.
+type ContributionAdmissionRule struct {
+	// InstanceId Optional instance restriction. The instance owner must match the selector.
+	InstanceId *string  `json:"instance_id,omitempty"`
+	Levels     []string `json:"levels"`
+	SubjectId  string   `json:"subject_id"`
+
+	// SubjectKind Contributor key or membership in a storage-admission role or group.
+	SubjectKind ContributionAdmissionRuleSubjectKind `json:"subject_kind"`
+}
+
+// ContributionAdmissionRuleSubjectKind Contributor key or membership in a storage-admission role or group.
+type ContributionAdmissionRuleSubjectKind string
+
 // ContributionCandidate defines model for ContributionCandidate.
 type ContributionCandidate struct {
 	Adapter                string    `json:"adapter"`
@@ -518,28 +569,34 @@ type CustodyResume struct {
 
 // Instance defines model for Instance.
 type Instance struct {
-	AccountDomain       string               `json:"account_domain"`
-	Adapter             string               `json:"adapter"`
-	Admissions          []Admission          `json:"admissions"`
-	Authorized          bool                 `json:"authorized"`
-	ContributionControl *ContributionControl `json:"contribution_control,omitempty"`
-	CredentialRef       string               `json:"credential_ref"`
-	CredentialRevision  int64                `json:"credential_revision"`
-	ExpiresAt           time.Time            `json:"expires_at"`
-	Id                  string               `json:"id"`
-	Limit               int64                `json:"limit"`
-	OwnerDomain         string               `json:"owner_domain"`
-	Ownership           InstanceOwnership    `json:"ownership"`
-	PersonalReserve     *int64               `json:"personal_reserve,omitempty"`
-	ProviderFree        int64                `json:"provider_free"`
-	QuotaExpiresAt      time.Time            `json:"quota_expires_at"`
-	QuotaRevision       int64                `json:"quota_revision"`
-	Reserved            int64                `json:"reserved"`
-	Revision            int64                `json:"revision"`
-	Root                string               `json:"root"`
-	SafetyMargin        *int64               `json:"safety_margin,omitempty"`
-	State               InstanceState        `json:"state"`
-	Used                int64                `json:"used"`
+	AccountDomain string      `json:"account_domain"`
+	Adapter       string      `json:"adapter"`
+	Admissions    []Admission `json:"admissions"`
+	Authorized    bool        `json:"authorized"`
+
+	// ContributionApproval Sanitized operator approval receipt for an adopted contribution. Never a credential or user identifier.
+	ContributionApproval *string              `json:"contribution_approval,omitempty"`
+	ContributionControl  *ContributionControl `json:"contribution_control,omitempty"`
+
+	// ContributionLevels Resolved contribution policy levels. Absence on a contribution instance means public only. Account authorizations and protection requirements still apply.
+	ContributionLevels *[]string         `json:"contribution_levels,omitempty"`
+	CredentialRef      string            `json:"credential_ref"`
+	CredentialRevision int64             `json:"credential_revision"`
+	ExpiresAt          time.Time         `json:"expires_at"`
+	Id                 string            `json:"id"`
+	Limit              int64             `json:"limit"`
+	OwnerDomain        string            `json:"owner_domain"`
+	Ownership          InstanceOwnership `json:"ownership"`
+	PersonalReserve    *int64            `json:"personal_reserve,omitempty"`
+	ProviderFree       int64             `json:"provider_free"`
+	QuotaExpiresAt     time.Time         `json:"quota_expires_at"`
+	QuotaRevision      int64             `json:"quota_revision"`
+	Reserved           int64             `json:"reserved"`
+	Revision           int64             `json:"revision"`
+	Root               string            `json:"root"`
+	SafetyMargin       *int64            `json:"safety_margin,omitempty"`
+	State              InstanceState     `json:"state"`
+	Used               int64             `json:"used"`
 }
 
 // InstanceOwnership defines model for Instance.Ownership.
@@ -742,6 +799,11 @@ type Revision struct {
 	Revision int64 `json:"revision"`
 }
 
+// ReplaceContributionAdmissionPolicyParams defines parameters for ReplaceContributionAdmissionPolicy.
+type ReplaceContributionAdmissionPolicyParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
 // ListContributionCandidatesParams defines parameters for ListContributionCandidates.
 type ListContributionCandidatesParams struct {
 	OwnerDomain string  `form:"owner_domain" json:"owner_domain"`
@@ -864,6 +926,9 @@ type WriteOffUnknownReplicaParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
+// ReplaceContributionAdmissionPolicyJSONRequestBody defines body for ReplaceContributionAdmissionPolicy for application/json ContentType.
+type ReplaceContributionAdmissionPolicyJSONRequestBody = ContributionAdmissionPolicy
+
 // ApplyContributionControlJSONRequestBody defines body for ApplyContributionControl for application/json ContentType.
 type ApplyContributionControlJSONRequestBody = ContributionControl
 
@@ -985,6 +1050,29 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+
+	// GetContributionAdmissionPolicy Read the contribution admission policy as an authorized storage operator
+	//
+	// Corresponds with GET /api/v1/storage/contribution-admission-policy (the `GetContributionAdmissionPolicy` operationId).
+	GetContributionAdmissionPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceContributionAdmissionPolicyWithBody Replace the current revision of the contribution admission policy
+	//
+	// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+	ReplaceContributionAdmissionPolicyWithBody(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceContributionAdmissionPolicy Replace the current revision of the contribution admission policy
+	//
+	// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+	ReplaceContributionAdmissionPolicy(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, body ReplaceContributionAdmissionPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListContributionCandidates performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
 	//
@@ -1208,6 +1296,59 @@ type ClientInterface interface {
 	//
 	// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
 	WriteOffUnknownReplica(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, body WriteOffUnknownReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// GetContributionAdmissionPolicy Read the contribution admission policy as an authorized storage operator
+//
+// Corresponds with GET /api/v1/storage/contribution-admission-policy (the `GetContributionAdmissionPolicy` operationId).
+func (c *Client) GetContributionAdmissionPolicy(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetContributionAdmissionPolicyRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceContributionAdmissionPolicyWithBody Replace the current revision of the contribution admission policy
+//
+// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+func (c *Client) ReplaceContributionAdmissionPolicyWithBody(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceContributionAdmissionPolicyRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceContributionAdmissionPolicy Replace the current revision of the contribution admission policy
+//
+// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+func (c *Client) ReplaceContributionAdmissionPolicy(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, body ReplaceContributionAdmissionPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceContributionAdmissionPolicyRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ListContributionCandidates performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
@@ -1891,6 +2032,86 @@ func (c *Client) WriteOffUnknownReplica(ctx context.Context, objectId string, re
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewGetContributionAdmissionPolicyRequest constructs an http.Request for the GetContributionAdmissionPolicy method
+func NewGetContributionAdmissionPolicyRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/contribution-admission-policy")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReplaceContributionAdmissionPolicyRequest calls the generic ReplaceContributionAdmissionPolicy builder with application/json body
+func NewReplaceContributionAdmissionPolicyRequest(server string, params *ReplaceContributionAdmissionPolicyParams, body ReplaceContributionAdmissionPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplaceContributionAdmissionPolicyRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewReplaceContributionAdmissionPolicyRequestWithBody constructs an http.Request for the ReplaceContributionAdmissionPolicy method, with any body, and a specified content type
+func NewReplaceContributionAdmissionPolicyRequestWithBody(server string, params *ReplaceContributionAdmissionPolicyParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/contribution-admission-policy")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
 }
 
 // NewListContributionCandidatesRequest constructs an http.Request for the ListContributionCandidates method
@@ -3572,6 +3793,31 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// GetContributionAdmissionPolicyWithResponse Read the contribution admission policy as an authorized storage operator
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/storage/contribution-admission-policy (the `GetContributionAdmissionPolicy` operationId).
+	GetContributionAdmissionPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetContributionAdmissionPolicyResponse, error)
+
+	// ReplaceContributionAdmissionPolicyWithBodyWithResponse Replace the current revision of the contribution admission policy
+	//
+	// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+	ReplaceContributionAdmissionPolicyWithBodyWithResponse(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceContributionAdmissionPolicyResponse, error)
+
+	// ReplaceContributionAdmissionPolicyWithResponse Replace the current revision of the contribution admission policy
+	//
+	// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+	ReplaceContributionAdmissionPolicyWithResponse(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, body ReplaceContributionAdmissionPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceContributionAdmissionPolicyResponse, error)
+
 	// ListContributionCandidatesWithResponse performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
 	//
 	// Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
@@ -3854,6 +4100,151 @@ type ClientWithResponsesInterface interface {
 	//
 	// Operator write-off for an ambiguous unknown-begin replica (issued_write=true and empty remote locator) after manual verification of the isolated provider directory. Requires storage.operations.manage, exact object and instance revisions, Idempotency-Key, and a non-empty sanitized verification reason.
 	WriteOffUnknownReplicaWithResponse(ctx context.Context, objectId string, replicaId string, params *WriteOffUnknownReplicaParams, body WriteOffUnknownReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*WriteOffUnknownReplicaResponse, error)
+}
+
+type GetContributionAdmissionPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributionAdmissionPolicy
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetContributionAdmissionPolicyResponse) GetJSON200() *ContributionAdmissionPolicy {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetContributionAdmissionPolicyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetContributionAdmissionPolicyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetContributionAdmissionPolicyResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetContributionAdmissionPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetContributionAdmissionPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetContributionAdmissionPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetContributionAdmissionPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReplaceContributionAdmissionPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributionAdmissionPolicy
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplaceContributionAdmissionPolicyResponse) GetJSON200() *ContributionAdmissionPolicy {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReplaceContributionAdmissionPolicyResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ReplaceContributionAdmissionPolicyResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ReplaceContributionAdmissionPolicyResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ReplaceContributionAdmissionPolicyResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ReplaceContributionAdmissionPolicyResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ReplaceContributionAdmissionPolicyResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplaceContributionAdmissionPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplaceContributionAdmissionPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplaceContributionAdmissionPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplaceContributionAdmissionPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListContributionCandidatesResponse struct {
@@ -6582,6 +6973,49 @@ func (r WriteOffUnknownReplicaResponse) ContentType() string {
 	return ""
 }
 
+// GetContributionAdmissionPolicyWithResponse Read the contribution admission policy as an authorized storage operator
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/storage/contribution-admission-policy (the `GetContributionAdmissionPolicy` operationId).
+func (c *ClientWithResponses) GetContributionAdmissionPolicyWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetContributionAdmissionPolicyResponse, error) {
+	rsp, err := c.GetContributionAdmissionPolicy(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetContributionAdmissionPolicyResponse(rsp)
+}
+
+// ReplaceContributionAdmissionPolicyWithBodyWithResponse Replace the current revision of the contribution admission policy
+//
+// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+func (c *ClientWithResponses) ReplaceContributionAdmissionPolicyWithBodyWithResponse(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceContributionAdmissionPolicyResponse, error) {
+	rsp, err := c.ReplaceContributionAdmissionPolicyWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceContributionAdmissionPolicyResponse(rsp)
+}
+
+// ReplaceContributionAdmissionPolicyWithResponse Replace the current revision of the contribution admission policy
+//
+// Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/storage/contribution-admission-policy (the `ReplaceContributionAdmissionPolicy` operationId).
+func (c *ClientWithResponses) ReplaceContributionAdmissionPolicyWithResponse(ctx context.Context, params *ReplaceContributionAdmissionPolicyParams, body ReplaceContributionAdmissionPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceContributionAdmissionPolicyResponse, error) {
+	rsp, err := c.ReplaceContributionAdmissionPolicy(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceContributionAdmissionPolicyResponse(rsp)
+}
+
 // ListContributionCandidatesWithResponse performs a GET /api/v1/storage/contributions (the `ListContributionCandidates` operationId) request.
 //
 // Service-only owner-scoped ledger lookup of verified paused empty contributor instances; never probes suppliers or returns custody material.
@@ -7139,6 +7573,121 @@ func (c *ClientWithResponses) WriteOffUnknownReplicaWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseWriteOffUnknownReplicaResponse(rsp)
+}
+
+// ParseGetContributionAdmissionPolicyResponse parses an HTTP response from a GetContributionAdmissionPolicyWithResponse call
+func ParseGetContributionAdmissionPolicyResponse(rsp *http.Response) (*GetContributionAdmissionPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetContributionAdmissionPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributionAdmissionPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReplaceContributionAdmissionPolicyResponse parses an HTTP response from a ReplaceContributionAdmissionPolicyWithResponse call
+func ParseReplaceContributionAdmissionPolicyResponse(rsp *http.Response) (*ReplaceContributionAdmissionPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplaceContributionAdmissionPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributionAdmissionPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListContributionCandidatesResponse parses an HTTP response from a ListContributionCandidatesWithResponse call

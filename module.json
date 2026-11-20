@@ -17,7 +17,7 @@
       "integration_test.go#TestConcurrentCapacityReservationsAndIdempotency"
     ],
     "STORAGE-03": [
-      "integration_test.go#TestAccountDeduplicationAndContributorIsolation"
+      "integration_test.go#TestAccountDeduplicationAcrossContributorAccounts"
     ],
     "STORAGE-04": [
       "integration_test.go#TestUnknownWriteReconcilesWithoutDuplicatingOrReleasingCapacity",
@@ -213,6 +213,10 @@
     "AUDIT-01": [
       "postgres/audit_query_test.go#TestPublicAuditQuery",
       "integration_test.go#TestAuditRetentionBoundarySchoolProjectionAndReviewAudit"
+    ],
+    "STORAGE-43": [
+      "admission_policy_test.go#TestAdmissionPolicySelectorsAndDefault",
+      "admission_policy_integration_test.go#TestContributionAdmissionAdoptionPlacementAndNarrowing"
     ]
   }
 }

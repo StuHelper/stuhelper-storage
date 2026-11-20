@@ -7,24 +7,18 @@ import (
 	"time"
 )
 
-type independentSet struct {
-	accounts map[string]bool
-	owners   map[string]bool
-}
+type independentSet map[string]bool
 
 func newIndependentSet() independentSet {
-	return independentSet{accounts: map[string]bool{}, owners: map[string]bool{}}
+	return independentSet{}
 }
 
 func (m independentSet) seen(i Instance) bool {
-	return m.accounts[i.AccountDomain] || (i.Ownership == "contributor" && m.owners[i.OwnerDomain])
+	return m[i.AccountDomain]
 }
 
 func (m independentSet) add(i Instance) {
-	m.accounts[i.AccountDomain] = true
-	if i.Ownership == "contributor" {
-		m.owners[i.OwnerDomain] = true
-	}
+	m[i.AccountDomain] = true
 }
 
 func healthyVerifiedReplica(r Replica, o Object, i Instance, now time.Time, verificationAge time.Duration) bool {
@@ -217,6 +211,10 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				if i.Draining(now) && r.State == "healthy" {
 					drainingHealthy = true
 				}
+				if !i.allowsContributionLevel(o.Protection) {
+					needsReplicaAction = true
+					drainingHealthy = drainingHealthy || r.State == "healthy" || r.State == "checking"
+				}
 			}
 			snapStatus, err := s.statusFromLoaded(o, replicas, func(id string) (Instance, error) { return snapByID[id], nil }, now)
 			if err != nil {
@@ -275,6 +273,13 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				i, err := tx.Instance(r.InstanceID)
 				if err != nil {
 					return err
+				}
+				if !i.allowsContributionLevel(o.Protection) && (r.State == "reserved" || r.State == "writing" || r.State == "unknown") {
+					r.State = "cleanup"
+					if err := tx.SaveReplica(r); err != nil {
+						return err
+					}
+					replicas[n] = r
 				}
 				if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(s.now()) && (i.CredentialRevision != r.CredentialRevision || i.Revision != r.InstanceRevision) {
 					r.CredentialRevision = i.CredentialRevision
@@ -373,7 +378,8 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					if err != nil {
 						return err
 					}
-					if i.Draining(s.now()) && r.State == "healthy" {
+					policyWithdrawn := !i.allowsContributionLevel(o.Protection) && (r.State == "healthy" || r.State == "checking")
+					if policyWithdrawn || (i.Draining(s.now()) && r.State == "healthy") {
 						r.State = "cleanup"
 						if err := tx.SaveReplica(r); err != nil {
 							return err
