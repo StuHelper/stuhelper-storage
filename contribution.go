@@ -9,6 +9,7 @@ import (
 type ContributionCandidate struct {
 	ID                     string    `json:"id"`
 	Adapter                string    `json:"adapter"`
+	AccountHint            string    `json:"account_hint,omitempty"`
 	AvailableBytes         int64     `json:"available_bytes"`
 	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
 	QuotaExpiresAt         time.Time `json:"quota_expires_at"`

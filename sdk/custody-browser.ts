@@ -45,6 +45,7 @@ export function parseCustodyBinding(value: unknown): CustodyBinding {
   return {
     id: text(v.id, 128),
     adapter: choice(v.adapter, ['bhpan']),
+    ...(v.account_hint === undefined ? {} : { account_hint: text(v.account_hint, 256) }),
     revision: number(v.revision),
     state: choice(v.state, ['pending', 'ready', 'blocked', 'credentials_required']),
     authorization_expires_at: until,

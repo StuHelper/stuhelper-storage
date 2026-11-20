@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "StuHelper Storage API",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Internal service and storage administration API. Current issuer/subject authorization is mandatory on every operation. Target replicas 3, initial publication 2; encryption deferred. Account domains and credential references are administrative data."
   },
   "paths": {
@@ -4941,6 +4941,12 @@
           },
           "adapter": {
             "type": "string"
+          },
+          "account_hint": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 128,
+            "description": "Available to the owner and authorized administrators. Masked identifier from the bound provider account. For BHpan, replace each middle character of a login name of five or more characters with an asterisk, preserving the first two and last two. For shorter names, show asterisks followed by the last character (including a leading asterisk for a one-character login). Omitted when the account fact is unavailable."
           },
           "revision": {
             "type": "integer",

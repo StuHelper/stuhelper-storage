@@ -66,6 +66,19 @@ func TestCustodyHTTPBoundaryAndSecretFreeResponses(t *testing.T) {
 			t.Fatal("HTTP exposed private custody data")
 		}
 	}
+	if !strings.Contains(w.Body.String(), `"account_hint":"fi***re"`) {
+		t.Fatal("custody submit omitted the masked account hint")
+	}
+	admin := storage.Principal{Issuer: user.Issuer, Subject: "admin"}
+	page, err := s.List(h.ctx, admin, 20, "", true)
+	if err != nil || len(page.Items) != 1 || page.Items[0].AccountHint != "fi***re" {
+		t.Fatal("authorized administration omitted the account hint", err)
+	}
+	foreign := storage.Principal{Issuer: user.Issuer, Subject: "foreign"}
+	page, err = s.List(h.ctx, foreign, 20, "", false)
+	if err != nil || len(page.Items) != 0 {
+		t.Fatal("foreign user saw a binding", err)
+	}
 	if w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("response could be cached")
 	}
@@ -107,6 +120,8 @@ func (p *custodyProvider) Fingerprint(b []byte) (string, error) {
 	m.Write(b)
 	return hex.EncodeToString(m.Sum(nil)), nil
 }
+func (p *custodyProvider) AccountHint(context.Context, storage.Instance) string { return "fi***re" }
+
 func (p *custodyProvider) ValidateInput(string, json.RawMessage) error { return nil }
 func (p *custodyProvider) Prepare(ctx context.Context, id string, until time.Time, input json.RawMessage, current *storage.Instance, claim func(string) error) (storage.Instance, error) {
 	if len(input) > 0 {

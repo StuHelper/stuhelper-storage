@@ -503,6 +503,8 @@ type CreateObject struct {
 
 // CustodyBinding defines model for CustodyBinding.
 type CustodyBinding struct {
+	// AccountHint Available to the owner and authorized administrators. Masked identifier from the bound provider account. For BHpan, replace each middle character of a login name of five or more characters with an asterisk, preserving the first two and last two. For shorter names, show asterisks followed by the last character (including a leading asterisk for a one-character login). Omitted when the account fact is unavailable.
+	AccountHint            *string                 `json:"account_hint,omitempty"`
 	Adapter                string                  `json:"adapter"`
 	AuthorizationExpiresAt time.Time               `json:"authorization_expires_at"`
 	Id                     string                  `json:"id"`
