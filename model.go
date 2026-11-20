@@ -329,6 +329,7 @@ type Transaction interface {
 	Lock(string) error
 	Instance(string) (Instance, error)
 	InstanceSnapshot(string) (Instance, error)
+	InstanceSnapshots([]string) ([]Instance, error)
 	Instances(int, string) ([]Instance, error)
 	ContributionCandidates(string, time.Time, int, string) ([]Instance, error)
 	ContributionAdmissionPolicy() (ContributionAdmissionPolicy, error)

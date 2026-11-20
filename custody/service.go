@@ -13,6 +13,17 @@ import (
 	protocol "github.com/StuHelper/stuhelper-storage-bhpan"
 )
 
+func (s *Service) bindingView(ctx context.Context, b Binding) View {
+	view := b.View
+	view.AccountHint = ""
+	source, ok := s.provider.(storage.AccountHintSource)
+	i := b.Instance
+	if ok && i.ID == b.ID && i.Ownership == "contributor" && i.OwnerDomain == OwnerDomain(b.Owner) && i.Authorized {
+		view.AccountHint = source.AccountHint(ctx, i)
+	}
+	return view
+}
+
 func (s *Service) List(ctx context.Context, p storage.Principal, n int, after string, admin bool) (Page, error) {
 	out := Page{Items: []View{}}
 	if n < 1 || n > 100 || (after != "" && !uuid.MatchString(after)) {
@@ -27,6 +38,7 @@ func (s *Service) List(ctx context.Context, p storage.Principal, n int, after st
 	if e := s.authorize(ctx, p, action, ""); e != nil {
 		return out, e
 	}
+	var bindings []Binding
 	e := s.repo.Transaction(ctx, func(tx Tx) error {
 		rows, e := tx.List(owner, n+1, after)
 		if e != nil {
@@ -36,12 +48,16 @@ func (s *Service) List(ctx context.Context, p storage.Principal, n int, after st
 			rows = rows[:n]
 			out.NextCursor = rows[n-1].ID
 		}
-		for _, b := range rows {
-			out.Items = append(out.Items, b.View)
-		}
+		bindings = rows
 		return s.authorize(ctx, p, action, "")
 	})
-	return out, e
+	if e != nil {
+		return Page{}, e
+	}
+	for _, b := range bindings {
+		out.Items = append(out.Items, s.bindingView(ctx, b))
+	}
+	return out, nil
 }
 func (s *Service) GetRequest(ctx context.Context, p storage.Principal, key string) (View, error) {
 	var out View
@@ -51,6 +67,7 @@ func (s *Service) GetRequest(ctx context.Context, p storage.Principal, key strin
 	if e := s.authorize(ctx, p, "storage.custody.read", ""); e != nil {
 		return out, e
 	}
+	var b Binding
 	e := s.repo.Transaction(ctx, func(tx Tx) error {
 		o, e := tx.Operation(key)
 		if e != nil {
@@ -59,14 +76,19 @@ func (s *Service) GetRequest(ctx context.Context, p storage.Principal, key strin
 		if o.Owner != p {
 			return storage.ErrDenied
 		}
-		b, e := tx.Binding(o.BindingID)
+		b, e = tx.Binding(o.BindingID)
 		if e != nil {
 			return e
 		}
-		out = b.View
+		if b.Owner != p {
+			return storage.ErrDenied
+		}
 		return s.authorize(ctx, p, "storage.custody.read", b.ID)
 	})
-	return out, e
+	if e != nil {
+		return out, e
+	}
+	return s.bindingView(ctx, b), nil
 }
 func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key string, q Request) (View, error) {
 	var out View
@@ -296,8 +318,11 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		op.LeaseUntil = now.Add(2 * time.Minute)
 		return tx.SaveOperation(op)
 	})
-	if e != nil || op.Complete {
+	if e != nil {
 		return out, e
+	}
+	if op.Complete {
+		return s.bindingView(ctx, b), nil
 	}
 	work, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
@@ -486,7 +511,10 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 		}
 		return s.event(ctx, tx, p, b, b.State, auditResult)
 	})
-	return out, e
+	if e != nil {
+		return out, e
+	}
+	return s.bindingView(ctx, b), nil
 }
 func (s *Service) event(ctx context.Context, tx Tx, p storage.Principal, b Binding, kind, result string) error {
 	var nonce [16]byte
