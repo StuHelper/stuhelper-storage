@@ -406,6 +406,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/contribution-admission-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the contribution admission policy as an authorized storage operator */
+        get: operations["getContributionAdmissionPolicy"];
+        /**
+         * Replace the current revision of the contribution admission policy
+         * @description Requires dedicated storage admission management permission. Applies the update and records audit evidence atomically. A stale revision returns conflict. Idempotent retries return the original response.
+         */
+        put: operations["replaceContributionAdmissionPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -514,6 +535,10 @@ export interface components {
              */
             safety_margin: number;
             contribution_control?: components["schemas"]["ContributionControl"];
+            /** @description Resolved contribution policy levels. Absence on a contribution instance means public only. Account authorizations and protection requirements still apply. */
+            contribution_levels?: string[];
+            /** @description Sanitized operator approval receipt for an adopted contribution. Never a credential or user identifier. */
+            contribution_approval?: string;
         };
         CreateObject: {
             /** Format: int64 */
@@ -793,6 +818,30 @@ export interface components {
             status: "idle" | "healthy" | "degraded" | "unavailable";
             /** Format: date-time */
             observed_at: string;
+        };
+        ContributionAdmissionRule: {
+            /**
+             * @description Contributor key or membership in a storage-admission role or group.
+             * @enum {string}
+             */
+            subject_kind: "contributor" | "role" | "group";
+            subject_id: string;
+            levels: string[];
+            /** @description Optional instance restriction. The instance owner must match the selector. */
+            instance_id?: string;
+        };
+        ContributionAdmissionMembership: {
+            /** @description Opaque contributor key derived from the verified platform principal. Never a provider account or display name. */
+            owner_domain: string;
+            role_ids: string[];
+            group_ids: string[];
+        };
+        /** @description Complete policy snapshot. Instance-specific selectors precede global selectors. Contributor selectors precede role and group selectors at the same instance specificity. Equally specific role or group selectors intersect. Empty levels deny; no match defaults to public. Per-account authorization, school and protection controls still apply. */
+        ContributionAdmissionPolicy: {
+            /** Format: int64 */
+            revision: number;
+            rules: components["schemas"]["ContributionAdmissionRule"][];
+            memberships: components["schemas"]["ContributionAdmissionMembership"][];
         };
     };
     responses: never;
@@ -3451,6 +3500,133 @@ export interface operations {
             };
             /** @description Stable sanitized error */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getContributionAdmissionPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionAdmissionPolicy"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    replaceContributionAdmissionPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionAdmissionPolicy"];
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionAdmissionPolicy"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
