@@ -33,22 +33,23 @@ type Config struct {
 	Observer                  Observer
 }
 type Service struct {
-	repo      Repository
-	auth      Authorizer
-	resolver  Resolver
-	verifier  Verifier
-	cfg       Config
-	now       func() time.Time
-	slots     chan struct{}
-	staging   *staging
-	lifecycle sync.Mutex
-	stopping  bool
-	active    int
-	stopCtx   context.Context
-	cancel    context.CancelFunc
-	closed    chan struct{}
-	closeErr  error
-	bandwidth *pacer
+	repo         Repository
+	auth         Authorizer
+	resolver     Resolver
+	accountHints AccountHintSource
+	verifier     Verifier
+	cfg          Config
+	now          func() time.Time
+	slots        chan struct{}
+	staging      *staging
+	lifecycle    sync.Mutex
+	stopping     bool
+	active       int
+	stopCtx      context.Context
+	cancel       context.CancelFunc
+	closed       chan struct{}
+	closeErr     error
+	bandwidth    *pacer
 }
 
 type BudgetSummary struct {
@@ -140,8 +141,9 @@ func New(repo Repository, auth Authorizer, resolver Resolver, verifier Verifier,
 	}
 	stopCtx, cancel := context.WithCancel(context.Background())
 	bandwidth := newPacer(cfg.BytesPerSecond)
+	accountHints, _ := resolver.(AccountHintSource)
 	resolver = &limitedResolver{inner: resolver, parallel: cfg.AccountTransfers, global: bandwidth, accountRate: cfg.AccountBytesPerSecond, accounts: map[string]*accountLimit{}}
-	return &Service{repo: repo, auth: auth, resolver: resolver, verifier: verifier, cfg: cfg, now: clock, slots: make(chan struct{}, cfg.ParallelTransfers), staging: staging, stopCtx: stopCtx, cancel: cancel, closed: make(chan struct{}), bandwidth: bandwidth}, nil
+	return &Service{repo: repo, auth: auth, resolver: resolver, accountHints: accountHints, verifier: verifier, cfg: cfg, now: clock, slots: make(chan struct{}, cfg.ParallelTransfers), staging: staging, stopCtx: stopCtx, cancel: cancel, closed: make(chan struct{}), bandwidth: bandwidth}, nil
 }
 func (s *Service) authorize(ctx context.Context, p Principal, action, id string, protection Protection) error {
 	if s.stopCtx.Err() != nil {

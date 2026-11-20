@@ -37,13 +37,14 @@ func (Request) String() string     { return "[custody request redacted]" }
 func (r Request) GoString() string { return r.String() }
 
 type View struct {
-	ID        string    `json:"id"`
-	Adapter   string    `json:"adapter"`
-	Revision  int64     `json:"revision"`
-	State     string    `json:"state"`
-	Until     time.Time `json:"authorization_expires_at"`
-	RequestID string    `json:"request_id"`
-	LastError string    `json:"last_error"`
+	ID          string    `json:"id"`
+	Adapter     string    `json:"adapter"`
+	AccountHint string    `json:"account_hint,omitempty"`
+	Revision    int64     `json:"revision"`
+	State       string    `json:"state"`
+	Until       time.Time `json:"authorization_expires_at"`
+	RequestID   string    `json:"request_id"`
+	LastError   string    `json:"last_error"`
 }
 type Page struct {
 	Items      []View `json:"items"`

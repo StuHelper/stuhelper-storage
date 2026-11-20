@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	storage "github.com/StuHelper/stuhelper-storage"
@@ -8,6 +9,10 @@ import (
 	"testing"
 	"time"
 )
+
+func (p *provider) AccountHint(_ context.Context, i storage.Instance) string {
+	return "fi***" + i.ID
+}
 
 func TestContributionCandidatesAreOwnedEmptyAndDoNotProbe(t *testing.T) {
 	h := harnessFor(t)
@@ -28,6 +33,11 @@ func TestContributionCandidatesAreOwnedEmptyAndDoNotProbe(t *testing.T) {
 		}
 	}
 	before := h.provider.verifyCalls
+	facts := map[string]string{"a": "owner", "b": "other", "foreign": "owner", "platform": "owner", "missing": "owner"}
+	hints := h.s.ContributionAccountHints(h.ctx, h.actor, facts)
+	if len(hints) != 1 || hints["a"] != "fi***a" {
+		t.Fatalf("expected a hint for just the matching contributor, got %v", hints)
+	}
 	page, e := h.s.ListContributionCandidates(h.ctx, h.actor, "owner", 1, "")
 	if e != nil || len(page.Items) != 1 || page.Items[0].ID != "a" || page.NextCursor != "a" {
 		t.Fatal(page, e)
@@ -56,6 +66,9 @@ func TestContributionCandidatesAreOwnedEmptyAndDoNotProbe(t *testing.T) {
 		t.Fatal("bound instance selectable", page, e)
 	}
 	h.auth.denied.Store(true)
+	if hints := h.s.ContributionAccountHints(h.ctx, h.actor, facts); len(hints) != 0 {
+		t.Fatal("denied actor received account hints")
+	}
 	if _, e = h.s.ListContributionCandidates(h.ctx, h.actor, "owner", 100, ""); !errors.Is(e, storage.ErrDenied) {
 		t.Fatal(e)
 	}
