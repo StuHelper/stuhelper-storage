@@ -249,8 +249,11 @@ func TestContributionCandidatesPushDownAuthExpiryAndNormalizeReplayTimezone(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Items[0].ID != "b-valid" || page.NextCursor != "" {
+	if len(page.Items) != 1 || page.Items[0].ID != "b-valid" || page.Items[0].Reason != "capacity_expired" || page.NextCursor != "" {
 		t.Fatalf("SQL pagination did not push down authorized/expiry filter: %+v", page)
+	}
+	if err := h.s.RefreshInstance(h.ctx, h.actor, "b-valid"); err != nil {
+		t.Fatal(err)
 	}
 
 	// Same-revision replay with identical instant in +08:00 vs UTC must succeed idempotently.

@@ -149,17 +149,42 @@ func (t *transaction) save(query string, item any, args ...any) error {
 	_, err = t.tx.ExecContext(t.ctx, query, args...)
 	return t.safe("save", err)
 }
+
+type instanceRecord struct {
+	storage.Instance
+	QuotaObservation storage.QuotaObservation `json:"quota_observation,omitzero"`
+}
+
+func (r instanceRecord) instance() storage.Instance {
+	r.Instance.QuotaObservation = r.QuotaObservation
+	return r.Instance
+}
+
+func (t *transaction) instances(query string, args ...any) ([]storage.Instance, error) {
+	rows, err := list[instanceRecord](t, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]storage.Instance, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, row.instance())
+	}
+	return result, nil
+}
+
 func (t *transaction) Instance(id string) (storage.Instance, error) {
-	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1 FOR UPDATE`, id)
+	row, err := read[instanceRecord](t, `SELECT data FROM storage.instances WHERE id=$1 FOR UPDATE`, id)
+	return row.instance(), err
 }
 func (t *transaction) InstanceSnapshot(id string) (storage.Instance, error) {
-	return read[storage.Instance](t, `SELECT data FROM storage.instances WHERE id=$1`, id)
+	row, err := read[instanceRecord](t, `SELECT data FROM storage.instances WHERE id=$1`, id)
+	return row.instance(), err
 }
 func (t *transaction) InstanceSnapshots(ids []string) ([]storage.Instance, error) {
-	return list[storage.Instance](t, `SELECT data FROM storage.instances WHERE id = ANY($1)`, ids)
+	return t.instances(`SELECT data FROM storage.instances WHERE id = ANY($1)`, ids)
 }
 func (t *transaction) ContributionCandidates(owner string, now time.Time, limit int, after string) ([]storage.Instance, error) {
-	return list[storage.Instance](t, `SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->>'authorized')::boolean AND (i.data->>'expires_at')::timestamptz>$3 AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $4`, after, owner, now, limit)
+	return t.instances(`SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->>'authorized')::boolean AND (i.data->>'expires_at')::timestamptz>$3 AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $4`, after, owner, now, limit)
 }
 func (t *transaction) ContributionAdmissionPolicy() (storage.ContributionAdmissionPolicy, error) {
 	return read[storage.ContributionAdmissionPolicy](t, `SELECT data FROM storage.contribution_admission_policy WHERE singleton`)
@@ -168,10 +193,11 @@ func (t *transaction) SaveContributionAdmissionPolicy(policy storage.Contributio
 	return t.save(`INSERT INTO storage.contribution_admission_policy(singleton,data) VALUES(true,$1) ON CONFLICT(singleton) DO UPDATE SET data=excluded.data`, policy)
 }
 func (t *transaction) Instances(limit int, after string) ([]storage.Instance, error) {
-	return list[storage.Instance](t, `SELECT data FROM storage.instances WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
+	return t.instances(`SELECT data FROM storage.instances WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
 }
 func (t *transaction) SaveInstance(v storage.Instance) error {
-	return t.save(`INSERT INTO storage.instances(id,account_domain,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET account_domain=excluded.account_domain,data=excluded.data`, v, v.ID, v.AccountDomain)
+	row := instanceRecord{Instance: v, QuotaObservation: v.QuotaObservation}
+	return t.save(`INSERT INTO storage.instances(id,account_domain,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET account_domain=excluded.account_domain,data=excluded.data`, row, v.ID, v.AccountDomain)
 }
 func (t *transaction) DeleteRevokedInstance(id string) error {
 	var busy bool

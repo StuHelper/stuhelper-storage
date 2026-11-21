@@ -296,6 +296,7 @@ func TestCustodyRecoveryAndRenewalPreserveExistingInstance(t *testing.T) {
 	}
 	next.QuotaRevision = old.QuotaRevision
 	next.QuotaExpiresAt = old.QuotaExpiresAt
+	next.QuotaObservation = old.QuotaObservation
 	if !reflect.DeepEqual(old, next) {
 		t.Fatal("renewal modified contribution, admissions, root or quota")
 	}
