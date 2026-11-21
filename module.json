@@ -217,6 +217,13 @@
     "STORAGE-43": [
       "admission_policy_test.go#TestAdmissionPolicySelectorsAndDefault",
       "admission_policy_integration_test.go#TestContributionAdmissionAdoptionPlacementAndNarrowing"
+    ],
+    "STORAGE-44": [
+      "quota_test.go#TestProviderQuotaRefreshFailureExpiryAndRecovery",
+      "quota_test.go#TestLegacyQuotaProjectionAndPrivateStorageHTTP",
+      "executor/maintenance_test.go#TestQuotaRetryTargetsOnlyFailedAccountsAndStops",
+      "drivers/bhpan/bhpan_test.go#TestVerifyPreservesProviderQuota",
+      "drivers/bhpan/bhpan_test.go#TestVerifyReportsSanitizedPrecheckFailures"
     ]
   }
 }

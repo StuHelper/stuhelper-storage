@@ -511,8 +511,11 @@ export interface components {
             authorized: boolean;
             /** Format: int64 */
             limit: number;
-            /** Format: int64 */
-            provider_free: number;
+            /**
+             * Format: int64
+             * @description Provider free bytes adjusted by the placement ledger. Returned for platform-owned instances only.
+             */
+            provider_free?: number;
             /** Format: int64 */
             quota_revision: number;
             /** Format: date-time */
@@ -601,6 +604,7 @@ export interface components {
         InstanceHealth: {
             id: string;
             state: string;
+            /** @description Capacity reasons are capacity_unknown when a current observation has not been recorded, capacity_read_failed when the latest quota read failed, and capacity_expired when the last successful read expired. */
             reason: string;
             /** Format: int64 */
             available_bytes: number;
@@ -734,8 +738,16 @@ export interface components {
             available_bytes: number;
             /** Format: int64 */
             remaining_replicas: number;
-            /** Format: date-time */
-            observed_at: string;
+            /**
+             * Format: date-time
+             * @description Time of the last successful provider quota read. Null when a successful read has not been recorded.
+             */
+            observed_at: string | null;
+            /**
+             * @description The provider quota reading is either current, unrecorded, failed on the latest refresh, or expired.
+             * @enum {string}
+             */
+            capacity_status: "available" | "not_read" | "read_failed" | "expired";
         };
         ContributionCandidate: {
             id: string;
@@ -746,6 +758,7 @@ export interface components {
             authorization_expires_at: string;
             /** Format: date-time */
             quota_expires_at: string;
+            /** @description Capacity reasons are capacity_unknown when a current observation has not been recorded, capacity_read_failed when the latest quota read failed, and capacity_expired when the last successful read expired. */
             reason: string;
         };
         ContributionCandidates: {
@@ -2551,7 +2564,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Stable sanitized error */
+            /** @description Conflict. storage_contribution_limit_exceeded means the contribution exceeds provider capacity after personal reserve and safety margin. storage_contribution_capacity_unavailable means quota could not be verified using a current provider reading. */
             409: {
                 headers: {
                     [name: string]: unknown;

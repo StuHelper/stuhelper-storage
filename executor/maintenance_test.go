@@ -113,6 +113,49 @@ func TestLongMaintenanceSweepVisitsAllPagesAndDueAccounts(t *testing.T) {
 	}
 }
 
+func TestQuotaRetryTargetsOnlyFailedAccountsAndStops(t *testing.T) {
+	b := &sweepBackend{now: time.Now(), failRefresh: "account-2"}
+	cfg := config()
+	cfg.BatchSize = 2
+	cfg.QuotaRefreshAhead = 6 * time.Hour
+	cfg.Clock = func() time.Time { return b.now }
+	e, err := New(b, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	position := maintenancePosition{}
+	ctx := context.Background()
+	if err := e.maintenanceSweep(ctx, &position); !errors.Is(err, storage.ErrUnavailable) {
+		t.Fatal("sweep did not report the failed quota read", err)
+	}
+	retry := position.quotaRetries["account-2"]
+	if len(position.quotaRetries) != 1 || retry.due.IsZero() {
+		t.Fatal("healthy accounts entered the early retry schedule")
+	}
+	for attempt := 0; attempt < maxQuotaRetries; attempt++ {
+		e.retryQuotas(ctx, &position, retry.due.Add(-time.Nanosecond))
+		if got := len(b.refreshed); got != 3+attempt {
+			t.Fatal("retry called the provider before its deadline")
+		}
+		e.retryQuotas(ctx, &position, retry.due)
+		if b.refreshed[len(b.refreshed)-1] != "account-2" || len(b.refreshed) != 4+attempt {
+			t.Fatal("an unrelated account entered early quota retry")
+		}
+		retry = position.quotaRetries["account-2"]
+	}
+	if len(position.quotaRetries) != 0 {
+		t.Fatal("a permanently failed account exceeded its retry budget")
+	}
+	if err := e.maintenanceSweep(ctx, &position); !errors.Is(err, storage.ErrUnavailable) {
+		t.Fatal("later sweep skipped retryable account", err)
+	}
+	b.failRefresh = ""
+	e.retryQuotas(ctx, &position, position.quotaRetries["account-2"].due)
+	if len(position.quotaRetries) != 0 {
+		t.Fatal("successful refresh kept its old retry schedule")
+	}
+}
+
 func TestLongMaintenanceSweepStopsInFlightPage(t *testing.T) {
 	b := &sweepBackend{block: true, entered: make(chan struct{})}
 	cfg := config()

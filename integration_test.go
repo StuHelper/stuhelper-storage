@@ -50,6 +50,8 @@ type provider struct {
 	writes            int
 	verifyCalls       int
 	verificationClock func() time.Time
+	quota             *storage.ProviderQuotaSample
+	verifyErr         error
 	lostReply         bool
 	lostBegin         bool
 	corruptWrite      bool
@@ -63,6 +65,9 @@ func (p *provider) Verify(_ context.Context, i storage.Instance) (storage.Instan
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.verifyCalls++
+	if p.verifyErr != nil {
+		return storage.InstanceEvidence{}, p.verifyErr
+	}
 	domain := p.accounts[i.CredentialRef]
 	if domain == "" {
 		domain = "account:" + i.CredentialRef
@@ -71,7 +76,11 @@ func (p *provider) Verify(_ context.Context, i storage.Instance) (storage.Instan
 	if p.verificationClock != nil {
 		now = p.verificationClock()
 	}
-	return storage.InstanceEvidence{AccountDomain: domain, ProviderFree: 1 << 30, VerifiedAt: now}, nil
+	quota := storage.ProviderQuotaSample{TotalBytes: 1 << 30}
+	if p.quota != nil {
+		quota = *p.quota
+	}
+	return storage.InstanceEvidence{AccountDomain: domain, ProviderFree: max(0, quota.TotalBytes-quota.UsedBytes), VerifiedAt: now, Quota: &quota}, nil
 }
 func (p *provider) Resolve(context.Context, storage.Instance) (storage.Driver, error) { return p, nil }
 func (p *provider) Find(_ context.Context, i storage.Instance, intent string, expected storage.Locator) (storage.Locator, error) {

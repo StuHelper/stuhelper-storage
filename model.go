@@ -15,16 +15,18 @@ import (
 )
 
 var (
-	ErrInput       = errors.New("storage_invalid_input")
-	ErrDenied      = errors.New("storage_permission_denied")
-	ErrUnavailable = errors.New("storage_unavailable")
-	ErrNotFound    = errors.New("storage_not_found")
-	ErrConflict    = errors.New("storage_conflict")
-	ErrCapacity    = errors.New("storage_capacity_unavailable")
-	ErrIntegrity   = errors.New("storage_integrity_failed")
-	ErrStale       = errors.New("storage_stale_operation")
-	ErrUnknown     = errors.New("storage_remote_result_unknown")
-	ErrChallenge   = errors.New("storage_interactive_verification_required")
+	ErrInput                           = errors.New("storage_invalid_input")
+	ErrDenied                          = errors.New("storage_permission_denied")
+	ErrUnavailable                     = errors.New("storage_unavailable")
+	ErrNotFound                        = errors.New("storage_not_found")
+	ErrConflict                        = errors.New("storage_conflict")
+	ErrCapacity                        = errors.New("storage_capacity_unavailable")
+	ErrIntegrity                       = errors.New("storage_integrity_failed")
+	ErrStale                           = errors.New("storage_stale_operation")
+	ErrUnknown                         = errors.New("storage_remote_result_unknown")
+	ErrChallenge                       = errors.New("storage_interactive_verification_required")
+	ErrContributionLimitExceeded       = errors.New("storage_contribution_limit_exceeded")
+	ErrContributionCapacityUnavailable = errors.New("storage_contribution_capacity_unavailable")
 )
 
 type RetryAfterError struct {
@@ -115,6 +117,7 @@ type Instance struct {
 	SafetyMargin         int64                `json:"safety_margin"`
 	QuotaRevision        int64                `json:"quota_revision"`
 	QuotaExpiresAt       time.Time            `json:"quota_expires_at"`
+	QuotaObservation     QuotaObservation     `json:"-"`
 	ExpiresAt            time.Time            `json:"expires_at"`
 	Admissions           []Admission          `json:"admissions"`
 }
@@ -154,12 +157,14 @@ func (i Instance) Allows(p Protection, now time.Time) bool {
 	}
 	return false
 }
+func (i Instance) currentPlacementQuota(now time.Time) bool {
+	return i.Authorized && i.State == "active" && i.ExpiresAt.After(now) && i.QuotaExpiresAt.After(now) &&
+		(i.ContributionControl == nil || i.ContributionControl.State == "active" && i.ContributionControl.Until.After(now))
+}
+
 func (i Instance) CanWrite(p Protection, size int64, now time.Time) bool {
-	if i.ContributionControl != nil && (i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(now)) {
-		return false
-	}
 	providerBudget := i.ProviderFree - i.PersonalReserve - i.SafetyMargin
-	return i.Allows(p, now) && i.State == "active" && i.QuotaExpiresAt.After(now) && size >= 0 &&
+	return i.currentPlacementQuota(now) && i.Allows(p, now) && size >= 0 &&
 		i.Used <= i.Limit && i.Reserved <= i.Limit-i.Used && size <= i.Limit-i.Used-i.Reserved &&
 		i.Reserved <= providerBudget && size <= providerBudget-i.Reserved
 }
@@ -273,6 +278,7 @@ type InstanceEvidence struct {
 	AccountDomain string
 	ProviderFree  int64
 	VerifiedAt    time.Time
+	Quota         *ProviderQuotaSample
 }
 
 // Verifier resolves the provider's stable account identity and validates the

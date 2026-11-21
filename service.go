@@ -299,7 +299,7 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 	if err != nil {
 		return result, err
 	}
-	if evidence.AccountDomain == "" || len(evidence.AccountDomain) > 256 || evidence.ProviderFree < 0 || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {
+	if evidence.AccountDomain == "" || len(evidence.AccountDomain) > 256 || !evidence.validQuota(s.now()) {
 		return result, ErrUnavailable
 	}
 	err = s.mutation(ctx, p, "storage.instances.register", v.ID, key, request, guard, func(tx Transaction) (any, error) {
@@ -324,12 +324,11 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 			return nil, err
 		}
 		v.AccountDomain = evidence.AccountDomain
-		v.ProviderFree = evidence.ProviderFree
 		v.Used = 0
 		v.Reserved = 0
 		v.Revision = 1
-		v.QuotaRevision = 1
-		v.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
+		v.QuotaRevision = 0
+		s.saveQuotaEvidence(&v, evidence)
 		if v.Ownership == "contributor" {
 			policy, err := readAdmissionPolicy(tx)
 			if err != nil {
@@ -350,13 +349,10 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 // The provider call runs outside the transaction. A concurrent sample or
 // transfer owns newer ledger evidence even if no reservation remains at commit.
 func (s *Service) applyQuotaEvidence(current *Instance, before Instance, sample InstanceEvidence) {
-	if sample.ProviderFree < 0 || before.Reserved != 0 || current.Reserved != 0 ||
-		current.QuotaRevision != before.QuotaRevision || current.Used != before.Used {
+	if !sample.validQuota(s.now()) || !current.quotaLedgerMatches(before) {
 		return
 	}
-	current.ProviderFree = sample.ProviderFree
-	current.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
-	current.QuotaRevision++
+	s.saveQuotaEvidence(current, sample)
 }
 
 func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
@@ -417,6 +413,7 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 			v.PersonalReserve = old.PersonalReserve
 		}
 		v.QuotaRevision = old.QuotaRevision
+		v.QuotaObservation = old.QuotaObservation
 		v.Used = old.Used
 		v.Reserved = old.Reserved
 		v.QuotaExpiresAt = old.QuotaExpiresAt
