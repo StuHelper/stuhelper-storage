@@ -15,7 +15,7 @@ import (
 )
 
 type fake struct {
-	root, current, currentName, revision                                       string
+	root, current, currentName, revision, identityID                           string
 	shards                                                                     map[string]string
 	data                                                                       []byte
 	deleted, closed, forbid, invisible                                         bool
@@ -23,6 +23,7 @@ type fake struct {
 	beforeWrite                                                                func()
 	beforeIdentity                                                             func(context.Context) error
 	beforeDownload                                                             func(context.Context) error
+	quota                                                                      *protocol.Quota
 	multipartBegins, multipartParts, multipartCompletes, multipartGrantBatches int
 	multipartMinSize                                                           int64
 	partStaging                                                                bytes.Buffer
@@ -33,6 +34,9 @@ func (f *fake) Identity(ctx context.Context) (protocol.Identity, error) {
 		if err := f.beforeIdentity(ctx); err != nil {
 			return protocol.Identity{}, err
 		}
+	}
+	if f.identityID != "" {
+		return protocol.Identity{ID: f.identityID}, nil
 	}
 	return protocol.Identity{ID: "stable-user"}, nil
 }
@@ -45,6 +49,9 @@ func (f *fake) Libraries(ctx context.Context) ([]protocol.Library, error) {
 func (f *fake) Quota(ctx context.Context) (protocol.Quota, error) {
 	if err := ctx.Err(); err != nil {
 		return protocol.Quota{}, err
+	}
+	if f.quota != nil {
+		return *f.quota, nil
 	}
 	return protocol.Quota{Allocated: 1024}, nil
 }
@@ -205,6 +212,67 @@ func fixture(t *testing.T) (*Pool, *fake, storage.Instance) {
 	}
 	t.Cleanup(p.Close)
 	return p, f, i
+}
+
+func TestVerifyPreservesProviderQuota(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		used int64
+		free int64
+	}{
+		{name: "with free space", used: 256, free: 768},
+		{name: "over quota", used: 1280, free: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, f, i := fixture(t)
+			f.quota = &protocol.Quota{Allocated: 1024, Used: tc.used}
+			before := time.Now()
+			evidence, err := p.Verify(context.Background(), i)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if evidence.Quota == nil || evidence.Quota.TotalBytes != 1024 || evidence.Quota.UsedBytes != tc.used || evidence.ProviderFree != tc.free {
+				t.Fatalf("unexpected quota observation: quota=%+v free=%d", evidence.Quota, evidence.ProviderFree)
+			}
+			if evidence.VerifiedAt.Before(before) || evidence.VerifiedAt.After(time.Now()) {
+				t.Fatalf("unexpected quota observation time: %v", evidence.VerifiedAt)
+			}
+		})
+	}
+}
+
+type diagnosticObserver func(storage.Diagnostic)
+
+func (f diagnosticObserver) Observe(d storage.Diagnostic) { f(d) }
+
+func TestVerifyReportsSanitizedPrecheckFailures(t *testing.T) {
+	for _, tc := range []struct {
+		category string
+		op       string
+		setup    func(*fake)
+		err      error
+	}{
+		{category: "bhpan_identity_mismatch", op: "identity", setup: func(f *fake) { f.identityID = "different-account" }, err: storage.ErrDenied},
+		{category: "bhpan_root_missing", op: "list", setup: func(f *fake) { f.root = "" }, err: storage.ErrDenied},
+		{category: "deadline_exceeded", op: "identity", setup: func(f *fake) {
+			f.beforeIdentity = func(context.Context) error { return context.DeadlineExceeded }
+		}, err: context.DeadlineExceeded},
+	} {
+		t.Run(tc.category, func(t *testing.T) {
+			p, f, i := fixture(t)
+			tc.setup(f)
+			var diagnostics []storage.Diagnostic
+			p.SetObserver(diagnosticObserver(func(d storage.Diagnostic) { diagnostics = append(diagnostics, d) }))
+			evidence, err := p.Verify(context.Background(), i)
+			if !errors.Is(err, tc.err) || evidence.Quota != nil {
+				t.Fatalf("unexpected verification result: %v", err)
+			}
+			want := storage.Diagnostic{Component: "bhpan", Operation: tc.op, Category: tc.category}
+			if len(diagnostics) != 1 || diagnostics[0] != want {
+				t.Fatalf("unexpected diagnostics: %+v", diagnostics)
+			}
+		})
+	}
 }
 
 func TestCheckpointReadAndPermanentDeletion(t *testing.T) {

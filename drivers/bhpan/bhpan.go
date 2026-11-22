@@ -329,9 +329,8 @@ func (s *session) safeErr(ctx context.Context, op string, err error) error {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+			err = ctxErr
 		}
-		return err
 	}
 	return s.pool.safe(op, err)
 }
@@ -419,6 +418,7 @@ func (p *Pool) Verify(ctx context.Context, i storage.Instance) (storage.Instance
 		return storage.InstanceEvidence{}, s.safeErr(ctx, "identity", err)
 	}
 	if accountDomain(identity.ID) != s.account {
+		p.observe("identity", "bhpan_identity_mismatch", 0)
 		return storage.InstanceEvidence{}, storage.ErrDenied
 	}
 	dir, err := s.client.List(opCtx, s.library)
@@ -432,13 +432,19 @@ func (p *Pool) Verify(ctx context.Context, i storage.Instance) (storage.Instance
 		}
 	}
 	if !found {
+		p.observe("list", "bhpan_root_missing", 0)
 		return storage.InstanceEvidence{}, storage.ErrDenied
 	}
 	quota, err := s.client.Quota(opCtx)
 	if err != nil {
 		return storage.InstanceEvidence{}, s.safeErr(ctx, "quota", err)
 	}
-	return storage.InstanceEvidence{AccountDomain: s.account, ProviderFree: quota.Available(), VerifiedAt: time.Now()}, nil
+	return storage.InstanceEvidence{
+		AccountDomain: s.account,
+		ProviderFree:  quota.Available(),
+		VerifiedAt:    time.Now(),
+		Quota:         &storage.ProviderQuotaSample{TotalBytes: quota.Allocated, UsedBytes: quota.Used},
+	}, nil
 }
 func (p *Pool) Resolve(ctx context.Context, i storage.Instance) (storage.Driver, error) {
 	if _, err := p.get(i); err != nil {
@@ -774,26 +780,31 @@ func (p *Pool) safe(op string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if p != nil && !errors.Is(err, protocol.ErrNotFound) {
-		if obsPtr := p.observer.Load(); obsPtr != nil && *obsPtr != nil {
-			operation := op
-			status := 0
-			var pe *protocol.Error
-			if errors.As(err, &pe) {
-				if pe.Operation != "" {
-					operation = pe.Operation
-				}
-				status = pe.Status
+	if !errors.Is(err, protocol.ErrNotFound) {
+		status := 0
+		var pe *protocol.Error
+		if errors.As(err, &pe) {
+			if pe.Operation != "" {
+				op = pe.Operation
 			}
-			storage.EmitDiagnostic(*obsPtr, storage.Diagnostic{
-				Component:  "bhpan",
-				Operation:  operation,
-				Category:   bhpanCategory(err),
-				HTTPStatus: status,
-			})
+			status = pe.Status
 		}
+		p.observe(op, bhpanCategory(err), status)
 	}
 	return safe(err)
+}
+func (p *Pool) observe(op, category string, status int) {
+	if p == nil {
+		return
+	}
+	if obsPtr := p.observer.Load(); obsPtr != nil {
+		storage.EmitDiagnostic(*obsPtr, storage.Diagnostic{
+			Component:  "bhpan",
+			Operation:  op,
+			Category:   category,
+			HTTPStatus: status,
+		})
+	}
 }
 func bhpanCategory(err error) string {
 	switch {

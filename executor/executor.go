@@ -174,7 +174,7 @@ func (e *Executor) maintenance(ctx context.Context) {
 	position := maintenancePosition{}
 	for !e.stopping() {
 		started := time.Now()
-		work, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		work, cancel := context.WithTimeout(ctx, MaintenanceSweepTimeout)
 		err := e.maintenanceSweep(work, &position)
 		cancel()
 		e.mu.Lock()
@@ -184,7 +184,7 @@ func (e *Executor) maintenance(ctx context.Context) {
 			e.state.LastError = code(err)
 		}
 		e.mu.Unlock()
-		if !e.wait(ctx, e.cfg.MaintenanceInterval-time.Since(started)) {
+		if !e.waitForMaintenance(ctx, started.Add(e.cfg.MaintenanceInterval), &position) {
 			return
 		}
 	}

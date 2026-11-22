@@ -172,7 +172,7 @@ func TestCustodyChallengeCooldownCleanupAndCandidateReasons(t *testing.T) {
 		t.Fatalf("paused live instance must not be deleted before revocation, got %v", err)
 	}
 
-	// Check ContributionCandidate reason & quota_expires_at (fresh -> "", expired -> "capacity_unknown", zero free -> "capacity_exhausted").
+	// The candidate's capacity reason follows its current quota observation.
 	ownerDomain := custody.OwnerDomain(user)
 	cands, err := h.s.ListContributionCandidates(h.ctx, h.actor, ownerDomain, 10, "")
 	if err != nil || len(cands.Items) != 1 || cands.Items[0].Reason != "" || cands.Items[0].AvailableBytes <= 0 || cands.Items[0].QuotaExpiresAt.IsZero() {
@@ -180,8 +180,8 @@ func TestCustodyChallengeCooldownCleanupAndCandidateReasons(t *testing.T) {
 	}
 	h.clock.Add(6 * time.Minute)
 	expiredCands, err := h.s.ListContributionCandidates(h.ctx, h.actor, ownerDomain, 10, "")
-	if err != nil || len(expiredCands.Items) != 1 || expiredCands.Items[0].Reason != "capacity_unknown" || expiredCands.Items[0].AvailableBytes != 0 {
-		t.Fatalf("expected capacity_unknown for expired quota sample, got %+v err=%v", expiredCands, err)
+	if err != nil || len(expiredCands.Items) != 1 || expiredCands.Items[0].Reason != "capacity_expired" || expiredCands.Items[0].AvailableBytes != 0 {
+		t.Fatalf("expected capacity_expired for expired quota sample, got %+v err=%v", expiredCands, err)
 	}
 	instances, _ := h.s.Instances(h.ctx, h.actor, 100, "")
 	inst := instances[0]

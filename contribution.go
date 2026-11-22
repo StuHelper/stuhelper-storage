@@ -69,8 +69,8 @@ func (s *Service) SummarizeContributions(ctx context.Context, p Principal) (Cont
 					}
 					out.DeclaredBytes += ctrl.LimitBytes
 				}
-				h := instanceHealth(i, now)
-				if h.Reason == "" || h.Reason == "capacity_exhausted" {
+				if i.currentPlacementQuota(now) {
+					h := instanceHealth(i, now)
 					out.ActiveInstances++
 					if h.AvailableBytes > math.MaxInt64-out.AvailableBytes {
 						return ErrUnavailable
@@ -120,11 +120,7 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 			out.NextCursor = items[n-1].ID
 		}
 		for _, i := range items {
-			i.State = "active" // Compute potential capacity without enabling the instance.
-			if i.Limit == 0 {
-				i.Limit = 1 << 60
-			} // Initial custody has no contribution allocation yet.
-			health := instanceHealth(i, now)
+			health := i.candidateHealth(now)
 			out.Items = append(out.Items, ContributionCandidate{
 				ID:                     i.ID,
 				Adapter:                i.Adapter,
@@ -137,6 +133,16 @@ func (s *Service) ListContributionCandidates(ctx context.Context, p Principal, o
 		return s.authorize(ctx, p, "storage.contributions.read", "", Protection{})
 	})
 	return out, e
+}
+
+func (i Instance) candidateHealth(now time.Time) InstanceHealth {
+	// Compute potential capacity without enabling the instance. Newly
+	// accepted custody has no contribution allocation yet.
+	i.State = "active"
+	if i.Limit == 0 {
+		i.Limit = 1 << 60
+	}
+	return instanceHealth(i, now)
 }
 
 // ContributionControl is a permanent, monotonically revised business binding.
@@ -164,13 +170,21 @@ type ContributionSnapshot struct {
 	ReservedBytes          int64                `json:"reserved_bytes"`
 	AvailableBytes         int64                `json:"available_bytes"`
 	RemainingReplicas      int64                `json:"remaining_replicas"`
-	ObservedAt             time.Time            `json:"observed_at"`
+	ObservedAt             *time.Time           `json:"observed_at"`
+	CapacityStatus         string               `json:"capacity_status"`
+	SnapshotAt             time.Time            `json:"-"`
 }
 
 func (s *Service) contributionSnapshot(tx Transaction, i Instance) (ContributionSnapshot, error) {
 	remaining, err := tx.InstanceReplicas(i.ID)
-	h := instanceHealth(i, s.now())
-	return ContributionSnapshot{InstanceID: i.ID, Adapter: i.Adapter, Revision: i.Revision, Control: i.ContributionControl, State: i.State, Authorized: i.Authorized, AuthorizationExpiresAt: i.ExpiresAt, QuotaExpiresAt: i.QuotaExpiresAt, UsedBytes: i.Used, ReservedBytes: i.Reserved, AvailableBytes: h.AvailableBytes, RemainingReplicas: remaining, ObservedAt: s.now()}, err
+	now := s.now()
+	h := instanceHealth(i, now)
+	return ContributionSnapshot{
+		InstanceID: i.ID, Adapter: i.Adapter, Revision: i.Revision, Control: i.ContributionControl,
+		State: i.State, Authorized: i.Authorized, AuthorizationExpiresAt: i.ExpiresAt, QuotaExpiresAt: i.QuotaExpiresAt,
+		UsedBytes: i.Used, ReservedBytes: i.Reserved, AvailableBytes: h.AvailableBytes, RemainingReplicas: remaining,
+		ObservedAt: i.quotaObservedAt(), CapacityStatus: i.quotaStatus(now), SnapshotAt: now,
+	}, err
 }
 func (s *Service) InspectContribution(ctx context.Context, p Principal, id, owner string) (ContributionSnapshot, error) {
 	var out ContributionSnapshot
@@ -273,6 +287,17 @@ func (s *Service) ApplyContribution(ctx context.Context, p Principal, id string,
 		}
 		if c.State == "active" && c.LimitBytes < i.Used+i.Reserved {
 			return ErrConflict
+		}
+		if old := i.ContributionControl; (c.State == "active" || c.State == "paused") &&
+			(old == nil || old.State == "draining" && c.State == "active" ||
+				ContributionConditionsExpand(old.LimitBytes, old.PersonalReserve, c.LimitBytes, c.PersonalReserve)) {
+			limit, err := i.ownerCapacity(s.now()).ContributionLimit(c.PersonalReserve)
+			if err != nil {
+				return err
+			}
+			if c.LimitBytes > limit {
+				return ErrContributionLimitExceeded
+			}
 		}
 		i.ContributionControl = &c
 		i.Limit = c.LimitBytes

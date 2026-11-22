@@ -243,7 +243,9 @@ func respondError(w http.ResponseWriter, err error) {
 	for _, entry := range []struct {
 		err    error
 		status int
-	}{{storage.ErrInput, 400}, {storage.ErrChallenge, 403}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404}, {storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
+	}{{storage.ErrInput, 400}, {storage.ErrChallenge, 403}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404},
+		{storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrContributionLimitExceeded, 409}, {storage.ErrContributionCapacityUnavailable, 409},
+		{storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
 		if errors.Is(err, entry.err) {
 			status, code = entry.status, entry.err.Error()
 			break
@@ -294,6 +296,20 @@ func convert[A, B any](value A) (B, error) {
 	}
 	return out, nil
 }
+
+type instanceResponse struct {
+	storage.Instance
+	ProviderFree *int64 `json:"provider_free,omitempty"`
+}
+
+func projectInstance(i storage.Instance) instanceResponse {
+	result := instanceResponse{Instance: i}
+	if i.Ownership != "contributor" {
+		result.ProviderFree = &i.ProviderFree
+	}
+	return result
+}
+
 func (h *handler) instances(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	limit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -311,7 +327,11 @@ func (h *handler) instances(w http.ResponseWriter, r *http.Request, p storage.Pr
 	if len(items) == limit {
 		next = items[len(items)-1].ID
 	}
-	return map[string]any{"items": items, "next_cursor": next}, nil
+	instances := make([]instanceResponse, 0, len(items))
+	for _, i := range items {
+		instances = append(instances, projectInstance(i))
+	}
+	return map[string]any{"items": instances, "next_cursor": next}, nil
 }
 func (h *handler) register(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	input, err := decode[sdk.InstanceInput](r)
@@ -322,7 +342,8 @@ func (h *handler) register(w http.ResponseWriter, r *http.Request, p storage.Pri
 	if err != nil {
 		return nil, err
 	}
-	return h.s.Register(r.Context(), p, r.Header.Get("Idempotency-Key"), v)
+	result, err := h.s.Register(r.Context(), p, r.Header.Get("Idempotency-Key"), v)
+	return projectInstance(result), err
 }
 func (h *handler) update(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	input, err := decode[sdk.InstanceInput](r)
@@ -336,7 +357,8 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request, p storage.Princ
 	if v.ID != r.PathValue("id") {
 		return nil, storage.ErrInput
 	}
-	return h.s.UpdateInstance(r.Context(), p, r.Header.Get("Idempotency-Key"), v)
+	result, err := h.s.UpdateInstance(r.Context(), p, r.Header.Get("Idempotency-Key"), v)
+	return projectInstance(result), err
 }
 func (h *handler) create(w http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
 	input, err := decode[sdk.CreateObject](r)

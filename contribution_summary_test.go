@@ -219,6 +219,7 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 
 func TestContributionSummaryRejectsUnrepresentableCapacity(t *testing.T) {
 	h := harnessFor(t)
+	h.provider.quota = &storage.ProviderQuotaSample{TotalBytes: 1 << 60}
 	for n := 0; n < 8; n++ {
 		id := fmt.Sprintf("large-%d", n)
 		i := h.instance(t, id, id, "contributor", 0)

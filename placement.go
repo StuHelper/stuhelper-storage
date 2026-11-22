@@ -410,6 +410,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 // counting the same in-flight write both in provider usage and local reservations.
 func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) error {
 	if err := s.authorize(ctx, p, "storage.instances.manage", id, Protection{}); err != nil {
+		s.observe("refresh_quota_precheck", id, "", err)
 		return err
 	}
 	var snapshot Instance
@@ -427,33 +428,57 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 		}
 		return nil
 	}); err != nil {
+		s.observe("refresh_quota_precheck", id, "", err)
 		return err
 	}
 	evidence, err := s.verifier.Verify(ctx, snapshot)
+	if err == nil && (evidence.AccountDomain != snapshot.AccountDomain || !evidence.validQuota(s.now())) {
+		err = ErrConflict
+	}
 	if err != nil {
-		s.observe("refresh_instance", id, "", err)
-		return err
-	}
-	if evidence.AccountDomain != snapshot.AccountDomain || evidence.ProviderFree < 0 || evidence.VerifiedAt.Before(s.now().Add(-time.Minute)) || evidence.VerifiedAt.After(s.now().Add(time.Minute)) {
-		return ErrConflict
-	}
-	return s.repo.Transaction(ctx, func(tx Transaction) error {
-		if err := s.authorize(ctx, p, "storage.instances.manage", id, Protection{}); err != nil {
+		s.observe("refresh_quota_verify", id, "", err)
+		// A provider timeout can consume the request deadline. Give the
+		// fenced failure record a small, independent database budget.
+		if errors.Is(ctx.Err(), context.Canceled) {
 			return err
 		}
-		i, err := tx.Instance(id)
+		record, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		if saveErr := s.finishQuotaRefresh(record, p, snapshot, nil); saveErr != nil {
+			s.observe("refresh_quota_persist", id, "", saveErr)
+		}
+		return err
+	}
+	err = s.finishQuotaRefresh(ctx, p, snapshot, &evidence)
+	if err != nil {
+		s.observe("refresh_quota_persist", id, "", err)
+	}
+	return err
+}
+
+func (s *Service) finishQuotaRefresh(ctx context.Context, p Principal, snapshot Instance, evidence *InstanceEvidence) error {
+	return s.repo.Transaction(ctx, func(tx Transaction) error {
+		if err := s.authorize(ctx, p, "storage.instances.manage", snapshot.ID, Protection{}); err != nil {
+			return err
+		}
+		i, err := tx.Instance(snapshot.ID)
 		if err != nil {
 			return err
 		}
 		if !i.Authorized || i.State == "revoked" || !i.ExpiresAt.After(s.now()) {
 			return ErrDenied
 		}
-		if i.Revision != snapshot.Revision || i.Reserved != 0 || i.QuotaRevision != snapshot.QuotaRevision {
+		if i.Revision != snapshot.Revision || !i.quotaLedgerMatches(snapshot) {
 			return ErrConflict
 		}
-		i.ProviderFree = evidence.ProviderFree
-		i.QuotaExpiresAt = s.now().Add(s.cfg.QuotaValidity)
-		i.QuotaRevision++
+		if evidence == nil {
+			if i.QuotaObservation.ReadFailed {
+				return nil
+			}
+			i.QuotaObservation.ReadFailed = true
+		} else {
+			s.saveQuotaEvidence(&i, *evidence)
+		}
 		return tx.SaveInstance(i)
 	})
 }

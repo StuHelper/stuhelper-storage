@@ -63,6 +63,30 @@ func (e ContributionControlState) Valid() bool {
 	}
 }
 
+// Defines values for ContributionSnapshotCapacityStatus.
+const (
+	Available  ContributionSnapshotCapacityStatus = "available"
+	Expired    ContributionSnapshotCapacityStatus = "expired"
+	NotRead    ContributionSnapshotCapacityStatus = "not_read"
+	ReadFailed ContributionSnapshotCapacityStatus = "read_failed"
+)
+
+// Valid indicates whether the value is a known member of the ContributionSnapshotCapacityStatus enum.
+func (e ContributionSnapshotCapacityStatus) Valid() bool {
+	switch e {
+	case Available:
+		return true
+	case Expired:
+		return true
+	case NotRead:
+		return true
+	case ReadFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContributionSummaryStatus.
 const (
 	Degraded    ContributionSummaryStatus = "degraded"
@@ -429,7 +453,9 @@ type ContributionCandidate struct {
 	AvailableBytes         int64     `json:"available_bytes"`
 	Id                     string    `json:"id"`
 	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
-	Reason                 string    `json:"reason"`
+
+	// Reason Capacity reasons are capacity_unknown when a current observation has not been recorded, capacity_read_failed when the latest quota read failed, and capacity_expired when the last successful read expired.
+	Reason string `json:"reason"`
 }
 
 // ContributionCandidates defines model for ContributionCandidates.
@@ -455,20 +481,28 @@ type ContributionControlState string
 
 // ContributionSnapshot defines model for ContributionSnapshot.
 type ContributionSnapshot struct {
-	Adapter                string               `json:"adapter"`
-	AuthorizationExpiresAt time.Time            `json:"authorization_expires_at"`
-	Authorized             bool                 `json:"authorized"`
-	AvailableBytes         int64                `json:"available_bytes"`
-	Control                *ContributionControl `json:"control,omitempty"`
-	InstanceId             string               `json:"instance_id"`
-	ObservedAt             time.Time            `json:"observed_at"`
-	QuotaExpiresAt         time.Time            `json:"quota_expires_at"`
-	RemainingReplicas      int64                `json:"remaining_replicas"`
-	ReservedBytes          int64                `json:"reserved_bytes"`
-	Revision               int64                `json:"revision"`
-	State                  string               `json:"state"`
-	UsedBytes              int64                `json:"used_bytes"`
+	Adapter                string    `json:"adapter"`
+	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
+	Authorized             bool      `json:"authorized"`
+	AvailableBytes         int64     `json:"available_bytes"`
+
+	// CapacityStatus The provider quota reading is either current, unrecorded, failed on the latest refresh, or expired.
+	CapacityStatus ContributionSnapshotCapacityStatus `json:"capacity_status"`
+	Control        *ContributionControl               `json:"control,omitempty"`
+	InstanceId     string                             `json:"instance_id"`
+
+	// ObservedAt Time of the last successful provider quota read. Null when a successful read has not been recorded.
+	ObservedAt        *time.Time `json:"observed_at"`
+	QuotaExpiresAt    time.Time  `json:"quota_expires_at"`
+	RemainingReplicas int64      `json:"remaining_replicas"`
+	ReservedBytes     int64      `json:"reserved_bytes"`
+	Revision          int64      `json:"revision"`
+	State             string     `json:"state"`
+	UsedBytes         int64      `json:"used_bytes"`
 }
+
+// ContributionSnapshotCapacityStatus The provider quota reading is either current, unrecorded, failed on the latest refresh, or expired.
+type ContributionSnapshotCapacityStatus string
 
 // ContributionSummary defines model for ContributionSummary.
 type ContributionSummary struct {
@@ -590,15 +624,17 @@ type Instance struct {
 	OwnerDomain        string            `json:"owner_domain"`
 	Ownership          InstanceOwnership `json:"ownership"`
 	PersonalReserve    *int64            `json:"personal_reserve,omitempty"`
-	ProviderFree       int64             `json:"provider_free"`
-	QuotaExpiresAt     time.Time         `json:"quota_expires_at"`
-	QuotaRevision      int64             `json:"quota_revision"`
-	Reserved           int64             `json:"reserved"`
-	Revision           int64             `json:"revision"`
-	Root               string            `json:"root"`
-	SafetyMargin       *int64            `json:"safety_margin,omitempty"`
-	State              InstanceState     `json:"state"`
-	Used               int64             `json:"used"`
+
+	// ProviderFree Provider free bytes adjusted by the placement ledger. Returned for platform-owned instances only.
+	ProviderFree   *int64        `json:"provider_free,omitempty"`
+	QuotaExpiresAt time.Time     `json:"quota_expires_at"`
+	QuotaRevision  int64         `json:"quota_revision"`
+	Reserved       int64         `json:"reserved"`
+	Revision       int64         `json:"revision"`
+	Root           string        `json:"root"`
+	SafetyMargin   *int64        `json:"safety_margin,omitempty"`
+	State          InstanceState `json:"state"`
+	Used           int64         `json:"used"`
 }
 
 // InstanceOwnership defines model for Instance.Ownership.
@@ -624,11 +660,13 @@ type InstanceHealth struct {
 	Id                     string    `json:"id"`
 	LimitBytes             int64     `json:"limit_bytes"`
 	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
-	Reason                 string    `json:"reason"`
-	ReservedBytes          int64     `json:"reserved_bytes"`
-	Revision               int64     `json:"revision"`
-	State                  string    `json:"state"`
-	UsedBytes              int64     `json:"used_bytes"`
+
+	// Reason Capacity reasons are capacity_unknown when a current observation has not been recorded, capacity_read_failed when the latest quota read failed, and capacity_expired when the last successful read expired.
+	Reason        string `json:"reason"`
+	ReservedBytes int64  `json:"reserved_bytes"`
+	Revision      int64  `json:"revision"`
+	State         string `json:"state"`
+	UsedBytes     int64  `json:"used_bytes"`
 }
 
 // InstanceInput defines model for InstanceInput.

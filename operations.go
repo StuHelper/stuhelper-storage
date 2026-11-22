@@ -80,10 +80,11 @@ func instanceHealth(i Instance, now time.Time) InstanceHealth {
 	case i.ContributionControl != nil && (i.ContributionControl.State != "active" || !i.ContributionControl.Until.After(now)):
 		out.Reason = "writes_disabled"
 	case !i.QuotaExpiresAt.After(now):
-		out.Reason = "capacity_unknown"
+		out.Reason = i.quotaReason(now)
 	default:
 		out.AvailableBytes = max(0, min(i.Limit-i.Used-i.Reserved, i.ProviderFree-i.PersonalReserve-i.SafetyMargin-i.Reserved))
-		if out.AvailableBytes == 0 {
+		out.Reason = i.quotaReason(now)
+		if out.AvailableBytes == 0 && out.Reason == "" {
 			out.Reason = "capacity_exhausted"
 		}
 	}

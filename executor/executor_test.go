@@ -129,17 +129,25 @@ func TestConfiguredQuotaRefreshWindowAndAuthorization(t *testing.T) {
 		authorized bool
 		state      string
 		grant      time.Duration
+		readStatus string
 		want       int64
 	}{
-		{"default", 0, true, "active", time.Hour, 1},
-		{"not-yet-due", 10 * time.Second, true, "active", time.Hour, 0},
-		{"custom-window", 45 * time.Second, true, "active", time.Hour, 1},
-		{"revoked", time.Minute, true, "revoked", time.Hour, 0},
-		{"unauthorized", time.Minute, false, "active", time.Hour, 0},
-		{"expired", time.Minute, true, "active", -time.Second, 0},
+		{"default", 0, true, "active", time.Hour, storage.CapacityAvailable, 1},
+		{"not-yet-due", 10 * time.Second, true, "active", time.Hour, storage.CapacityAvailable, 0},
+		{"legacy-no-observation", 10 * time.Second, true, "active", time.Hour, storage.CapacityNotRead, 1},
+		{"failed-before-restart", 10 * time.Second, true, "active", time.Hour, storage.CapacityReadFailed, 1},
+		{"custom-window", 45 * time.Second, true, "active", time.Hour, storage.CapacityAvailable, 1},
+		{"revoked", time.Minute, true, "revoked", time.Hour, storage.CapacityAvailable, 0},
+		{"unauthorized", time.Minute, false, "active", time.Hour, storage.CapacityAvailable, 0},
+		{"expired", time.Minute, true, "active", -time.Second, storage.CapacityAvailable, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := &refreshBackend{instance: storage.Instance{ID: "account", Authorized: tc.authorized, State: tc.state, ExpiresAt: now.Add(tc.grant), QuotaExpiresAt: now.Add(30 * time.Second)}}
+			i := storage.Instance{ID: "account", Authorized: tc.authorized, State: tc.state, ExpiresAt: now.Add(tc.grant), QuotaExpiresAt: now.Add(30 * time.Second)}
+			if tc.readStatus != storage.CapacityNotRead {
+				i.QuotaObservation.ObservedAt = now.Add(-time.Minute)
+			}
+			i.QuotaObservation.ReadFailed = tc.readStatus == storage.CapacityReadFailed
+			b := &refreshBackend{instance: i}
 			cfg := config()
 			cfg.Clock = func() time.Time { return now }
 			cfg.QuotaRefreshAhead = tc.ahead
