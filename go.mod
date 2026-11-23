@@ -3,7 +3,7 @@ module github.com/StuHelper/stuhelper-storage
 go 1.27.3
 
 require (
-	github.com/StuHelper/stuhelper-storage-bhpan v0.1.1
+	github.com/StuHelper/stuhelper-storage-bhpan v0.1.3
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/oapi-codegen/runtime v1.8.0
 )
@@ -34,5 +34,3 @@ require (
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
-
-replace github.com/StuHelper/stuhelper-storage-bhpan v0.1.1 => github.com/StuHelper/stuhelper-storage-bhpan v0.0.0-20261123171252-0a4ab1d46e38
