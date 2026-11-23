@@ -62,7 +62,7 @@ func TestCustodyChallengeCooldownCleanupAndCandidateReasons(t *testing.T) {
 	foreign := storage.Principal{Issuer: "test-issuer", Subject: "foreign"}
 	reqBody := custody.Request{
 		Adapter:    "bhpan",
-		Credential: json.RawMessage(`{"mode":"sso","username":"student","password":"test-only-value"}`),
+		Credential: json.RawMessage(`{"username":"student","password":"test-only-value"}`),
 		Until:      h.clock.Now().Add(24 * time.Hour),
 		Consent:    custody.Consent{Accepted: true, Version: "custody-v1", Digest: strings.Repeat("a", 64)},
 	}

@@ -181,7 +181,7 @@ func TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify(t *testi
 	}
 	_, _ = cSvc.Submit(h.ctx, student, "", "11111111-1111-4111-8111-111111111111", custody.Request{
 		Adapter:    "bhpan",
-		Credential: json.RawMessage(`{"mode":"local","username":"u1","password":"UltraSecretPassword99"}`),
+		Credential: json.RawMessage(`{"username":"u1","password":"UltraSecretPassword99"}`),
 		Until:      h.clock.Now().Add(24 * time.Hour),
 		Consent:    custody.Consent{Accepted: true, Version: "custody-v1", Digest: strings.Repeat("b", 64)},
 	})

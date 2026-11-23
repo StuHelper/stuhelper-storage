@@ -783,8 +783,6 @@ export interface components {
             /** @enum {string} */
             adapter: "bhpan";
             credential: {
-                /** @enum {string} */
-                mode: "local" | "sso";
                 username: string;
                 password: string;
             };
@@ -805,9 +803,12 @@ export interface components {
             state: "pending" | "ready" | "blocked" | "credentials_required";
             /** Format: date-time */
             authorization_expires_at: string;
+            /** @description Empty for an adopted instance that has no self-service request yet. */
             request_id: string;
             /** @enum {string} */
             last_error: "" | "authorization_rejected" | "interactive_verification_required" | "dependency_unavailable" | "result_unknown" | "conflict" | "attempts_exhausted" | "credentials_required";
+            /** @description The owner may withdraw this incomplete application. The service checks pending work again on withdrawal. */
+            can_withdraw?: boolean;
         };
         CustodyPage: {
             items: components["schemas"]["CustodyBinding"][];

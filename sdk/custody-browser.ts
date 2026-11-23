@@ -49,7 +49,8 @@ export function parseCustodyBinding(value: unknown): CustodyBinding {
     revision: number(v.revision),
     state: choice(v.state, ['pending', 'ready', 'blocked', 'credentials_required']),
     authorization_expires_at: until,
-    request_id: text(v.request_id, 128),
+    request_id: v.request_id === '' && (v.state === 'ready' || v.state === 'credentials_required') ? '' : text(v.request_id, 128),
+    ...(v.can_withdraw === true ? { can_withdraw: true } : {}),
     last_error: choice(v.last_error, ['', 'authorization_rejected', 'interactive_verification_required', 'dependency_unavailable', 'result_unknown', 'conflict', 'attempts_exhausted', 'credentials_required']),
   };
 }

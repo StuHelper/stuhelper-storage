@@ -38,6 +38,12 @@ func (t *custodyTx) SaveBinding(b custody.Binding) error {
 	_, e = t.tx.ExecContext(t.ctx, `INSERT INTO storage.custody_bindings(id,owner_issuer,owner_subject,account_domain,data) VALUES($1,$2,$3,NULLIF($4,''),$5) ON CONFLICT(id) DO UPDATE SET account_domain=EXCLUDED.account_domain,data=EXCLUDED.data WHERE storage.custody_bindings.owner_issuer=EXCLUDED.owner_issuer AND storage.custody_bindings.owner_subject=EXCLUDED.owner_subject`, b.ID, b.Owner.Issuer, b.Owner.Subject, b.AccountDomain, data)
 	return t.safe("save_binding", e)
 }
+func (t *custodyTx) HasPendingWrites(id string, now time.Time) (bool, error) {
+	var pending bool
+	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.custody_operations WHERE data->>'BindingID'=$1
+ AND NOT (data->>'Complete')::boolean AND ((data->>'LeaseUntil')::timestamptz>$2 OR COALESCE(data->'Result','null'::jsonb)<>'null'::jsonb))`, id, now).Scan(&pending)
+	return pending, t.safe("custody_pending_writes", err)
+}
 func (t *custodyTx) DeleteBinding(id string, owner storage.Principal, keepAttemptsSince time.Time) error {
 	res, e := t.tx.ExecContext(t.ctx, `DELETE FROM storage.custody_bindings WHERE id=$1 AND owner_issuer=$2 AND owner_subject=$3`, id, owner.Issuer, owner.Subject)
 	if e != nil {
@@ -71,11 +77,29 @@ func (t *custodyTx) SaveOperation(o custody.Operation) error {
 	_, e = t.tx.ExecContext(t.ctx, `INSERT INTO storage.custody_operations(id,completed_at,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET completed_at=EXCLUDED.completed_at,data=EXCLUDED.data`, o.ID, completedAt, data)
 	return t.safe("save_operation", e)
 }
+
+// Include operator-adopted instances in their owner's self-service list. The
+// original instance ID is the authorization target. The first explicit update
+// materializes a binding in the same transaction as its request and consent.
+const ownedBindings = `SELECT b.id,b.data FROM storage.custody_bindings b WHERE b.owner_issuer=$1 AND b.owner_subject=$2
+UNION ALL
+SELECT i.id,jsonb_build_object(
+ 'id',i.id,'adapter','bhpan','state','ready','revision',(i.data->>'credential_revision')::bigint,
+ 'authorization_expires_at',i.data->'expires_at','request_id','','last_error','',
+ 'Owner',jsonb_build_object('issuer',$1::text,'subject',$2::text),'AccountDomain',i.account_domain,'Instance',i.data)
+FROM storage.instances i WHERE i.data->>'ownership'='contributor' AND i.data->>'owner_domain'=$3
+ AND i.data->>'adapter'='bhpan' AND i.data->>'state'<>'revoked' AND COALESCE(i.data->>'contribution_approval','')<>''
+ AND NOT EXISTS (SELECT 1 FROM storage.custody_bindings b WHERE b.id=i.id)`
+
+func (t *custodyTx) OwnedBinding(p storage.Principal, id string) (custody.Binding, error) {
+	return read[custody.Binding](t.transaction, `SELECT data FROM (`+ownedBindings+`) rows WHERE id=$4`, p.Issuer, p.Subject, custody.OwnerDomain(p), id)
+}
+
 func (t *custodyTx) List(p storage.Principal, n int, after string) ([]custody.Binding, error) {
 	if !p.Valid() {
 		return list[custody.Binding](t.transaction, `SELECT data FROM storage.custody_bindings WHERE id>$1 ORDER BY id LIMIT $2`, after, n)
 	}
-	return list[custody.Binding](t.transaction, `SELECT data FROM storage.custody_bindings WHERE owner_issuer=$1 AND owner_subject=$2 AND id>$3 ORDER BY id LIMIT $4`, p.Issuer, p.Subject, after, n)
+	return list[custody.Binding](t.transaction, `SELECT data FROM (`+ownedBindings+`) rows WHERE id>$4 ORDER BY id LIMIT $5`, p.Issuer, p.Subject, custody.OwnerDomain(p), after, n)
 }
 func (t *custodyTx) Count(p storage.Principal) (int, error) {
 	var n int

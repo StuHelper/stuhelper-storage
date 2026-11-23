@@ -26,12 +26,26 @@ func (q ProviderQuotaSample) remaining() int64 {
 // QuotaObservation is persisted by the repository. Instance's HTTP and
 // idempotency representations deliberately exclude it.
 type QuotaObservation struct {
-	Sample     *ProviderQuotaSample `json:"sample,omitempty"`
-	ObservedAt time.Time            `json:"observed_at,omitzero"`
-	ReadFailed bool                 `json:"read_failed,omitempty"`
+	RefreshRequested bool                 `json:"refresh_requested,omitempty"`
+	Sample           *ProviderQuotaSample `json:"sample,omitempty"`
+	ObservedAt       time.Time            `json:"observed_at,omitzero"`
+	ReadFailed       bool                 `json:"read_failed,omitempty"`
+}
+
+const (
+	RecoveryWaitingRetry        = "waiting_retry"
+	RecoveryWaitingScan         = "waiting_scan"
+	RecoveryCredentialsRequired = "credentials_required"
+)
+
+// CustodyRecoverySource reports whether this bound revision can still log in.
+// Reading it must not contact the provider.
+type CustodyRecoverySource interface {
+	CredentialsRequired(context.Context, Instance) bool
 }
 
 type ProviderCapacity struct {
+	Recovery       string     `json:"recovery,omitempty"`
 	TotalBytes     *int64     `json:"total_bytes"`
 	UsedBytes      *int64     `json:"used_bytes"`
 	RemainingBytes *int64     `json:"remaining_bytes"`
@@ -134,6 +148,15 @@ func (i Instance) ownerCapacity(now time.Time) OwnerCapacity {
 // InspectOwnerCapacities projects private provider readings for one verified
 // principal. The calling module separately authorizes the owner. A missing or
 // unowned ID has no entry in the returned map.
+// SetQuotaRetry reports an actual scheduled retry from the maintenance worker.
+func (s *Service) SetQuotaRetry(id string, revision int64, pending bool) {
+	if pending {
+		s.quotaRetries.Store(id, revision)
+	} else {
+		s.quotaRetries.Delete(id)
+	}
+}
+
 func (s *Service) InspectOwnerCapacities(ctx context.Context, actor, owner Principal, ids []string) (map[string]OwnerCapacity, error) {
 	result := make(map[string]OwnerCapacity, len(ids))
 	if !owner.Valid() || len(ids) > 100 {
@@ -151,6 +174,7 @@ func (s *Service) InspectOwnerCapacities(ctx context.Context, actor, owner Princ
 		return result, nil
 	}
 	domain := ContributionOwnerDomain(owner)
+	var failed []Instance
 	err := s.readTx(ctx, func(tx Transaction) error {
 		instances, err := tx.InstanceSnapshots(ids)
 		if err != nil {
@@ -160,12 +184,26 @@ func (s *Service) InspectOwnerCapacities(ctx context.Context, actor, owner Princ
 		for _, i := range instances {
 			if i.Ownership == "contributor" && i.OwnerDomain == domain {
 				result[i.ID] = i.ownerCapacity(now)
+				if i.QuotaObservation.ReadFailed {
+					failed = append(failed, i)
+				}
 			}
 		}
 		return s.authorize(ctx, actor, "storage.contributions.read", "", Protection{})
 	})
 	if err != nil {
 		return nil, err
+	}
+	for _, i := range failed {
+		c := result[i.ID]
+		c.ProviderCapacity.Recovery = RecoveryWaitingScan
+		if rev, ok := s.quotaRetries.Load(i.ID); ok && rev == i.CredentialRevision {
+			c.ProviderCapacity.Recovery = RecoveryWaitingRetry
+		}
+		if source, ok := s.verifier.(CustodyRecoverySource); ok && source.CredentialsRequired(ctx, i) {
+			c.ProviderCapacity.Recovery = RecoveryCredentialsRequired
+		}
+		result[i.ID] = c
 	}
 	return result, nil
 }
@@ -187,4 +225,31 @@ func (s *Service) saveQuotaEvidence(i *Instance, evidence InstanceEvidence) {
 func (i Instance) quotaLedgerMatches(before Instance) bool {
 	return before.Reserved == 0 && i.Reserved == 0 && i.QuotaRevision == before.QuotaRevision &&
 		i.Used == before.Used && i.ProviderFree == before.ProviderFree
+}
+
+// RequestBoundQuotaRefresh schedules an already authorized instance for the
+// next maintenance sweep, including the first sweep after an offline migration.
+func (s *Service) RequestBoundQuotaRefresh(ctx context.Context, p Principal, expected Instance) error {
+	return s.repo.Transaction(ctx, func(tx Transaction) error {
+		if err := s.authorize(ctx, p, "storage.instances.manage", expected.ID, Protection{}); err != nil {
+			return err
+		}
+		i, err := tx.Instance(expected.ID)
+		if err != nil {
+			return err
+		}
+		if !i.Authorized || i.State == "revoked" || !i.ExpiresAt.After(s.now()) {
+			return ErrDenied
+		}
+		if i.Adapter != "bhpan" || i.Ownership != "contributor" || i.ContributionApproval == "" ||
+			i.OwnerDomain != expected.OwnerDomain || i.AccountDomain != expected.AccountDomain || i.Root != expected.Root ||
+			i.CredentialRef != expected.CredentialRef || i.CredentialRevision != expected.CredentialRevision || !i.ExpiresAt.Equal(expected.ExpiresAt) {
+			return ErrConflict
+		}
+		if i.QuotaObservation.RefreshRequested {
+			return nil
+		}
+		i.QuotaObservation.RefreshRequested = true
+		return tx.SaveInstance(i)
+	})
 }

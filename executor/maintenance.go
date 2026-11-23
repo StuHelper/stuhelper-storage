@@ -100,9 +100,10 @@ func (e *Executor) refreshNextInstance(ctx context.Context, position *maintenanc
 	}
 	position.instances = i.ID
 	delete(position.quotaRetries, i.ID)
+	e.reportQuotaRetry(i.ID, 0, false)
 	now := e.now()
 	if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(now) &&
-		(i.QuotaObservation.ObservedAt.IsZero() || i.QuotaObservation.ReadFailed || i.QuotaExpiresAt.Sub(now) <= e.cfg.QuotaRefreshAhead) {
+		(i.QuotaObservation.RefreshRequested || i.QuotaObservation.ObservedAt.IsZero() || i.QuotaObservation.ReadFailed || i.QuotaExpiresAt.Sub(now) <= e.cfg.QuotaRefreshAhead) {
 		// A failed account must not prevent the remaining accounts being checked.
 		err = e.backend.RefreshInstance(work, e.cfg.Principal, i.ID)
 		if retryableQuota(err) {
@@ -110,10 +111,17 @@ func (e *Executor) refreshNextInstance(ctx context.Context, position *maintenanc
 				position.quotaRetries = make(map[string]quotaRetry)
 			}
 			position.quotaRetries[i.ID] = quotaRetry{due: time.Now().Add(quotaRetryInterval)}
+			e.reportQuotaRetry(i.ID, i.CredentialRevision, true)
 		}
 		return false, err
 	}
 	return false, nil
+}
+
+func (e *Executor) reportQuotaRetry(id string, revision int64, pending bool) {
+	if observer, ok := e.backend.(interface{ SetQuotaRetry(string, int64, bool) }); ok {
+		observer.SetQuotaRetry(id, revision, pending)
+	}
 }
 
 func retryableQuota(err error) bool {
@@ -156,6 +164,7 @@ func (e *Executor) retryQuotas(ctx context.Context, position *maintenancePositio
 		retry.attempted++
 		if retry.attempted == maxQuotaRetries || !retryableQuota(err) {
 			delete(position.quotaRetries, id)
+			e.reportQuotaRetry(id, 0, false)
 			continue
 		}
 		retry.due = time.Now().Add(quotaRetryInterval << retry.attempted)
