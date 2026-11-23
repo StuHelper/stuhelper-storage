@@ -103,7 +103,7 @@ func (e *Executor) refreshNextInstance(ctx context.Context, position *maintenanc
 	e.reportQuotaRetry(i.ID, 0, false)
 	now := e.now()
 	if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(now) &&
-		(i.QuotaObservation.ObservedAt.IsZero() || i.QuotaObservation.ReadFailed || i.QuotaExpiresAt.Sub(now) <= e.cfg.QuotaRefreshAhead) {
+		(i.QuotaObservation.RefreshRequested || i.QuotaObservation.ObservedAt.IsZero() || i.QuotaObservation.ReadFailed || i.QuotaExpiresAt.Sub(now) <= e.cfg.QuotaRefreshAhead) {
 		// A failed account must not prevent the remaining accounts being checked.
 		err = e.backend.RefreshInstance(work, e.cfg.Principal, i.ID)
 		if retryableQuota(err) {

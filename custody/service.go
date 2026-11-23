@@ -448,7 +448,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 				applied, e = s.store.Register(work, s.cfg.Actor, "custody:"+op.ID, *op.Result)
 			}
 		} else {
-			applied, e = s.store.ReauthorizeInstance(work, s.cfg.Actor, "custody:"+op.ID, storage.CredentialRenewal{ID: target, ExpectedRevision: op.ExpectedRevision, CredentialRef: op.Result.CredentialRef, CredentialRevision: op.Result.CredentialRevision, Until: op.Until})
+			applied, e = s.store.ReauthorizeInstance(work, s.cfg.Actor, "custody:"+op.ID, storage.CredentialRenewal{ID: target, OwnerDomain: OwnerDomain(b.Owner), AccountDomain: op.Result.AccountDomain, Root: op.Result.Root, ExpectedRevision: op.ExpectedRevision, CredentialRef: op.Result.CredentialRef, CredentialRevision: op.Result.CredentialRevision, Until: op.Until})
 		}
 	}
 	if e == nil {

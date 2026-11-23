@@ -26,9 +26,10 @@ func (q ProviderQuotaSample) remaining() int64 {
 // QuotaObservation is persisted by the repository. Instance's HTTP and
 // idempotency representations deliberately exclude it.
 type QuotaObservation struct {
-	Sample     *ProviderQuotaSample `json:"sample,omitempty"`
-	ObservedAt time.Time            `json:"observed_at,omitzero"`
-	ReadFailed bool                 `json:"read_failed,omitempty"`
+	RefreshRequested bool                 `json:"refresh_requested,omitempty"`
+	Sample           *ProviderQuotaSample `json:"sample,omitempty"`
+	ObservedAt       time.Time            `json:"observed_at,omitzero"`
+	ReadFailed       bool                 `json:"read_failed,omitempty"`
 }
 
 const (
@@ -224,4 +225,31 @@ func (s *Service) saveQuotaEvidence(i *Instance, evidence InstanceEvidence) {
 func (i Instance) quotaLedgerMatches(before Instance) bool {
 	return before.Reserved == 0 && i.Reserved == 0 && i.QuotaRevision == before.QuotaRevision &&
 		i.Used == before.Used && i.ProviderFree == before.ProviderFree
+}
+
+// RequestBoundQuotaRefresh schedules an already authorized instance for the
+// next maintenance sweep, including the first sweep after an offline migration.
+func (s *Service) RequestBoundQuotaRefresh(ctx context.Context, p Principal, expected Instance) error {
+	return s.repo.Transaction(ctx, func(tx Transaction) error {
+		if err := s.authorize(ctx, p, "storage.instances.manage", expected.ID, Protection{}); err != nil {
+			return err
+		}
+		i, err := tx.Instance(expected.ID)
+		if err != nil {
+			return err
+		}
+		if !i.Authorized || i.State == "revoked" || !i.ExpiresAt.After(s.now()) {
+			return ErrDenied
+		}
+		if i.Adapter != "bhpan" || i.Ownership != "contributor" || i.ContributionApproval == "" ||
+			i.OwnerDomain != expected.OwnerDomain || i.AccountDomain != expected.AccountDomain || i.Root != expected.Root ||
+			i.CredentialRef != expected.CredentialRef || i.CredentialRevision != expected.CredentialRevision || !i.ExpiresAt.Equal(expected.ExpiresAt) {
+			return ErrConflict
+		}
+		if i.QuotaObservation.RefreshRequested {
+			return nil
+		}
+		i.QuotaObservation.RefreshRequested = true
+		return tx.SaveInstance(i)
+	})
 }
