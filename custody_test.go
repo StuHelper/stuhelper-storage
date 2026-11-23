@@ -173,7 +173,7 @@ func custodyFixture(t *testing.T) (*harness, *custody.Service, *custodyProvider,
 	if e != nil {
 		t.Fatal(e)
 	}
-	q := custody.Request{Adapter: "bhpan", Credential: json.RawMessage(`{"mode":"local","username":"fixture","password":"test-only-value"}`), Until: h.clock.Now().Add(24 * time.Hour), Consent: custody.Consent{Accepted: true, Version: "custody-v1", Digest: strings.Repeat("a", 64)}}
+	q := custody.Request{Adapter: "bhpan", Credential: json.RawMessage(`{"username":"fixture","password":"test-only-value"}`), Until: h.clock.Now().Add(24 * time.Hour), Consent: custody.Consent{Accepted: true, Version: "custody-v1", Digest: strings.Repeat("a", 64)}}
 	return h, s, provider, auth, storage.Principal{Issuer: "test-issuer", Subject: "user"}, q
 }
 func TestCustodyConsentOwnershipIdempotencyAndIsolation(t *testing.T) {
@@ -208,7 +208,7 @@ func TestCustodyConsentOwnershipIdempotencyAndIsolation(t *testing.T) {
 		t.Fatal("duplicate remote roots")
 	}
 	bad = q
-	bad.Credential = json.RawMessage(`{"password":"changed"}`)
+	bad.Credential = json.RawMessage(`{"username":"fixture","password":"changed"}`)
 	if _, e = s.Submit(h.ctx, user, "", key, bad); !errors.Is(e, storage.ErrConflict) {
 		t.Fatal(e)
 	}
@@ -667,4 +667,44 @@ func TestCustodyAuthenticationReceivesRouteDeadline(t *testing.T) {
 	if w.Code != http.StatusUnauthorized || auth.remaining <= 0 || auth.remaining > time.Minute {
 		t.Fatalf("authentication deadline=%s status=%d", auth.remaining, w.Code)
 	}
+}
+
+func TestAdoptedInstanceOwnerCanReauthorizeOriginal(t *testing.T) {
+	h, svc, p, _, owner, q := custodyFixture(t)
+	const target = "adopted-drive"
+	before, err := h.s.Register(h.ctx, h.actor, "adopted-seed", storage.Instance{
+		ID: target, Adapter: "bhpan", Ownership: "contributor", OwnerDomain: custody.OwnerDomain(owner), CredentialRef: "adopted-ref", CredentialRevision: 1, Root: "isolated", State: "paused", Authorized: true, ExpiresAt: q.Until,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the persisted result of the pre-self-service adoption tool.
+	if _, err = h.db.Exec("UPDATE storage.instances SET data=jsonb_set(data,'{contribution_approval}',to_jsonb('approved'::text)) WHERE id=$1", target); err != nil {
+		t.Fatal(err)
+	}
+	foreign := storage.Principal{Issuer: owner.Issuer, Subject: "another"}
+	page, err := svc.List(h.ctx, foreign, 5, "", false)
+	if err != nil || len(page.Items) != 0 {
+		t.Fatal("foreign adoption visible", err)
+	}
+	page, err = svc.List(h.ctx, owner, 5, "", false)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != target || page.Items[0].CanWithdraw {
+		t.Fatal("owner cannot see original", page, err)
+	}
+	q.Revision = page.Items[0].Revision
+	const key = "40000000-0000-4000-8000-000000000001"
+	if _, err := svc.Submit(h.ctx, foreign, target, key, q); err == nil {
+		t.Fatal("foreign renewal accepted")
+	}
+	view, err := svc.Submit(h.ctx, owner, target, key, q)
+	if err != nil || view.ID != target || view.State != "ready" {
+		t.Fatal(view, err)
+	}
+	rows, err := h.s.Instances(h.ctx, h.actor, 100, "")
+	for _, i := range rows {
+		if i.ID == target && i.CredentialRevision == 2 && i.Root == before.Root && i.AccountDomain == before.AccountDomain && i.QuotaRevision > before.QuotaRevision && p.creates.Load() == 0 {
+			return
+		}
+	}
+	t.Fatal("renewal failed to preserve the account and refresh quota", err)
 }

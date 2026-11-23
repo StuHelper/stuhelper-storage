@@ -141,6 +141,7 @@
     ],
     "STORAGE-29": [
       "custody_test.go#TestCustodyDuplicateAccountsClaimsAndPagination",
+      "custody_test.go#TestAdoptedInstanceOwnerCanReauthorizeOriginal",
       "custody_test.go#TestCustodyLoginBudgetSurvivesNewRequestKeysAndRestart",
       "custody_test.go#TestCustodyUnknownPreparationKeepsAccountClaim",
       "custody_test.go#TestCustodyBlockedRecoveryReauthorizeReplayQuotaAndSlidingBudget",

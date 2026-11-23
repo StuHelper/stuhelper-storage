@@ -2910,7 +2910,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
             }
           },
           {
@@ -3112,7 +3112,8 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
             }
           },
           {
@@ -3235,7 +3236,8 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
             }
           }
         ],
@@ -3451,7 +3453,8 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
             }
           }
         ],
@@ -4898,18 +4901,10 @@
             "additionalProperties": false,
             "writeOnly": true,
             "required": [
-              "mode",
               "username",
               "password"
             ],
             "properties": {
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "local",
-                  "sso"
-                ]
-              },
               "username": {
                 "type": "string",
                 "minLength": 1,
@@ -4981,7 +4976,8 @@
             "format": "date-time"
           },
           "request_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Empty for an adopted instance that has no self-service request yet."
           },
           "last_error": {
             "type": "string",
@@ -4995,6 +4991,10 @@
               "attempts_exhausted",
               "credentials_required"
             ]
+          },
+          "can_withdraw": {
+            "type": "boolean",
+            "description": "The owner may withdraw this incomplete application. The service checks pending work again on withdrawal."
           }
         }
       },

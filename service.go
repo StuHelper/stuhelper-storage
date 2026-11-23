@@ -37,6 +37,7 @@ type Service struct {
 	auth         Authorizer
 	resolver     Resolver
 	accountHints AccountHintSource
+	quotaRetries sync.Map
 	verifier     Verifier
 	cfg          Config
 	now          func() time.Time

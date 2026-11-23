@@ -37,6 +37,7 @@ func (Request) String() string     { return "[custody request redacted]" }
 func (r Request) GoString() string { return r.String() }
 
 type View struct {
+	CanWithdraw bool      `json:"can_withdraw,omitempty"`
 	ID          string    `json:"id"`
 	Adapter     string    `json:"adapter"`
 	AccountHint string    `json:"account_hint,omitempty"`
@@ -80,8 +81,10 @@ type Operation struct {
 }
 type Tx interface {
 	Binding(string) (Binding, error)
+	OwnedBinding(storage.Principal, string) (Binding, error)
 	SaveBinding(Binding) error
 	DeleteBinding(string, storage.Principal, time.Time) error
+	HasPendingWrites(string, time.Time) (bool, error)
 	Operation(string) (Operation, error)
 	SaveOperation(Operation) error
 	List(storage.Principal, int, string) ([]Binding, error)
