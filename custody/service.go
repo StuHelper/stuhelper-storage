@@ -16,17 +16,22 @@ import (
 func (s *Service) bindingView(ctx context.Context, b Binding) View {
 	view := b.View
 	view.AccountHint = ""
+	view.CanWithdraw = b.Instance.ID == "" && b.AccountDomain == "" && b.State == "credentials_required"
 	source, ok := s.provider.(storage.AccountHintSource)
 	i := b.Instance
 	if ok && i.ID == b.ID && i.Ownership == "contributor" && i.OwnerDomain == OwnerDomain(b.Owner) && i.Authorized {
 		view.AccountHint = source.AccountHint(ctx, i)
+		if recovery, ok := s.provider.(storage.CustodyRecoverySource); ok && view.State == "ready" && recovery.CredentialsRequired(ctx, i) {
+			view.State = "credentials_required"
+			view.LastError = "credentials_required"
+		}
 	}
 	return view
 }
 
 func (s *Service) List(ctx context.Context, p storage.Principal, n int, after string, admin bool) (Page, error) {
 	out := Page{Items: []View{}}
-	if n < 1 || n > 100 || (after != "" && !uuid.MatchString(after)) {
+	if n < 1 || n > 100 || (after != "" && !id.MatchString(after)) {
 		return out, storage.ErrInput
 	}
 	action := "storage.custody.read"
@@ -92,7 +97,7 @@ func (s *Service) GetRequest(ctx context.Context, p storage.Principal, key strin
 }
 func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key string, q Request) (View, error) {
 	var out View
-	if !uuid.MatchString(key) || (target != "" && !uuid.MatchString(target)) || q.Adapter != "bhpan" || !q.Until.After(s.cfg.Clock().Add(time.Minute)) || q.Until.After(s.cfg.Clock().Add(time.Duration(s.cfg.Policy.MaxTermSeconds)*time.Second)) || !q.Consent.Accepted || q.Consent.Version != s.cfg.Policy.Version || q.Consent.Digest != s.cfg.Policy.Digest || target == "" && q.Revision != 0 || target != "" && q.Revision < 1 {
+	if !uuid.MatchString(key) || (target != "" && !id.MatchString(target)) || q.Adapter != "bhpan" || !q.Until.After(s.cfg.Clock().Add(time.Minute)) || q.Until.After(s.cfg.Clock().Add(time.Duration(s.cfg.Policy.MaxTermSeconds)*time.Second)) || !q.Consent.Accepted || q.Consent.Version != s.cfg.Policy.Version || q.Consent.Digest != s.cfg.Policy.Digest || target == "" && q.Revision != 0 || target != "" && q.Revision < 1 {
 		return out, storage.ErrInput
 	}
 	if e := s.authorize(ctx, p, "storage.custody.manage", target); e != nil {
@@ -104,7 +109,7 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 	// Canonicalize credential JSON before the keyed fingerprint; whitespace is
 	// not a different request. No raw password or public password hash is stored.
 	var fields map[string]string
-	if json.Unmarshal(q.Credential, &fields) != nil {
+	if json.Unmarshal(q.Credential, &fields) != nil || len(fields) != 2 || len(fields["username"]) < 1 || len(fields["username"]) > 128 || len(fields["password"]) < 1 || len(fields["password"]) > 1024 {
 		return out, storage.ErrInput
 	}
 	canonical, e := json.Marshal(fields)
@@ -148,6 +153,9 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 			b = Binding{View: View{ID: target, Adapter: q.Adapter}, Owner: p}
 		} else {
 			b, e = tx.Binding(target)
+			if errors.Is(e, storage.ErrNotFound) {
+				b, e = tx.OwnedBinding(p, target)
+			}
 			if e != nil {
 				return e
 			}
@@ -245,7 +253,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	var b Binding
 	var op Operation
 	var recoverClaim bool
-	if !uuid.MatchString(target) || !uuid.MatchString(q.RequestID) || q.Revision < 1 {
+	if !id.MatchString(target) || !uuid.MatchString(q.RequestID) || q.Revision < 1 {
 		return out, storage.ErrInput
 	}
 	action := "storage.custody.manage"
@@ -440,7 +448,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 				applied, e = s.store.Register(work, s.cfg.Actor, "custody:"+op.ID, *op.Result)
 			}
 		} else {
-			applied, e = s.store.ReauthorizeInstance(work, s.cfg.Actor, "custody:"+op.ID, storage.CredentialRenewal{ID: target, ExpectedRevision: op.ExpectedRevision, CredentialRef: op.Result.CredentialRef, CredentialRevision: op.Result.CredentialRevision, Until: op.Until})
+			applied, e = s.store.ReauthorizeInstance(work, s.cfg.Actor, "custody:"+op.ID, storage.CredentialRenewal{ID: target, OwnerDomain: OwnerDomain(b.Owner), AccountDomain: op.Result.AccountDomain, Root: op.Result.Root, ExpectedRevision: op.ExpectedRevision, CredentialRef: op.Result.CredentialRef, CredentialRevision: op.Result.CredentialRevision, Until: op.Until})
 		}
 	}
 	if e == nil {
@@ -525,7 +533,7 @@ func (s *Service) event(ctx context.Context, tx Tx, p storage.Principal, b Bindi
 }
 func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key string) (View, error) {
 	var out View
-	if !uuid.MatchString(target) || !uuid.MatchString(key) {
+	if !id.MatchString(target) || !uuid.MatchString(key) {
 		return out, storage.ErrInput
 	}
 	if e := s.authorize(ctx, p, "storage.custody.manage", target); e != nil {
@@ -561,6 +569,18 @@ func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key s
 			return storage.ErrDenied
 		}
 		initial = b.View
+		if b.Instance.ID == "" {
+			if b.AccountDomain != "" {
+				return storage.ErrConflict
+			}
+			pending, err := tx.HasPendingWrites(b.ID, now)
+			if err != nil {
+				return err
+			}
+			if pending {
+				return storage.ErrConflict
+			}
+		}
 		if op, opErr := tx.Operation(b.RequestID); opErr == nil {
 			if !op.Complete && (op.LeaseUntil.After(now) || op.Result != nil || unknownPreparation(b) && op.Attempts < 5 && op.Until.After(now)) {
 				return storage.ErrConflict
@@ -584,6 +604,19 @@ func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key s
 			copy := i
 			live = &copy
 			break
+		}
+	}
+	if live == nil {
+		if src, ok := s.provider.(interface {
+			HasProvisioningMaterial(context.Context, string) (bool, error)
+		}); ok {
+			present, err := src.HasProvisioningMaterial(ctx, target)
+			if err != nil {
+				return out, err
+			}
+			if present {
+				return out, storage.ErrConflict
+			}
 		}
 	}
 	if live != nil {
@@ -629,6 +662,18 @@ func (s *Service) Delete(ctx context.Context, p storage.Principal, target, key s
 		}
 		if err = s.authorize(ctx, p, "storage.custody.manage", target); err != nil {
 			return err
+		}
+		if b.Instance.ID == "" {
+			if b.AccountDomain != "" {
+				return storage.ErrConflict
+			}
+			pending, err := tx.HasPendingWrites(b.ID, now)
+			if err != nil {
+				return err
+			}
+			if pending {
+				return storage.ErrConflict
+			}
 		}
 		if op, opErr := tx.Operation(b.RequestID); opErr == nil {
 			if !op.Complete && (op.LeaseUntil.After(now) || op.Result != nil || unknownPreparation(b) && op.Attempts < 5 && op.Until.After(now)) {

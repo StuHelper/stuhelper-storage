@@ -172,6 +172,11 @@ func (e *Executor) worker(ctx context.Context, id string) {
 }
 func (e *Executor) maintenance(ctx context.Context) {
 	position := maintenancePosition{}
+	defer func() {
+		for id := range position.quotaRetries {
+			e.reportQuotaRetry(id, 0, false)
+		}
+	}()
 	for !e.stopping() {
 		started := time.Now()
 		work, cancel := context.WithTimeout(ctx, MaintenanceSweepTimeout)

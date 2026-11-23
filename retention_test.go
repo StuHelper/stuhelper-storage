@@ -84,7 +84,7 @@ func TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords(t *testing.T)
 	user := storage.Principal{Issuer: "test-issuer", Subject: "user"}
 	cReq := custody.Request{
 		Adapter:    "bhpan",
-		Credential: json.RawMessage(`{"mode":"local","username":"u1","password":"p1"}`),
+		Credential: json.RawMessage(`{"username":"u1","password":"p1"}`),
 		Until:      h.clock.Now().Add(180 * 24 * time.Hour),
 		Consent:    custody.Consent{Accepted: true, Version: "custody-v1", Digest: strings.Repeat("a", 64)},
 	}

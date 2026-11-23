@@ -6,6 +6,9 @@ import (
 )
 
 type CredentialRenewal struct {
+	OwnerDomain        string `json:",omitempty"`
+	AccountDomain      string `json:",omitempty"`
+	Root               string `json:",omitempty"`
 	ID                 string
 	ExpectedRevision   int64
 	CredentialRef      string
@@ -30,6 +33,9 @@ func (s *Service) ReauthorizeInstance(ctx context.Context, p Principal, key stri
 	e := s.repo.Transaction(ctx, func(tx Transaction) error { var e error; old, e = tx.Instance(q.ID); return e })
 	if e != nil {
 		return out, e
+	}
+	if q.OwnerDomain != "" && (old.Ownership != "contributor" || old.OwnerDomain != q.OwnerDomain || old.AccountDomain != q.AccountDomain || old.Root != q.Root) {
+		return out, ErrDenied
 	}
 	replay := old.State != "revoked" && old.Authorized && old.Revision >= q.ExpectedRevision && old.CredentialRevision == q.CredentialRevision && old.CredentialRef == q.CredentialRef && old.ExpiresAt.Equal(q.Until)
 	var evidence InstanceEvidence
@@ -56,10 +62,16 @@ func (s *Service) ReauthorizeInstance(ctx context.Context, p Principal, key stri
 		if e != nil {
 			return nil, e
 		}
+		if current.OwnerDomain != old.OwnerDomain || current.AccountDomain != old.AccountDomain || current.Root != old.Root || current.Ownership != old.Ownership {
+			return nil, ErrDenied
+		}
 		if current.State != "revoked" && current.Authorized && current.Revision >= q.ExpectedRevision && current.CredentialRevision == q.CredentialRevision && current.CredentialRef == q.CredentialRef && current.ExpiresAt.Equal(q.Until) {
 			return current, nil
 		}
 		if replay || current.Revision < q.ExpectedRevision || current.CredentialRevision != old.CredentialRevision || current.State == "revoked" {
+			return nil, ErrConflict
+		}
+		if q.OwnerDomain != "" && (!current.quotaLedgerMatches(old) || !evidence.validQuota(s.now())) {
 			return nil, ErrConflict
 		}
 		current.CredentialRevision = q.CredentialRevision

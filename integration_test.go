@@ -44,23 +44,27 @@ func (a *authorization) Authorize(_ context.Context, p storage.Principal, action
 }
 
 type provider struct {
-	mu                sync.Mutex
-	files             map[string]map[string][]byte
-	accounts          map[string]string
-	writes            int
-	verifyCalls       int
-	verificationClock func() time.Time
-	quota             *storage.ProviderQuotaSample
-	verifyErr         error
-	lostReply         bool
-	lostBegin         bool
-	corruptWrite      bool
-	readUnavailable   bool
-	readStarted       chan struct{}
-	readWait          chan struct{}
-	afterWrite        func()
+	credentialsRequired atomic.Bool
+	mu                  sync.Mutex
+	files               map[string]map[string][]byte
+	accounts            map[string]string
+	writes              int
+	verifyCalls         int
+	verificationClock   func() time.Time
+	quota               *storage.ProviderQuotaSample
+	verifyErr           error
+	lostReply           bool
+	lostBegin           bool
+	corruptWrite        bool
+	readUnavailable     bool
+	readStarted         chan struct{}
+	readWait            chan struct{}
+	afterWrite          func()
 }
 
+func (p *provider) CredentialsRequired(context.Context, storage.Instance) bool {
+	return p.credentialsRequired.Load()
+}
 func (p *provider) Verify(_ context.Context, i storage.Instance) (storage.InstanceEvidence, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

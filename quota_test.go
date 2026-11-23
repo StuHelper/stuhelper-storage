@@ -70,6 +70,19 @@ func TestProviderQuotaRefreshFailureExpiryAndRecovery(t *testing.T) {
 	}
 	failed := capacity(owner)
 	q = failed.ProviderCapacity
+	if q.Recovery != storage.RecoveryWaitingScan {
+		t.Fatal("failed sample without a scheduled retry", q.Recovery)
+	}
+	h.s.SetQuotaRetry(i.ID, i.CredentialRevision, true)
+	if capacity(owner).ProviderCapacity.Recovery != storage.RecoveryWaitingRetry {
+		t.Fatal("scheduled retry missing")
+	}
+	h.provider.credentialsRequired.Store(true)
+	if capacity(owner).ProviderCapacity.Recovery != storage.RecoveryCredentialsRequired {
+		t.Fatal("exhausted budget offered retry")
+	}
+	h.provider.credentialsRequired.Store(false)
+	h.s.SetQuotaRetry(i.ID, i.CredentialRevision, false)
 	if q.Status != storage.CapacityReadFailed || q.TotalBytes != nil || q.UsedBytes != nil ||
 		q.RemainingBytes != nil || q.ObservedAt == nil || !q.ObservedAt.Equal(readAt) || failed.MaxContributableBytes != nil {
 		t.Fatal("failed read did not preserve the last-success time and hide unknown capacity")

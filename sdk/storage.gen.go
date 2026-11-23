@@ -201,24 +201,6 @@ func (e CustodyRequestAdapter) Valid() bool {
 	}
 }
 
-// Defines values for CustodyRequestCredentialMode.
-const (
-	Local CustodyRequestCredentialMode = "local"
-	Sso   CustodyRequestCredentialMode = "sso"
-)
-
-// Valid indicates whether the value is a known member of the CustodyRequestCredentialMode enum.
-func (e CustodyRequestCredentialMode) Valid() bool {
-	switch e {
-	case Local:
-		return true
-	case Sso:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for InstanceOwnership.
 const (
 	InstanceOwnershipContributor InstanceOwnership = "contributor"
@@ -538,14 +520,19 @@ type CreateObject struct {
 // CustodyBinding defines model for CustodyBinding.
 type CustodyBinding struct {
 	// AccountHint Available to the owner and authorized administrators. Masked identifier from the bound provider account. For BHpan, replace each middle character of a login name of five or more characters with an asterisk, preserving the first two and last two. For shorter names, show asterisks followed by the last character (including a leading asterisk for a one-character login). Omitted when the account fact is unavailable.
-	AccountHint            *string                 `json:"account_hint,omitempty"`
-	Adapter                string                  `json:"adapter"`
-	AuthorizationExpiresAt time.Time               `json:"authorization_expires_at"`
-	Id                     string                  `json:"id"`
-	LastError              CustodyBindingLastError `json:"last_error"`
-	RequestId              string                  `json:"request_id"`
-	Revision               int64                   `json:"revision"`
-	State                  CustodyBindingState     `json:"state"`
+	AccountHint            *string   `json:"account_hint,omitempty"`
+	Adapter                string    `json:"adapter"`
+	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
+
+	// CanWithdraw The owner may withdraw this incomplete application. The service checks pending work again on withdrawal.
+	CanWithdraw *bool                   `json:"can_withdraw,omitempty"`
+	Id          string                  `json:"id"`
+	LastError   CustodyBindingLastError `json:"last_error"`
+
+	// RequestId Empty for an adopted instance that has no self-service request yet.
+	RequestId string              `json:"request_id"`
+	Revision  int64               `json:"revision"`
+	State     CustodyBindingState `json:"state"`
 }
 
 // CustodyBindingLastError defines model for CustodyBinding.LastError.
@@ -583,9 +570,8 @@ type CustodyRequest struct {
 	Adapter    CustodyRequestAdapter `json:"adapter"`
 	Consent    CustodyConsent        `json:"consent"`
 	Credential *struct {
-		Mode     CustodyRequestCredentialMode `json:"mode"`
-		Password *string                      `json:"password,omitempty"`
-		Username *string                      `json:"username,omitempty"`
+		Password *string `json:"password,omitempty"`
+		Username *string `json:"username,omitempty"`
 	} `json:"credential,omitempty"`
 	Revision *int64    `json:"revision,omitempty"`
 	Until    time.Time `json:"until"`
@@ -593,9 +579,6 @@ type CustodyRequest struct {
 
 // CustodyRequestAdapter defines model for CustodyRequest.Adapter.
 type CustodyRequestAdapter string
-
-// CustodyRequestCredentialMode defines model for CustodyRequest.Credential.Mode.
-type CustodyRequestCredentialMode string
 
 // CustodyResume defines model for CustodyResume.
 type CustodyResume struct {
@@ -1188,7 +1171,7 @@ type ClientInterface interface {
 	// DeleteOwnCustody performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
 	//
 	// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
-	DeleteOwnCustody(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteOwnCustody(ctx context.Context, id string, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReauthorizeCustodyWithBody performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 	// with any type of body and a specified content type.
@@ -1595,7 +1578,7 @@ func (c *Client) GetOwnCustodyRequest(ctx context.Context, id string, reqEditors
 // DeleteOwnCustody performs a DELETE /api/v1/storage/custody/{id} (the `DeleteOwnCustody` operationId) request.
 //
 // Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
-func (c *Client) DeleteOwnCustody(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeleteOwnCustody(ctx context.Context, id string, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteOwnCustodyRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
@@ -2653,12 +2636,12 @@ func NewGetOwnCustodyRequestRequest(server string, id string) (*http.Request, er
 }
 
 // NewDeleteOwnCustodyRequest constructs an http.Request for the DeleteOwnCustody method
-func NewDeleteOwnCustodyRequest(server string, id openapi_types.UUID, params *DeleteOwnCustodyParams) (*http.Request, error) {
+func NewDeleteOwnCustodyRequest(server string, id string, params *DeleteOwnCustodyParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -3954,7 +3937,7 @@ type ClientWithResponsesInterface interface {
 	// Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	DeleteOwnCustodyWithResponse(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error)
+	DeleteOwnCustodyWithResponse(ctx context.Context, id string, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error)
 
 	// ReauthorizeCustodyWithBodyWithResponse performs a POST /api/v1/storage/custody/{id}/reauthorize (the `ReauthorizeCustody` operationId) request,
 	// with any type of body and a specified content type.
@@ -7230,7 +7213,7 @@ func (c *ClientWithResponses) GetOwnCustodyRequestWithResponse(ctx context.Conte
 // Owner self-service cleanup for an unprovisioned failed custody binding or a revoked contributor binding with zero remaining replicas or reserved/used bytes.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) DeleteOwnCustodyWithResponse(ctx context.Context, id openapi_types.UUID, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error) {
+func (c *ClientWithResponses) DeleteOwnCustodyWithResponse(ctx context.Context, id string, params *DeleteOwnCustodyParams, reqEditors ...RequestEditorFn) (*DeleteOwnCustodyResponse, error) {
 	rsp, err := c.DeleteOwnCustody(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
