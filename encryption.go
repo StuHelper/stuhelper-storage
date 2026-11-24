@@ -78,6 +78,15 @@ func logicalBudget(p Protection, physical int64) int64 {
 
 func (o Object) storedBytes() int64 { return storedSize(o.Protection, o.Size) }
 
+// The rollback slot keeps its read keys installed while new restricted writes
+// are paused. Already accepted replicas remain verifiable and repairable.
+func (s *Service) initializeVersion(o *Object) error {
+	if o.Protection.Class == "restricted" && !s.cfg.RestrictedWrites {
+		return ErrRestrictedUnavailable
+	}
+	return s.cfg.ContentKeys.initialize(o)
+}
+
 func (r *ContentKeyring) initialize(o *Object) error {
 	if o.Protection.Class != "restricted" {
 		return nil

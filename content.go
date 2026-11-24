@@ -80,7 +80,7 @@ func (s *Service) contentGroup(tx Transaction, p Principal, r CreateRequest) (Co
 	}{p, r.Size, r.SHA256, r.Protection, r.Policy})
 	// Restricted content has a separate immutable physical object for every handle.
 	if r.Protection.Class == "restricted" {
-		if s.cfg.ContentKeys == nil {
+		if !s.cfg.RestrictedWrites {
 			return ContentGroup{}, ErrRestrictedUnavailable
 		}
 		fingerprint = requestHash([]string{fingerprint, r.ClientKey})
@@ -390,7 +390,7 @@ func (s *Service) contentObject(ctx context.Context, tx Transaction, actor Princ
 		CreatedAt:    s.now(),
 		References:   []Reference{},
 	}
-	if err := s.cfg.ContentKeys.initialize(&o); err != nil {
+	if err := s.initializeVersion(&o); err != nil {
 		return Object{}, err
 	}
 	if err := tx.SaveObject(o); err != nil {

@@ -228,7 +228,7 @@ func (s *Service) CheckPlacement(ctx context.Context, p Principal, protections [
 			if n > 0 && protection == protections[0] {
 				continue
 			}
-			if protection.Class == "restricted" && s.cfg.ContentKeys == nil {
+			if protection.Class == "restricted" && !s.cfg.RestrictedWrites {
 				result = Intake{Mode: "paused", Reason: ErrRestrictedUnavailable.Error()}
 				break
 			}
@@ -275,7 +275,7 @@ func (s *Service) schoolIntake(instances []Instance, now time.Time) []SchoolInta
 	for _, scope := range slices.Sorted(maps.Keys(scopes)) {
 		for _, class := range []string{"public", "quarantine", "restricted"} {
 			p := Protection{Class: class, Scope: scope, Public: class == "public"}
-			if class == "restricted" && s.cfg.ContentKeys == nil {
+			if class == "restricted" && !s.cfg.RestrictedWrites {
 				out = append(out, SchoolIntake{Scope: scope, Class: class, Mode: "paused", Reason: ErrRestrictedUnavailable.Error()})
 				continue
 			}

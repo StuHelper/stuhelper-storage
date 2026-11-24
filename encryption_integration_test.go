@@ -23,7 +23,7 @@ func TestRestrictedCiphertextPerVersionAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := harnessFor(t, func(c *s.Config) { c.ContentKeys = keys; c.MaxObjectSize = 2 << 20 })
+	h := harnessFor(t, func(c *s.Config) { c.RestrictedWrites = true; c.ContentKeys = keys; c.MaxObjectSize = 2 << 20 })
 	for _, id := range []string{"one", "two"} {
 		item := registerContributor(t, h, id, h.actor, 8<<20)
 		if _, err = storagetest.Trust(h.ctx, h.s, h.actor, item, "school-a", []string{"restricted"}); err != nil {
@@ -122,6 +122,7 @@ func TestRestrictedCiphertextPerVersionAndRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.TemporaryDirectory = t.TempDir()
+	cfg.RestrictedWrites = false
 	reopened, err := s.New(h.repo, h.auth, h.provider, h.provider, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +133,10 @@ func TestRestrictedCiphertextPerVersionAndRotation(t *testing.T) {
 		if err = reopened.Download(h.ctx, h.actor, id, &out); err != nil || !bytes.Equal(data, out.Bytes()) {
 			t.Fatal("read after retiring previous key", err)
 		}
+	}
+	req.ClientKey = "paused-version"
+	if _, err = reopened.Create(h.ctx, h.actor, "paused-version", req); !errors.Is(err, s.ErrRestrictedUnavailable) {
+		t.Fatal("read-only rollback admitted a new restricted version", err)
 	}
 	req.ReuseFrom = handles[0]
 	req.ClientKey = "bad-reuse"

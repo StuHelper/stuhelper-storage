@@ -14,6 +14,7 @@ import (
 )
 
 type Config struct {
+	RestrictedWrites          bool
 	ContentKeys               *ContentKeyring
 	IntakeScopes              []string
 	Clock                     func() time.Time
@@ -91,6 +92,9 @@ func minTransferLease(maxObjectSize, effectiveRate int64) time.Duration {
 }
 
 func New(repo Repository, auth Authorizer, resolver Resolver, verifier Verifier, cfg Config) (*Service, error) {
+	if cfg.RestrictedWrites && cfg.ContentKeys == nil {
+		return nil, ErrRestrictedUnavailable
+	}
 	if cfg.QuotaValidity == 0 {
 		cfg.QuotaValidity = 5 * time.Minute
 	}
@@ -584,7 +588,7 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 				return nil, err
 			}
 		}
-		if err := s.cfg.ContentKeys.initialize(&o); err != nil {
+		if err := s.initializeVersion(&o); err != nil {
 			return nil, err
 		}
 		if err := tx.SaveObject(o); err != nil {
