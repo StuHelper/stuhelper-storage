@@ -192,7 +192,8 @@ func (s *Service) contentStatusAction(ctx context.Context, p Principal, id, acti
 	return out, err
 }
 func (s *Service) createContent(ctx context.Context, p Principal, key string, r CreateRequest) (Status, error) {
-	if r.ReserveFor != nil && (!r.ReserveFor.Valid() || r.ReserveFor.Scope != r.Protection.Scope) {
+	if r.ReserveFor != nil && (!r.ReserveFor.Valid() || r.ReserveFor.Scope != r.Protection.Scope ||
+		(r.ReserveFor.Class == "restricted") != (r.Protection.Class == "restricted")) {
 		return Status{}, ErrInput
 	}
 	if r.Policy == (Policy{}) {
