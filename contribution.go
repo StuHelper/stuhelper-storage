@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// ContributionOwnerDomain binds a contribution to its stable application principal.
+func ContributionOwnerDomain(owner Principal) string { return "owner:" + requestHash(owner) }
+
 type ContributionCandidate struct {
 	ID                     string    `json:"id"`
 	Adapter                string    `json:"adapter"`

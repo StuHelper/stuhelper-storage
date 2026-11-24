@@ -66,6 +66,16 @@ func New(s *storage.Service, auth Authenticator, maxUpload int64) (http.Handler,
 	h.mount(mux, "POST /api/v1/storage/operations/instances/{id}/commands", false, h.commandInstance)
 	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/jobs/{job_id}/retry", false, h.retryJob)
 	h.mount(mux, "POST /api/v1/storage/operations/objects/{object_id}/replicas/{replica_id}/writeoff", false, h.writeOffReplica)
+	h.mount(mux, "GET /api/v1/storage/instances/{id}/trust-consent", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+		return h.s.OwnTrustConsent(r.Context(), p, r.PathValue("id"))
+	})
+	h.mount(mux, "PUT /api/v1/storage/instances/{id}/trust-consent", false, func(_ http.ResponseWriter, r *http.Request, p storage.Principal) (any, error) {
+		input, err := decode[storage.TrustConsentRequest](r)
+		if err != nil {
+			return nil, err
+		}
+		return h.s.SetOwnTrustConsent(r.Context(), p, r.PathValue("id"), r.Header.Get("Idempotency-Key"), input)
+	})
 	h.mount(mux, "GET /api/v1/storage/instances", false, h.instances)
 	h.mount(mux, "POST /api/v1/storage/instances", false, h.register)
 	h.mount(mux, "PUT /api/v1/storage/instances/{id}", false, h.update)
@@ -245,7 +255,7 @@ func respondError(w http.ResponseWriter, err error) {
 		status int
 	}{{storage.ErrInput, 400}, {storage.ErrChallenge, 403}, {storage.ErrDenied, 403}, {storage.ErrNotFound, 404},
 		{storage.ErrConflict, 409}, {storage.ErrStale, 409}, {storage.ErrContributionLimitExceeded, 409}, {storage.ErrContributionCapacityUnavailable, 409},
-		{storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
+		{storage.ErrReplicaSpace, 503}, {storage.ErrReplicaShortage, 503}, {storage.ErrRestrictedUnavailable, 503}, {storage.ErrCapacity, 503}, {storage.ErrIntegrity, 409}, {storage.ErrUnknown, 503}} {
 		if errors.Is(err, entry.err) {
 			status, code = entry.status, entry.err.Error()
 			break

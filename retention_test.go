@@ -37,7 +37,7 @@ func TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords(t *testing.T)
 		}
 	}
 
-	h.instance(t, "i1", "owner-1", "platform", 4096)
+	h.instance(t, "i1", "owner-1", 4096)
 
 	// Create two objects with ingest jobs -> produces idempotency rows, done jobs, and outbox events.
 	for n := 1; n <= 2; n++ {
@@ -137,7 +137,7 @@ func TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords(t *testing.T)
 	}
 
 	// Add a fresh instance and object at t+25h to verify unexpired records coexist safely.
-	h.instance(t, "i2", "owner-2", "platform", 4096)
+	h.instance(t, "i2", "owner-2", 4096)
 	freshObj := h.object(t, "fresh-after-25h", []byte("fresh"))
 	if _, err := h.s.Ingest(h.ctx, h.actor, freshObj.ID, "fresh-up", bytes.NewReader([]byte("fresh"))); err != nil {
 		t.Fatal(err)

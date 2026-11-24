@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -134,7 +135,7 @@ func (p *provider) Write(ctx context.Context, i storage.Instance, intent string,
 
 func TestUnknownBeginNeverRetriesOrReleasesReservation(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "one", "owner", "platform", 1024)
+	h.instance(t, "one", "owner", 1024)
 	data := []byte("ambiguous begin")
 	o := h.object(t, "create", data)
 	h.provider.lostBegin = true
@@ -163,11 +164,11 @@ func TestUnknownBeginNeverRetriesOrReleasesReservation(t *testing.T) {
 
 func TestRestrictedPlacementAndCredentialRotation(t *testing.T) {
 	h := harnessFor(t)
-	i := h.instance(t, "one", "owner", "contributor", 1024)
+	i := h.instance(t, "one", "owner", 1024)
 	data := []byte("public")
 	o := h.object(t, "create", data)
 	h.ingest(t, o.ID, data)
-	protection := storage.Protection{Class: "internal", Scope: "school-a"}
+	protection := storage.Protection{Class: "quarantine", Scope: "school-a"}
 	if _, err := h.s.ChangeProtection(h.ctx, h.actor, o.ID, "protect", o.Revision, protection); err != nil {
 		t.Fatal(err)
 	}
@@ -311,9 +312,9 @@ REVOKE ALL ON SCHEMA public FROM PUBLIC;`); err != nil {
 	})
 	return &harness{s, repo, db, admin, p, auth, c, storage.Principal{Issuer: "test-issuer", Subject: "operator"}, ctx, cfg}
 }
-func (h *harness) instance(t *testing.T, id, owner, kind string, limit int64) storage.Instance {
+func (h *harness) instance(t *testing.T, id, owner string, limit int64) storage.Instance {
 	t.Helper()
-	v, err := h.s.Register(h.ctx, h.actor, "register-"+id, storage.Instance{ID: id, Adapter: "test", AccountDomain: "untrusted-alias", OwnerDomain: owner, Ownership: kind, CredentialRef: id, CredentialRevision: 1, Root: "isolated", State: "active", Authorized: true, Limit: limit, ExpiresAt: h.clock.Now().Add(24 * time.Hour), Admissions: []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: h.clock.Now().Add(24 * time.Hour)}}})
+	v, err := storagetest.RegisterContribution(h.ctx, h.s, h.actor, "register-"+id, storage.Instance{ID: id, Adapter: "test", AccountDomain: "untrusted-alias", OwnerDomain: owner, CredentialRef: id, CredentialRevision: 1, Root: "isolated", State: "active", Authorized: true, Limit: limit, ExpiresAt: h.clock.Now().Add(24 * time.Hour), Admissions: []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: h.clock.Now().Add(24 * time.Hour)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +357,7 @@ func (h *harness) run(t *testing.T) {
 func TestPublicationThresholdAndThreeIndependentReplicas(t *testing.T) {
 	h := harnessFor(t)
 	for n := 1; n <= 3; n++ {
-		h.instance(t, fmt.Sprintf("i%d", n), fmt.Sprintf("owner%d", n), "contributor", 1024)
+		h.instance(t, fmt.Sprintf("i%d", n), fmt.Sprintf("owner%d", n), 1024)
 	}
 	data := []byte("immutable storage data")
 	o := h.object(t, "create", data)
@@ -417,7 +418,7 @@ func TestPublicationThresholdAndThreeIndependentReplicas(t *testing.T) {
 func TestConcurrentCapacityReservationsAndIdempotency(t *testing.T) {
 	h := harnessFor(t)
 	data := []byte("capacity")
-	h.instance(t, "only", "owner", "platform", int64(len(data)))
+	h.instance(t, "only", "owner", int64(len(data)))
 	var objects [2]storage.Status
 	for i := range objects {
 		objects[i] = h.object(t, fmt.Sprint(i), data)
@@ -469,12 +470,12 @@ func TestConcurrentCapacityReservationsAndIdempotency(t *testing.T) {
 func TestAccountDeduplicationAcrossContributorAccounts(t *testing.T) {
 	h := harnessFor(t)
 	h.provider.accounts["alias"] = "account:first"
-	h.instance(t, "first", "same-owner", "contributor", 1024)
-	_, err := h.s.Register(h.ctx, h.actor, "duplicate", storage.Instance{ID: "alias", Adapter: "test", OwnerDomain: "other-owner", Ownership: "contributor", CredentialRef: "alias", CredentialRevision: 1, Root: "second-root", State: "active", Authorized: true, Limit: 1024, ExpiresAt: time.Now().Add(time.Hour)})
+	h.instance(t, "first", "same-owner", 1024)
+	_, err := h.s.Register(h.ctx, h.actor, "duplicate", storage.Instance{ID: "alias", Adapter: "test", OwnerDomain: "other-owner", Ownership: "contributor", CredentialRef: "alias", CredentialRevision: 1, Root: "second-root", State: "paused", Authorized: true, Limit: 0, ExpiresAt: time.Now().Add(time.Hour)})
 	if !errors.Is(err, storage.ErrConflict) {
 		t.Fatalf("duplicate account: %v", err)
 	}
-	h.instance(t, "second", "same-owner", "contributor", 1024)
+	h.instance(t, "second", "same-owner", 1024)
 	data := []byte("a")
 	o := h.object(t, "create", data)
 	h.ingest(t, o.ID, data)
@@ -494,7 +495,7 @@ func TestAccountDeduplicationAcrossContributorAccounts(t *testing.T) {
 
 func TestUnknownWriteReconcilesWithoutDuplicatingOrReleasingCapacity(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "i1", "owner", "platform", 1024)
+	h.instance(t, "i1", "owner", 1024)
 	data := []byte("lost completion response")
 	o := h.object(t, "create", data)
 	h.provider.lostReply = true
@@ -518,7 +519,7 @@ func TestUnknownWriteReconcilesWithoutDuplicatingOrReleasingCapacity(t *testing.
 func TestChecksumMismatchNeverPublishesOrLeaksPartialDownload(t *testing.T) {
 	h := harnessFor(t)
 	for n := 1; n <= 3; n++ {
-		h.instance(t, fmt.Sprint("i", n), fmt.Sprint("owner", n), "platform", 1024)
+		h.instance(t, fmt.Sprint("i", n), fmt.Sprint("owner", n), 1024)
 	}
 	data := []byte("verified data")
 	o := h.object(t, "create", data)
@@ -546,7 +547,7 @@ func TestChecksumMismatchNeverPublishesOrLeaksPartialDownload(t *testing.T) {
 
 func TestRevocationDuringWriteAndDeleteCannotResurrectObject(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "i1", "owner", "platform", 1024)
+	h.instance(t, "i1", "owner", 1024)
 	data := []byte("tombstone")
 	o := h.object(t, "create", data)
 	h.provider.afterWrite = func() {
@@ -661,7 +662,7 @@ func TestHTTPContractSDKAndAuthenticationBoundary(t *testing.T) {
 func TestDrainWaitsForVerifiedReplacement(t *testing.T) {
 	h := harnessFor(t)
 	for n := 1; n <= 4; n++ {
-		h.instance(t, fmt.Sprint("i", n), fmt.Sprint("owner", n), "platform", 1024)
+		h.instance(t, fmt.Sprint("i", n), fmt.Sprint("owner", n), 1024)
 	}
 	data := []byte("drain only after replacement")
 	o := h.object(t, "create", data)
@@ -702,7 +703,7 @@ func TestDrainWaitsForVerifiedReplacement(t *testing.T) {
 
 func TestOldLeaseCannotCommitAfterAnotherWorkerClaims(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "i1", "owner", "platform", 1024)
+	h.instance(t, "i1", "owner", 1024)
 	data := []byte("lease fencing")
 	o := h.object(t, "create", data)
 	h.provider.afterWrite = func() {
@@ -730,7 +731,7 @@ func TestOldLeaseCannotCommitAfterAnotherWorkerClaims(t *testing.T) {
 
 func TestUnpublishedReviewReadKeepsPublicationThresholdAndRechecksPermission(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "review-store", "review-owner", "platform", 1024)
+	h.instance(t, "review-store", "review-owner", 1024)
 	data := []byte("unpublished review data")
 	o := h.object(t, "review", data)
 	h.ingest(t, o.ID, data)
@@ -770,7 +771,7 @@ func TestAuditRetentionBoundarySchoolProjectionAndReviewAudit(t *testing.T) {
 	}
 
 	// 2. Object operations and ReviewDownload (both regular object and shared content) must project school scope, result='success', and review audit.
-	h.instance(t, "audit-inst", "platform", "platform", 4096)
+	h.instance(t, "audit-inst", "platform", 4096)
 	data := []byte("reviewable school-a content")
 	o := h.object(t, "school-obj", data)
 	h.ingest(t, o.ID, data)
@@ -842,7 +843,7 @@ func TestAuditRetentionBoundarySchoolProjectionAndReviewAudit(t *testing.T) {
 
 func TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "outbox-inst", "platform", "platform", 8192)
+	h.instance(t, "outbox-inst", "platform", 8192)
 
 	// Perform multiple sequential mutations on the same object so revision 1, 2, 3 are emitted;
 	// random hex IDs have >80% chance of inverting order across 10 objects without monotonic seq!
@@ -857,8 +858,8 @@ func TestOutboxSequencePreservesSubjectOrderAndAvoidsHeadOfLineStarvation(t *tes
 	}
 
 	events, err := h.repo.PendingEvents(h.ctx, 100)
-	if err != nil || len(events) != 41 {
-		t.Fatalf("expected 41 pending events, got %d err=%v", len(events), err)
+	if err != nil || len(events) != 42 {
+		t.Fatalf("expected 42 pending events, got %d err=%v", len(events), err)
 	}
 	lastRev := map[string]int64{}
 	for idx, ev := range events {
@@ -911,7 +912,7 @@ func TestOutboxUpgradePreservesPendingRevisions(t *testing.T) {
 	if err != nil || len(before) != 2 {
 		t.Fatal(before, err)
 	}
-	h.instance(t, "after-upgrade", "platform", "platform", 4096)
+	h.instance(t, "after-upgrade", "owner", 0)
 	tail, err := h.repo.PendingEventsAfter(h.ctx, 10, before[1].Sequence, nil)
 	if err != nil || len(tail) != 1 || tail[0].Subject != "instance/after-upgrade" {
 		t.Fatalf("new event missing after backfill cursor: %+v %v", tail, err)
@@ -921,13 +922,13 @@ func TestOutboxUpgradePreservesPendingRevisions(t *testing.T) {
 
 func TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "contrib-only", "owner-1", "contributor", 1024)
+	h.instance(t, "contrib-only", "owner-1", 1024)
 	data := []byte("public-then-restricted")
 
 	// Case 1: explicit Delete on object whose sole historical replica is already "deleted".
 	o1 := h.object(t, "obj-del-history", data)
 	h.ingest(t, o1.ID, data)
-	moved, err := h.s.ChangeProtection(h.ctx, h.actor, o1.ID, "restrict-1", o1.Revision, storage.Protection{Class: "internal", Scope: "school-a"})
+	moved, err := h.s.ChangeProtection(h.ctx, h.actor, o1.ID, "restrict-1", o1.Revision, storage.Protection{Class: "quarantine", Scope: "school-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -940,7 +941,7 @@ func TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion(t *testing.T) {
 	// Case 2: 24-hour unreferenced expiry in Reconcile on object whose sole historical replica is "deleted".
 	o2 := h.object(t, "obj-exp-history", data)
 	h.ingest(t, o2.ID, data)
-	if _, err = h.s.ChangeProtection(h.ctx, h.actor, o2.ID, "restrict-2", o2.Revision, storage.Protection{Class: "internal", Scope: "school-a"}); err != nil {
+	if _, err = h.s.ChangeProtection(h.ctx, h.actor, o2.ID, "restrict-2", o2.Revision, storage.Protection{Class: "quarantine", Scope: "school-a"}); err != nil {
 		t.Fatal(err)
 	}
 	h.run(t)
@@ -954,7 +955,7 @@ func TestObjectWithOnlyDeletedHistoryReplicasCompletesDeletion(t *testing.T) {
 
 func TestProtectionAuditUsesCommittedSchool(t *testing.T) {
 	h := harnessFor(t)
-	i := h.instance(t, "audit-race", "platform", "platform", 4096)
+	i := h.instance(t, "audit-race", "platform", 4096)
 	data := []byte("audit race content")
 	shared := sharedCreate(t, h, "shared-school", sharedRequest(data))
 	h.ingest(t, shared.ID, data)

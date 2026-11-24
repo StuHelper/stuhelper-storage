@@ -18,6 +18,27 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for ContributionAdmissionRuleLevels.
+const (
+	ContributionAdmissionRuleLevelsPublic     ContributionAdmissionRuleLevels = "public"
+	ContributionAdmissionRuleLevelsQuarantine ContributionAdmissionRuleLevels = "quarantine"
+	ContributionAdmissionRuleLevelsRestricted ContributionAdmissionRuleLevels = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the ContributionAdmissionRuleLevels enum.
+func (e ContributionAdmissionRuleLevels) Valid() bool {
+	switch e {
+	case ContributionAdmissionRuleLevelsPublic:
+		return true
+	case ContributionAdmissionRuleLevelsQuarantine:
+		return true
+	case ContributionAdmissionRuleLevelsRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ContributionAdmissionRuleSubjectKind.
 const (
 	ContributionAdmissionRuleSubjectKindContributor ContributionAdmissionRuleSubjectKind = "contributor"
@@ -188,13 +209,13 @@ func (e CustodyConsentAccepted) Valid() bool {
 
 // Defines values for CustodyRequestAdapter.
 const (
-	Bhpan CustodyRequestAdapter = "bhpan"
+	CustodyRequestAdapterBhpan CustodyRequestAdapter = "bhpan"
 )
 
 // Valid indicates whether the value is a known member of the CustodyRequestAdapter enum.
 func (e CustodyRequestAdapter) Valid() bool {
 	switch e {
-	case Bhpan:
+	case CustodyRequestAdapterBhpan:
 		return true
 	default:
 		return false
@@ -204,7 +225,7 @@ func (e CustodyRequestAdapter) Valid() bool {
 // Defines values for InstanceOwnership.
 const (
 	InstanceOwnershipContributor InstanceOwnership = "contributor"
-	InstanceOwnershipPlatform    InstanceOwnership = "platform"
+	InstanceOwnershipFallback    InstanceOwnership = "fallback"
 )
 
 // Valid indicates whether the value is a known member of the InstanceOwnership enum.
@@ -212,7 +233,7 @@ func (e InstanceOwnership) Valid() bool {
 	switch e {
 	case InstanceOwnershipContributor:
 		return true
-	case InstanceOwnershipPlatform:
+	case InstanceOwnershipFallback:
 		return true
 	default:
 		return false
@@ -245,11 +266,13 @@ func (e InstanceState) Valid() bool {
 
 // Defines values for InstanceCommandAction.
 const (
-	Drain  InstanceCommandAction = "drain"
-	Pause  InstanceCommandAction = "pause"
-	Quota  InstanceCommandAction = "quota"
-	Resume InstanceCommandAction = "resume"
-	Revoke InstanceCommandAction = "revoke"
+	Drain   InstanceCommandAction = "drain"
+	Pause   InstanceCommandAction = "pause"
+	Quota   InstanceCommandAction = "quota"
+	Resume  InstanceCommandAction = "resume"
+	Revoke  InstanceCommandAction = "revoke"
+	Trust   InstanceCommandAction = "trust"
+	Untrust InstanceCommandAction = "untrust"
 )
 
 // Valid indicates whether the value is a known member of the InstanceCommandAction enum.
@@ -265,6 +288,10 @@ func (e InstanceCommandAction) Valid() bool {
 		return true
 	case Revoke:
 		return true
+	case Trust:
+		return true
+	case Untrust:
+		return true
 	default:
 		return false
 	}
@@ -273,15 +300,12 @@ func (e InstanceCommandAction) Valid() bool {
 // Defines values for InstanceInputOwnership.
 const (
 	InstanceInputOwnershipContributor InstanceInputOwnership = "contributor"
-	InstanceInputOwnershipPlatform    InstanceInputOwnership = "platform"
 )
 
 // Valid indicates whether the value is a known member of the InstanceInputOwnership enum.
 func (e InstanceInputOwnership) Valid() bool {
 	switch e {
 	case InstanceInputOwnershipContributor:
-		return true
-	case InstanceInputOwnershipPlatform:
 		return true
 	default:
 		return false
@@ -312,6 +336,27 @@ func (e InstanceInputState) Valid() bool {
 	}
 }
 
+// Defines values for ProtectionClass.
+const (
+	ProtectionClassPublic     ProtectionClass = "public"
+	ProtectionClassQuarantine ProtectionClass = "quarantine"
+	ProtectionClassRestricted ProtectionClass = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the ProtectionClass enum.
+func (e ProtectionClass) Valid() bool {
+	switch e {
+	case ProtectionClassPublic:
+		return true
+	case ProtectionClassQuarantine:
+		return true
+	case ProtectionClassRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProtectionEncrypted.
 const (
 	False ProtectionEncrypted = false
@@ -321,6 +366,84 @@ const (
 func (e ProtectionEncrypted) Valid() bool {
 	switch e {
 	case False:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SchoolIntakeMode.
+const (
+	SchoolIntakeModeBhpan   SchoolIntakeMode = "bhpan"
+	SchoolIntakeModeCosOnly SchoolIntakeMode = "cos_only"
+	SchoolIntakeModeMixed   SchoolIntakeMode = "mixed"
+	SchoolIntakeModePaused  SchoolIntakeMode = "paused"
+)
+
+// Valid indicates whether the value is a known member of the SchoolIntakeMode enum.
+func (e SchoolIntakeMode) Valid() bool {
+	switch e {
+	case SchoolIntakeModeBhpan:
+		return true
+	case SchoolIntakeModeCosOnly:
+		return true
+	case SchoolIntakeModeMixed:
+		return true
+	case SchoolIntakeModePaused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TrustConsentClasses.
+const (
+	TrustConsentClassesQuarantine TrustConsentClasses = "quarantine"
+	TrustConsentClassesRestricted TrustConsentClasses = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the TrustConsentClasses enum.
+func (e TrustConsentClasses) Valid() bool {
+	switch e {
+	case TrustConsentClassesQuarantine:
+		return true
+	case TrustConsentClassesRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TrustConsentSource.
+const (
+	ConfirmedByOwner TrustConsentSource = "confirmed_by_owner"
+	OwnerSession     TrustConsentSource = "owner_session"
+)
+
+// Valid indicates whether the value is a known member of the TrustConsentSource enum.
+func (e TrustConsentSource) Valid() bool {
+	switch e {
+	case ConfirmedByOwner:
+		return true
+	case OwnerSession:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TrustConsentRequestClasses.
+const (
+	TrustConsentRequestClassesQuarantine TrustConsentRequestClasses = "quarantine"
+	TrustConsentRequestClassesRestricted TrustConsentRequestClasses = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the TrustConsentRequestClasses enum.
+func (e TrustConsentRequestClasses) Valid() bool {
+	switch e {
+	case TrustConsentRequestClassesQuarantine:
+		return true
+	case TrustConsentRequestClassesRestricted:
 		return true
 	default:
 		return false
@@ -417,13 +540,16 @@ type ContributionAdmissionPolicy struct {
 // ContributionAdmissionRule defines model for ContributionAdmissionRule.
 type ContributionAdmissionRule struct {
 	// InstanceId Optional instance restriction. The instance owner must match the selector.
-	InstanceId *string  `json:"instance_id,omitempty"`
-	Levels     []string `json:"levels"`
-	SubjectId  string   `json:"subject_id"`
+	InstanceId *string                           `json:"instance_id,omitempty"`
+	Levels     []ContributionAdmissionRuleLevels `json:"levels"`
+	SubjectId  string                            `json:"subject_id"`
 
 	// SubjectKind Contributor key or membership in a storage-admission role or group.
 	SubjectKind ContributionAdmissionRuleSubjectKind `json:"subject_kind"`
 }
+
+// ContributionAdmissionRuleLevels File protection class. Billing separately controls prices and entitlements.
+type ContributionAdmissionRuleLevels string
 
 // ContributionAdmissionRuleSubjectKind Contributor key or membership in a storage-admission role or group.
 type ContributionAdmissionRuleSubjectKind string
@@ -591,6 +717,7 @@ type Instance struct {
 	AccountDomain string      `json:"account_domain"`
 	Adapter       string      `json:"adapter"`
 	Admissions    []Admission `json:"admissions"`
+	AlertPercent  *int        `json:"alert_percent,omitempty"`
 	Authorized    bool        `json:"authorized"`
 
 	// ContributionApproval Sanitized operator approval receipt for an adopted contribution. Never a credential or user identifier.
@@ -602,6 +729,7 @@ type Instance struct {
 	CredentialRef      string            `json:"credential_ref"`
 	CredentialRevision int64             `json:"credential_revision"`
 	ExpiresAt          time.Time         `json:"expires_at"`
+	FallbackLimit      *int64            `json:"fallback_limit,omitempty"`
 	Id                 string            `json:"id"`
 	Limit              int64             `json:"limit"`
 	OwnerDomain        string            `json:"owner_domain"`
@@ -617,6 +745,8 @@ type Instance struct {
 	Root           string        `json:"root"`
 	SafetyMargin   *int64        `json:"safety_margin,omitempty"`
 	State          InstanceState `json:"state"`
+	TrustConsent   *TrustConsent `json:"trust_consent,omitempty"`
+	Trusted        *bool         `json:"trusted,omitempty"`
 	Used           int64         `json:"used"`
 }
 
@@ -638,18 +768,25 @@ type InstanceCommandAction string
 
 // InstanceHealth defines model for InstanceHealth.
 type InstanceHealth struct {
+	AccountHint            *string   `json:"account_hint,omitempty"`
+	Adapter                *string   `json:"adapter,omitempty"`
 	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
 	AvailableBytes         int64     `json:"available_bytes"`
-	Id                     string    `json:"id"`
-	LimitBytes             int64     `json:"limit_bytes"`
-	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
+
+	// CapacityWarning The separately capped fallback allocation is at or above its alert threshold.
+	CapacityWarning *bool     `json:"capacity_warning,omitempty"`
+	Id              string    `json:"id"`
+	LimitBytes      int64     `json:"limit_bytes"`
+	QuotaExpiresAt  time.Time `json:"quota_expires_at"`
 
 	// Reason Capacity reasons are capacity_unknown when a current observation has not been recorded, capacity_read_failed when the latest quota read failed, and capacity_expired when the last successful read expired.
-	Reason        string `json:"reason"`
-	ReservedBytes int64  `json:"reserved_bytes"`
-	Revision      int64  `json:"revision"`
-	State         string `json:"state"`
-	UsedBytes     int64  `json:"used_bytes"`
+	Reason        string        `json:"reason"`
+	ReservedBytes int64         `json:"reserved_bytes"`
+	Revision      int64         `json:"revision"`
+	State         string        `json:"state"`
+	TrustConsent  *TrustConsent `json:"trust_consent,omitempty"`
+	Trusted       *bool         `json:"trusted,omitempty"`
+	UsedBytes     int64         `json:"used_bytes"`
 }
 
 // InstanceInput defines model for InstanceInput.
@@ -735,6 +872,9 @@ type ObjectStatus struct {
 	Sha256     string     `json:"sha256"`
 	Size       int64      `json:"size"`
 	State      string     `json:"state"`
+
+	// VerifiedCosOnly True only for a verified fallback COS copy with no eligible contribution account. This permits a first reference without counting a second physical copy.
+	VerifiedCosOnly *bool `json:"verified_cos_only,omitempty"`
 }
 
 // ObjectTotals defines model for ObjectTotals.
@@ -752,6 +892,7 @@ type Operations struct {
 	FailuresNextCursor string           `json:"failures_next_cursor"`
 	GeneratedAt        time.Time        `json:"generated_at"`
 	Instances          []InstanceHealth `json:"instances"`
+	Intake             *[]SchoolIntake  `json:"intake,omitempty"`
 	Jobs               JobTotals        `json:"jobs"`
 	NextCursor         string           `json:"next_cursor"`
 	ObjectTotals       ObjectTotals     `json:"object_totals"`
@@ -778,13 +919,18 @@ type Problem struct {
 
 // Protection defines model for Protection.
 type Protection struct {
-	Class     string              `json:"class"`
+	Class ProtectionClass `json:"class"`
+
+	// Encrypted Client-supplied ciphertext is unsupported. Storage applies authenticated encryption to restricted files before writing any replica.
 	Encrypted ProtectionEncrypted `json:"encrypted"`
 	Public    bool                `json:"public"`
 	Scope     string              `json:"scope"`
 }
 
-// ProtectionEncrypted defines model for Protection.Encrypted.
+// ProtectionClass defines model for Protection.Class.
+type ProtectionClass string
+
+// ProtectionEncrypted Client-supplied ciphertext is unsupported. Storage applies authenticated encryption to restricted files before writing any replica.
 type ProtectionEncrypted bool
 
 // ProtectionChange defines model for ProtectionChange.
@@ -820,6 +966,54 @@ type RetryJob struct {
 // Revision defines model for Revision.
 type Revision struct {
 	Revision int64 `json:"revision"`
+}
+
+// SchoolIntake defines model for SchoolIntake.
+type SchoolIntake struct {
+	Class                string           `json:"class"`
+	ContributionAccounts int              `json:"contribution_accounts"`
+	MaxFileBytes         int64            `json:"max_file_bytes"`
+	Mode                 SchoolIntakeMode `json:"mode"`
+	Reason               *string          `json:"reason,omitempty"`
+	Scope                string           `json:"scope"`
+}
+
+// SchoolIntakeMode defines model for SchoolIntake.Mode.
+type SchoolIntakeMode string
+
+// TrustConsent defines model for TrustConsent.
+type TrustConsent struct {
+	Classes    []TrustConsentClasses `json:"classes"`
+	RecordedAt time.Time             `json:"recorded_at"`
+	Scope      string                `json:"scope"`
+	Source     TrustConsentSource    `json:"source"`
+	Until      time.Time             `json:"until"`
+}
+
+// TrustConsentClasses defines model for TrustConsent.Classes.
+type TrustConsentClasses string
+
+// TrustConsentSource defines model for TrustConsent.Source.
+type TrustConsentSource string
+
+// TrustConsentRequest defines model for TrustConsentRequest.
+type TrustConsentRequest struct {
+	Classes  []TrustConsentRequestClasses `json:"classes"`
+	Revision int64                        `json:"revision"`
+	Scope    string                       `json:"scope"`
+	Until    time.Time                    `json:"until"`
+}
+
+// TrustConsentRequestClasses defines model for TrustConsentRequest.Classes.
+type TrustConsentRequestClasses string
+
+// TrustState defines model for TrustState.
+type TrustState struct {
+	AvailableScopes []string      `json:"available_scopes"`
+	Consent         *TrustConsent `json:"consent,omitempty"`
+	MaximumUntil    time.Time     `json:"maximum_until"`
+	Revision        int64         `json:"revision"`
+	Trusted         bool          `json:"trusted"`
 }
 
 // ReplaceContributionAdmissionPolicyParams defines parameters for ReplaceContributionAdmissionPolicy.
@@ -881,6 +1075,11 @@ type RegisterInstanceParams struct {
 
 // UpdateInstanceParams defines parameters for UpdateInstance.
 type UpdateInstanceParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
+// SetOwnStorageTrustConsentParams defines parameters for SetOwnStorageTrustConsent.
+type SetOwnStorageTrustConsentParams struct {
 	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
@@ -972,6 +1171,9 @@ type RegisterInstanceJSONRequestBody = InstanceInput
 
 // UpdateInstanceJSONRequestBody defines body for UpdateInstance for application/json ContentType.
 type UpdateInstanceJSONRequestBody = InstanceInput
+
+// SetOwnStorageTrustConsentJSONRequestBody defines body for SetOwnStorageTrustConsent for application/json ContentType.
+type SetOwnStorageTrustConsentJSONRequestBody = TrustConsentRequest
 
 // ReconcileJSONRequestBody defines body for Reconcile for application/json ContentType.
 type ReconcileJSONRequestBody = Maintenance
@@ -1215,6 +1417,23 @@ type ClientInterface interface {
 	// UpdateInstance performs a PUT /api/v1/storage/instances/{id} (the `UpdateInstance` operationId) request.
 	// Takes a body of the `application/json` content type.
 	UpdateInstance(ctx context.Context, id string, params *UpdateInstanceParams, body UpdateInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOwnStorageTrustConsent performs a GET /api/v1/storage/instances/{id}/trust-consent (the `GetOwnStorageTrustConsent` operationId) request.
+	//
+	// Return the current owner’s decision and available school scopes.
+	GetOwnStorageTrustConsent(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetOwnStorageTrustConsentWithBody performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+	SetOwnStorageTrustConsentWithBody(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetOwnStorageTrustConsent performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+	SetOwnStorageTrustConsent(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, body SetOwnStorageTrustConsentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReconcileWithBody performs a POST /api/v1/storage/maintenance (the `Reconcile` operationId) request,
 	// with any type of body and a specified content type.
@@ -1713,6 +1932,53 @@ func (c *Client) UpdateInstanceWithBody(ctx context.Context, id string, params *
 // Takes a body of the `application/json` content type.
 func (c *Client) UpdateInstance(ctx context.Context, id string, params *UpdateInstanceParams, body UpdateInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateInstanceRequest(c.Server, id, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOwnStorageTrustConsent performs a GET /api/v1/storage/instances/{id}/trust-consent (the `GetOwnStorageTrustConsent` operationId) request.
+//
+// Return the current owner’s decision and available school scopes.
+func (c *Client) GetOwnStorageTrustConsent(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOwnStorageTrustConsentRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetOwnStorageTrustConsentWithBody performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request,
+// with any type of body and a specified content type.
+//
+// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+func (c *Client) SetOwnStorageTrustConsentWithBody(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetOwnStorageTrustConsentRequestWithBody(c.Server, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetOwnStorageTrustConsent performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+func (c *Client) SetOwnStorageTrustConsent(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, body SetOwnStorageTrustConsentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetOwnStorageTrustConsentRequest(c.Server, id, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2968,6 +3234,100 @@ func NewUpdateInstanceRequestWithBody(server string, id string, params *UpdateIn
 	return req, nil
 }
 
+// NewGetOwnStorageTrustConsentRequest constructs an http.Request for the GetOwnStorageTrustConsent method
+func NewGetOwnStorageTrustConsentRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/instances/%s/trust-consent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetOwnStorageTrustConsentRequest calls the generic SetOwnStorageTrustConsent builder with application/json body
+func NewSetOwnStorageTrustConsentRequest(server string, id string, params *SetOwnStorageTrustConsentParams, body SetOwnStorageTrustConsentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetOwnStorageTrustConsentRequestWithBody(server, id, params, "application/json", bodyReader)
+}
+
+// NewSetOwnStorageTrustConsentRequestWithBody constructs an http.Request for the SetOwnStorageTrustConsent method, with any body, and a specified content type
+func NewSetOwnStorageTrustConsentRequestWithBody(server string, id string, params *SetOwnStorageTrustConsentParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/storage/instances/%s/trust-consent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewReconcileRequest calls the generic Reconcile builder with application/json body
 func NewReconcileRequest(server string, body ReconcileJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -3991,6 +4351,27 @@ type ClientWithResponsesInterface interface {
 	// UpdateInstanceWithResponse performs a PUT /api/v1/storage/instances/{id} (the `UpdateInstance` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	UpdateInstanceWithResponse(ctx context.Context, id string, params *UpdateInstanceParams, body UpdateInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateInstanceResponse, error)
+
+	// GetOwnStorageTrustConsentWithResponse performs a GET /api/v1/storage/instances/{id}/trust-consent (the `GetOwnStorageTrustConsent` operationId) request.
+	//
+	// Return the current owner’s decision and available school scopes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetOwnStorageTrustConsentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOwnStorageTrustConsentResponse, error)
+
+	// SetOwnStorageTrustConsentWithBodyWithResponse performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SetOwnStorageTrustConsentWithBodyWithResponse(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetOwnStorageTrustConsentResponse, error)
+
+	// SetOwnStorageTrustConsentWithResponse performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+	SetOwnStorageTrustConsentWithResponse(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, body SetOwnStorageTrustConsentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetOwnStorageTrustConsentResponse, error)
 
 	// ReconcileWithBodyWithResponse performs a POST /api/v1/storage/maintenance (the `Reconcile` operationId) request,
 	// with any type of body and a specified content type.
@@ -5717,6 +6098,186 @@ func (r UpdateInstanceResponse) ContentType() string {
 	return ""
 }
 
+type GetOwnStorageTrustConsentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TrustState
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON200() *TrustState {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetOwnStorageTrustConsentResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOwnStorageTrustConsentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOwnStorageTrustConsentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOwnStorageTrustConsentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOwnStorageTrustConsentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetOwnStorageTrustConsentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TrustState
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Problem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Problem
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Problem
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Problem
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Problem
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Problem
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON200() *TrustState {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON400() *Problem {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON401() *Problem {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON403() *Problem {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON404() *Problem {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON409() *Problem {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON413() *Problem {
+	return r.JSON413
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetOwnStorageTrustConsentResponse) GetJSON503() *Problem {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SetOwnStorageTrustConsentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetOwnStorageTrustConsentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetOwnStorageTrustConsentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetOwnStorageTrustConsentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ReconcileResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7328,6 +7889,45 @@ func (c *ClientWithResponses) UpdateInstanceWithResponse(ctx context.Context, id
 	return ParseUpdateInstanceResponse(rsp)
 }
 
+// GetOwnStorageTrustConsentWithResponse performs a GET /api/v1/storage/instances/{id}/trust-consent (the `GetOwnStorageTrustConsent` operationId) request.
+//
+// Return the current owner’s decision and available school scopes.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetOwnStorageTrustConsentWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOwnStorageTrustConsentResponse, error) {
+	rsp, err := c.GetOwnStorageTrustConsent(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOwnStorageTrustConsentResponse(rsp)
+}
+
+// SetOwnStorageTrustConsentWithBodyWithResponse performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request,
+// with any type of body and a specified content type.
+//
+// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetOwnStorageTrustConsentWithBodyWithResponse(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetOwnStorageTrustConsentResponse, error) {
+	rsp, err := c.SetOwnStorageTrustConsentWithBody(ctx, id, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetOwnStorageTrustConsentResponse(rsp)
+}
+
+// SetOwnStorageTrustConsentWithResponse performs a PUT /api/v1/storage/instances/{id}/trust-consent (the `SetOwnStorageTrustConsent` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only.
+func (c *ClientWithResponses) SetOwnStorageTrustConsentWithResponse(ctx context.Context, id string, params *SetOwnStorageTrustConsentParams, body SetOwnStorageTrustConsentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetOwnStorageTrustConsentResponse, error) {
+	rsp, err := c.SetOwnStorageTrustConsent(ctx, id, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetOwnStorageTrustConsentResponse(rsp)
+}
+
 // ReconcileWithBodyWithResponse performs a POST /api/v1/storage/maintenance (the `Reconcile` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -8867,6 +9467,156 @@ func ParseUpdateInstanceResponse(rsp *http.Response) (*UpdateInstanceResponse, e
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Instance
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOwnStorageTrustConsentResponse parses an HTTP response from a GetOwnStorageTrustConsentWithResponse call
+func ParseGetOwnStorageTrustConsentResponse(rsp *http.Response) (*GetOwnStorageTrustConsentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOwnStorageTrustConsentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TrustState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetOwnStorageTrustConsentResponse parses an HTTP response from a SetOwnStorageTrustConsentWithResponse call
+func ParseSetOwnStorageTrustConsentResponse(rsp *http.Response) (*SetOwnStorageTrustConsentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetOwnStorageTrustConsentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TrustState
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

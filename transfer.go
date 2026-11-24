@@ -108,27 +108,12 @@ func (s *Service) commitStagedIngest(ctx context.Context, p Principal, id string
 		if current.Revision != o.Revision || current.State == "deleting" || current.State == "deleted" {
 			return ErrStale
 		}
-		replicas, err := tx.Replicas(id)
-		if err != nil {
+		chosen, exists, err := s.firstIngestReplica(tx, o)
+		already = exists
+		replica = chosen
+		if err != nil || already {
 			return err
 		}
-		for _, r := range replicas {
-			if r.State == "healthy" && r.ObjectRevision == o.Revision {
-				already = true
-				return nil
-			}
-			if r.State != "deleted" {
-				return ErrConflict
-			}
-		}
-		planned, err := s.plan(tx, o, 1)
-		if err != nil {
-			return err
-		}
-		if len(planned) == 0 {
-			return ErrCapacity
-		}
-		replica = planned[0]
 		replica.State = "writing"
 		if err := tx.SaveReplica(replica); err != nil {
 			return err
@@ -245,7 +230,7 @@ func (s *Service) openObjectDownload(ctx context.Context, p Principal, id string
 		if err != nil {
 			return err
 		}
-		if o.State == "deleting" || o.State == "deleted" || st.Healthy == 0 || (!review && !o.Published && st.Healthy < o.Policy.Publish) {
+		if o.State == "deleting" || o.State == "deleted" || st.Healthy == 0 || (!review && !o.Published && !st.CanReference()) {
 			return ErrUnavailable
 		}
 		return nil
@@ -352,8 +337,17 @@ func (s *Service) readRemote(ctx context.Context, o Object, i Instance, remote L
 	}
 	h := sha256.New()
 	w := &boundedWriter{w: io.MultiWriter(f, h), remaining: o.Size}
-	n, err := driver.Read(ctx, i, remote, w)
-	if err == nil && (n != o.Size || w.remaining != 0 || hex.EncodeToString(h.Sum(nil)) != o.SHA256) {
+	var sink io.Writer = w
+	if o.Protection.Class == "restricted" {
+		c, e := s.cfg.ContentKeys.open(o)
+		if e != nil {
+			removeTemporary(f)
+			return nil, e
+		}
+		sink = &decryptedWriter{contentCipher: c, dst: w}
+	}
+	n, err := driver.Read(ctx, i, remote, sink)
+	if err == nil && (n != o.storedBytes() || w.remaining != 0 || hex.EncodeToString(h.Sum(nil)) != o.SHA256) {
 		err = ErrIntegrity
 	}
 	if err == nil {
@@ -515,7 +509,14 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 			return tx.SaveReplica(current)
 		})
 	}
-	remote, err := writeWithFence(ctx, driver, i, r.Intent, o.Size, src, issue, checkpoint)
+	if o.Protection.Class == "restricted" {
+		c, err := s.cfg.ContentKeys.open(o)
+		if err != nil {
+			return err
+		}
+		src = &encryptedReader{contentCipher: c, src: src}
+	}
+	remote, err := writeWithFence(ctx, driver, i, r.Intent, o.storedBytes(), src, issue, checkpoint)
 	if err != nil {
 		return err
 	}
@@ -556,7 +557,9 @@ func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 			r.Reserved = false
 			i.Used += r.Size
 			r.Accounted = true
-			if i.ProviderFree >= r.Size {
+			if i.IsFallback() {
+				i.ProviderFree = i.FallbackLimit - i.Used
+			} else if i.ProviderFree >= r.Size {
 				i.ProviderFree -= r.Size
 			} else {
 				i.ProviderFree = 0
@@ -571,6 +574,9 @@ func (s *Service) complete(ctx context.Context, j Job, remote Locator) error {
 		current.State = "done"
 		current.CompletedAt = s.now()
 		if err := tx.SaveJob(current); err != nil {
+			return err
+		}
+		if err := s.scheduleHeld(tx, o); err != nil {
 			return err
 		}
 		return s.emitScoped(ctx, tx, Principal{}, "storage.replica.verified", o.ID, o.Revision, "success", o.Protection.Scope)
@@ -743,6 +749,9 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 		}
 		if r.Accounted {
 			i.Used -= r.Size
+			if i.IsFallback() {
+				i.ProviderFree = i.FallbackLimit - i.Used
+			}
 			r.Accounted = false
 		}
 		r.State = "deleted"

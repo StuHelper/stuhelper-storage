@@ -41,13 +41,17 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 			}
 			return s.contentView(tx, h, g)
 		}
-		target, e := s.contentGroup(tx, p, CreateRequest{Size: g.Size, SHA256: g.SHA256, Protection: protection, Policy: g.Policy})
+		target, e := s.contentGroup(tx, p, CreateRequest{ClientKey: id, Size: g.Size, SHA256: g.SHA256, Protection: protection, Policy: g.Policy})
 		if e != nil {
 			return nil, e
 		}
 		if h.PendingGroup != "" && h.PendingGroup != target.ID {
 			return nil, ErrConflict
 		}
+		if h.PreparedGroup != "" && h.PreparedGroup != target.ID {
+			return nil, ErrConflict
+		}
+		h.PreparedGroup = ""
 		h.PendingGroup = target.ID
 		if e = tx.SaveContentHandle(h); e != nil {
 			return nil, e

@@ -91,8 +91,10 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 	}
 
 	// Platform instance and custody-only unconsented contributor instance must NOT inflate contributor summary.
-	h.instance(t, "platform-node", "platform-owner", "platform", 8192)
-	custodyOnly := h.instance(t, "custody-unconsented", "student-0", "contributor", 0)
+	if err := h.s.ConfigureFallback(h.ctx, h.actor, storage.FallbackConfig{ID: "cos-reserve", AccountDomain: "cos:fixture", Root: "replicas", Limit: 8192, AlertPercent: 80, Scopes: []string{"school-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	custodyOnly := h.instance(t, "custody-unconsented", "student-0", 0)
 	custodyOnly.State = "paused"
 	if _, err := svc.UpdateInstance(h.ctx, h.actor, "pause-c0", custodyOnly); err != nil {
 		t.Fatal(err)
@@ -117,7 +119,7 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 	}
 
 	// Register two consented contributor instances: c1 (active, 2048 B) and c2 (paused, 1024 B).
-	c1 := h.instance(t, "summary", "owner-secret-1", "contributor", 0)
+	c1 := h.instance(t, "summary", "owner-secret-1", 0)
 	c1.State = "paused"
 	c1, err = svc.UpdateInstance(h.ctx, h.actor, "prep-c1", c1)
 	if err != nil {
@@ -148,7 +150,7 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 	}
 
 	// Upload 10 bytes onto c1 (pause platform-node first so c1 receives the replica).
-	if _, err := svc.CommandInstance(h.ctx, h.actor, "platform-node", "pause-plat", storage.InstanceCommand{Revision: 1, Action: "pause"}); err != nil {
+	if _, err := svc.CommandInstance(h.ctx, h.actor, "cos-reserve", "pause-cos", storage.InstanceCommand{Revision: 1, Action: "pause"}); err != nil {
 		t.Fatal(err)
 	}
 	payload := []byte("0123456789")
@@ -172,7 +174,7 @@ func TestContributionTransparencySummaryLeastPrivilegeAndAggregation(t *testing.
 	}
 
 	// Add second contributor instance in paused state -> DeclaredBytes = 2048+1024 = 3072, AvailableBytes stays 2038, Status = degraded.
-	c2 := h.instance(t, "contrib-secret-2", "owner-secret-2", "contributor", 0)
+	c2 := h.instance(t, "contrib-secret-2", "owner-secret-2", 0)
 	c2.State = "paused"
 	c2, err = svc.UpdateInstance(h.ctx, h.actor, "prep-c2", c2)
 	if err != nil {
@@ -222,7 +224,7 @@ func TestContributionSummaryRejectsUnrepresentableCapacity(t *testing.T) {
 	h.provider.quota = &storage.ProviderQuotaSample{TotalBytes: 1 << 60}
 	for n := 0; n < 8; n++ {
 		id := fmt.Sprintf("large-%d", n)
-		i := h.instance(t, id, id, "contributor", 0)
+		i := h.instance(t, id, id, 0)
 		i.State = "paused"
 		i, err := h.s.UpdateInstance(h.ctx, h.actor, "pause-"+id, i)
 		if err != nil {

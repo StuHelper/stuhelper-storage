@@ -38,6 +38,11 @@ func (t *transaction) InstanceReplicas(id string) (int64, error) {
 	return count, t.safe("instance_replicas", err)
 }
 
+func (t *transaction) HeldReservationBytes(id string) (int64, error) {
+	var n int64
+	err := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(sum((data->>'size')::bigint),0) FROM storage.replicas WHERE instance_id=$1 AND data->>'state'='held' AND (data->>'reserved')::boolean AND NOT (data->>'issued_write')::boolean`, id).Scan(&n)
+	return n, t.safe("held_capacity", err)
+}
 func (t *transaction) ActiveWrites(replicaID string, now time.Time) (bool, error) {
 	var active bool
 	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.jobs WHERE data->>'replica_id'=$1 AND data->>'kind' IN ('ingest','replicate') AND state='running' AND lease_until>$2)`, replicaID, now).Scan(&active)
@@ -355,9 +360,10 @@ func (t *transaction) Event(v storage.Event) error {
 		school = "*"
 	}
 	if err := t.save(`INSERT INTO storage.audit(id,reason,result,audit_school,data) VALUES($1,$2,$3,$4,$5)`, struct {
-		Event storage.Event     `json:"event"`
-		Actor storage.Principal `json:"actor"`
-	}{v, v.Actor}, v.ID, v.Reason, result, school); err != nil {
+		Event         storage.Event       `json:"event"`
+		Actor         storage.Principal   `json:"actor"`
+		TrustDecision *storage.TrustState `json:"trust_decision,omitempty"`
+	}{v, v.Actor, v.TrustDecision}, v.ID, v.Reason, result, school); err != nil {
 		return err
 	}
 	_, err := t.tx.ExecContext(t.ctx, `SELECT pg_notify('storage_outbox', $1)`, v.Subject)

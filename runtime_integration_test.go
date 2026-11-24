@@ -16,7 +16,7 @@ func TestDisabledInstanceCannotTriggerProviderRefresh(t *testing.T) {
 	for _, mode := range []string{"revoked", "unauthorized", "expired"} {
 		t.Run(mode, func(t *testing.T) {
 			h := harnessFor(t)
-			i := h.instance(t, "account", "owner", "platform", 1024)
+			i := h.instance(t, "account", "owner", 1024)
 			if mode == "expired" {
 				h.clock.Add(365 * 24 * time.Hour)
 			} else {
@@ -49,9 +49,9 @@ func TestDisabledReplicaDoesNotSchedulePeriodicVerification(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			h := harnessFor(t)
 			h.provider.verificationClock = h.clock.Now
-			first := h.instance(t, "a", "a", "platform", 1024)
+			first := h.instance(t, "a", "a", 1024)
 			for _, id := range []string{"b", "c"} {
-				h.instance(t, id, id, "platform", 1024)
+				h.instance(t, id, id, 1024)
 			}
 			data := []byte("idle instance remains idle")
 			o := h.object(t, "create", data)
@@ -109,7 +109,7 @@ func TestDisabledReplicaDoesNotSchedulePeriodicVerification(t *testing.T) {
 func TestTransferAdmissionAndShutdownCancellation(t *testing.T) {
 	h := harnessFor(t, func(c *storage.Config) { c.ParallelTransfers = 1 })
 	for _, id := range []string{"a", "b", "c"} {
-		h.instance(t, id, id, "platform", 1024)
+		h.instance(t, id, id, 1024)
 	}
 	data := []byte("shutdown download")
 	o := h.object(t, "create", data)
@@ -156,7 +156,7 @@ func TestTransferAdmissionAndShutdownCancellation(t *testing.T) {
 func TestQueueBudgetDefersReplicationAndDeletion(t *testing.T) {
 	h := harnessFor(t, func(c *storage.Config) { c.MaxOutstandingJobs = 1 })
 	for _, id := range []string{"a", "b", "c"} {
-		h.instance(t, id, id, "platform", 1024)
+		h.instance(t, id, id, 1024)
 	}
 	data := []byte("bounded queue")
 	o := h.object(t, "create", data)
@@ -197,7 +197,7 @@ func TestQueueBudgetDefersReplicationAndDeletion(t *testing.T) {
 
 func TestBlockedJobsKeepRetryLimit(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "a", "owner", "platform", 1024)
+	h.instance(t, "a", "owner", 1024)
 	data := []byte("ambiguous upload")
 	o := h.object(t, "create", data)
 	h.provider.lostBegin = true
@@ -224,7 +224,7 @@ func TestBlockedJobsKeepRetryLimit(t *testing.T) {
 func TestBlockedPeriodicVerificationDoesNotRestart(t *testing.T) {
 	h := harnessFor(t)
 	for _, id := range []string{"a", "b", "c"} {
-		h.instance(t, id, id, "platform", 1024)
+		h.instance(t, id, id, 1024)
 	}
 	data := []byte("verify retry limit")
 	o := h.object(t, "create", data)
@@ -257,7 +257,7 @@ func TestBlockedPeriodicVerificationDoesNotRestart(t *testing.T) {
 func TestExecutorRestartFinishesDurableReplicas(t *testing.T) {
 	h := harnessFor(t)
 	for _, id := range []string{"a", "b", "c"} {
-		h.instance(t, id, id, "platform", 1024)
+		h.instance(t, id, id, 1024)
 	}
 	data := []byte("restart source")
 	o := h.object(t, "create", data)

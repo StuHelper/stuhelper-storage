@@ -25,12 +25,21 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 		return out, ErrInput
 	}
 	switch command.Action {
-	case "pause", "resume", "drain", "revoke", "quota":
+	case "pause", "resume", "drain", "revoke", "quota", "trust", "untrust":
 	default:
 		return out, ErrInput
 	}
-	authorize := func(Transaction) error { return s.authorize(ctx, p, "storage.operations.manage", id, Protection{}) }
+	permission := "storage.operations.manage"
+	if command.Action == "trust" || command.Action == "untrust" {
+		permission = "storage.admissions.manage"
+	}
+	authorize := func(Transaction) error { return s.authorize(ctx, p, permission, id, Protection{}) }
 	err := s.mutation(ctx, p, "storage.operations.manage", id, key, command, authorize, func(tx Transaction) (any, error) {
+		if command.Action == "trust" || command.Action == "untrust" {
+			if err := tx.Lock("instance-registry"); err != nil {
+				return nil, err
+			}
+		}
 		i, err := tx.Instance(id)
 		if err != nil {
 			return nil, err
@@ -39,6 +48,20 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 			return nil, ErrStale
 		}
 		switch command.Action {
+		case "trust", "untrust":
+			if i.Ownership != "contributor" {
+				return nil, ErrDenied
+			}
+			i.Trusted = command.Action == "trust"
+			if i.Trusted && !i.trustEffective(s.now()) {
+				return nil, ErrDenied
+			}
+			policy, err := readAdmissionPolicy(tx)
+			if err != nil {
+				return nil, err
+			}
+			levels := policy.levels(i)
+			i.ContributionLevels = &levels
 		case "pause":
 			if i.State != "active" {
 				return nil, ErrConflict
@@ -68,6 +91,9 @@ func (s *Service) CommandInstance(ctx context.Context, p Principal, id, key stri
 			}
 			i.State, i.Authorized = "revoked", false
 		case "quota":
+			if i.IsFallback() && *command.LimitBytes > i.FallbackLimit {
+				return nil, ErrDenied
+			}
 			if i.Ownership == "contributor" && i.ContributionControl == nil && *command.LimitBytes > 0 {
 				return nil, ErrDenied
 			}

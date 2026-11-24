@@ -17,7 +17,7 @@ import (
 func TestStreamingHashRangeAndETagDownload(t *testing.T) {
 	h := harnessFor(t)
 	for n := 1; n <= 3; n++ {
-		h.instance(t, fmt.Sprintf("i%d", n), fmt.Sprintf("owner-%d", n), "platform", 1<<20)
+		h.instance(t, fmt.Sprintf("i%d", n), fmt.Sprintf("owner-%d", n), 1<<20)
 	}
 	data := bytes.Repeat([]byte("abcdefghijklmnopqrstuvwxyz012345"), 1024)
 	sum := sha256.Sum256(data)

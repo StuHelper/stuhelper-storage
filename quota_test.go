@@ -187,14 +187,16 @@ func TestLegacyQuotaProjectionAndPrivateStorageHTTP(t *testing.T) {
 	}
 	assertPrivate(call(http.MethodPut, path+"/disk", "update", body))
 	assertPrivate(call(http.MethodGet, path, "", nil))
-	h.instance(t, "platform", "platform", "platform", 1024)
+	if err := h.s.ConfigureFallback(h.ctx, h.actor, storage.FallbackConfig{ID: "fallback", AccountDomain: "cos:fixture", Root: "replicas", Scopes: []string{"school-a"}, Limit: 1024, AlertPercent: 80}); err != nil {
+		t.Fatal(err)
+	}
 	var results struct {
 		Items []map[string]json.RawMessage `json:"items"`
 	}
 	r := call(http.MethodGet, path, "", nil)
 	if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &results) != nil || len(results.Items) != 2 ||
 		results.Items[0]["provider_free"] != nil || results.Items[1]["provider_free"] == nil {
-		t.Fatal("instance listing did not preserve the platform-only placement field")
+		t.Fatal("instance listing did not preserve the fallback placement budget and contributor privacy")
 	}
 
 	if _, err := h.db.Exec(`UPDATE storage.instances SET data=data-'quota_observation' WHERE id='disk'`); err != nil {

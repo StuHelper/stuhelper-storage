@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,12 +65,12 @@ func TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	for n := 1; n <= 3; n++ {
-		_, err := svc.Register(h.ctx, h.actor, fmt.Sprintf("reg-%d", n), storage.Instance{
+		_, err := storagetest.RegisterContribution(h.ctx, svc, h.actor, fmt.Sprintf("reg-%d", n), storage.Instance{
 			ID:                 fmt.Sprintf("i%d", n),
 			Adapter:            "test",
 			AccountDomain:      "alias",
 			OwnerDomain:        fmt.Sprintf("owner-%d", n),
-			Ownership:          "platform",
+			Ownership:          "contributor",
 			CredentialRef:      fmt.Sprintf("i%d", n),
 			CredentialRevision: 1,
 			Root:               "isolated",
@@ -100,7 +101,7 @@ func TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff(t *testing.T) {
 	}
 
 	// Degraded object (2/3 replicas: pause i3 before reconciling).
-	if _, err := svc.CommandInstance(h.ctx, h.actor, "i3", "pause-i3", storage.InstanceCommand{Revision: 1, Action: "pause"}); err != nil {
+	if _, err := svc.CommandInstance(h.ctx, h.actor, "i3", "pause-i3", storage.InstanceCommand{Revision: 2, Action: "pause"}); err != nil {
 		t.Fatal(err)
 	}
 	degData := []byte("degraded-two-copies")
@@ -122,7 +123,7 @@ func TestOperationsFilteringTotalsReviewRouteAndUnknownWriteOff(t *testing.T) {
 	}
 
 	// Unpublished 1-replica object for review download (pause i2 so only i1 is writable).
-	if _, err := svc.CommandInstance(h.ctx, h.actor, "i2", "pause-i2", storage.InstanceCommand{Revision: 1, Action: "pause"}); err != nil {
+	if _, err := svc.CommandInstance(h.ctx, h.actor, "i2", "pause-i2", storage.InstanceCommand{Revision: 2, Action: "pause"}); err != nil {
 		t.Fatal(err)
 	}
 	reviewData := []byte("single-copy-awaiting-moderation")
