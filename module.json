@@ -217,7 +217,7 @@
     ],
     "STORAGE-43": [
       "admission_policy_test.go#TestAdmissionPolicySelectorsAndDefault",
-      "admission_policy_integration_test.go#TestContributionAdmissionAdoptionPlacementAndNarrowing"
+      "admission_policy_integration_test.go#TestContributionTrustRequiresOwnerConsentAndAdministration"
     ],
     "STORAGE-44": [
       "quota_test.go#TestProviderQuotaRefreshFailureExpiryAndRecovery",
@@ -226,6 +226,13 @@
       "executor/maintenance_test.go#TestQuotaRetryTargetsOnlyFailedAccountsAndStops",
       "drivers/bhpan/bhpan_test.go#TestVerifyPreservesProviderQuota",
       "drivers/bhpan/bhpan_test.go#TestVerifyReportsSanitizedPrecheckFailures"
+    ],
+    "STORAGE-INTAKE-01": [
+      "admission_policy_integration_test.go#TestAdmissionReservesThresholdAndPrefersContributions"
+    ],
+    "STORAGE-CRYPT-01": [
+      "encryption_test.go#TestRestrictedEnvelopeRestoreAndAuthenticatedChunks",
+      "encryption_integration_test.go#TestRestrictedCiphertextPerVersionAndRotation"
     ]
   }
 }

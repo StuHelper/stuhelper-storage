@@ -3,6 +3,7 @@ package storage_test
 import (
 	"bytes"
 	"errors"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ func TestConfiguredQuotaValidityControlsWritesAndRefresh(t *testing.T) {
 		t.Run(validity.String(), func(t *testing.T) {
 			h := harnessFor(t, func(c *storage.Config) { c.QuotaValidity = validity })
 			h.provider.verificationClock = h.clock.Now
-			i := h.instance(t, "quota", "quota-owner", "platform", 1024)
+			i := h.instance(t, "quota", "quota-owner", 1024)
 			expected := validity
 			if expected == 0 {
 				expected = 5 * time.Minute
@@ -72,7 +73,7 @@ func TestConfiguredVerificationAgeControlsPeriodicJobs(t *testing.T) {
 			h.provider.verificationClock = h.clock.Now
 			for _, id := range []string{"a", "b", "c"} {
 				until := h.clock.Now().Add(72 * time.Hour)
-				_, err := h.s.Register(h.ctx, h.actor, "register-"+id, storage.Instance{ID: id, Adapter: "test", OwnerDomain: id, Ownership: "platform", CredentialRef: id, CredentialRevision: 1, Root: "isolated", State: "active", Authorized: true, Limit: 1024, ExpiresAt: until, Admissions: []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: until}}})
+				_, err := storagetest.RegisterContribution(h.ctx, h.s, h.actor, "register-"+id, storage.Instance{ID: id, Adapter: "test", OwnerDomain: id, Ownership: "contributor", CredentialRef: id, CredentialRevision: 1, Root: "isolated", State: "active", Authorized: true, Limit: 1024, ExpiresAt: until, Admissions: []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: until}}})
 				if err != nil {
 					t.Fatal(err)
 				}

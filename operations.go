@@ -6,16 +6,21 @@ import (
 )
 
 type InstanceHealth struct {
-	Revision               int64     `json:"revision"`
-	LimitBytes             int64     `json:"limit_bytes"`
-	UsedBytes              int64     `json:"used_bytes"`
-	ReservedBytes          int64     `json:"reserved_bytes"`
-	ID                     string    `json:"id"`
-	State                  string    `json:"state"`
-	Reason                 string    `json:"reason"`
-	AvailableBytes         int64     `json:"available_bytes"`
-	AuthorizationExpiresAt time.Time `json:"authorization_expires_at"`
-	QuotaExpiresAt         time.Time `json:"quota_expires_at"`
+	CapacityWarning        bool          `json:"capacity_warning,omitempty"`
+	Adapter                string        `json:"adapter,omitempty"`
+	AccountHint            string        `json:"account_hint,omitempty"`
+	Trusted                bool          `json:"trusted"`
+	TrustConsent           *TrustConsent `json:"trust_consent,omitempty"`
+	Revision               int64         `json:"revision"`
+	LimitBytes             int64         `json:"limit_bytes"`
+	UsedBytes              int64         `json:"used_bytes"`
+	ReservedBytes          int64         `json:"reserved_bytes"`
+	ID                     string        `json:"id"`
+	State                  string        `json:"state"`
+	Reason                 string        `json:"reason"`
+	AvailableBytes         int64         `json:"available_bytes"`
+	AuthorizationExpiresAt time.Time     `json:"authorization_expires_at"`
+	QuotaExpiresAt         time.Time     `json:"quota_expires_at"`
 }
 type ObjectHealth struct {
 	ID      string `json:"id"`
@@ -49,6 +54,7 @@ type JobFailure struct {
 	NextAttempt time.Time `json:"next_attempt"`
 }
 type Operations struct {
+	Intake             []SchoolIntake   `json:"intake,omitempty"`
 	GeneratedAt        time.Time        `json:"generated_at"`
 	Instances          []InstanceHealth `json:"instances"`
 	Objects            []ObjectHealth   `json:"objects"`
@@ -69,7 +75,7 @@ type OperationsQuery struct {
 }
 
 func instanceHealth(i Instance, now time.Time) InstanceHealth {
-	out := InstanceHealth{ID: i.ID, State: i.State, Revision: i.Revision, LimitBytes: i.Limit, UsedBytes: i.Used, ReservedBytes: i.Reserved, AuthorizationExpiresAt: i.ExpiresAt, QuotaExpiresAt: i.QuotaExpiresAt}
+	out := InstanceHealth{CapacityWarning: i.capacityWarning(), Adapter: i.Adapter, Trusted: i.trustEffective(now), TrustConsent: i.TrustConsent, ID: i.ID, State: i.State, Revision: i.Revision, LimitBytes: i.Limit, UsedBytes: i.Used, ReservedBytes: i.Reserved, AuthorizationExpiresAt: i.ExpiresAt, QuotaExpiresAt: i.QuotaExpiresAt}
 	switch {
 	case !i.Authorized || i.State == "revoked":
 		out.Reason = "authorization_revoked"
@@ -82,7 +88,7 @@ func instanceHealth(i Instance, now time.Time) InstanceHealth {
 	case !i.QuotaExpiresAt.After(now):
 		out.Reason = i.quotaReason(now)
 	default:
-		out.AvailableBytes = max(0, min(i.Limit-i.Used-i.Reserved, i.ProviderFree-i.PersonalReserve-i.SafetyMargin-i.Reserved))
+		out.AvailableBytes = i.writeBudget()
 		out.Reason = i.quotaReason(now)
 		if out.AvailableBytes == 0 && out.Reason == "" {
 			out.Reason = "capacity_exhausted"
@@ -92,7 +98,7 @@ func instanceHealth(i Instance, now time.Time) InstanceHealth {
 }
 
 func (s *Service) evaluateObjectHealth(o Object, copies []Replica, instances []Instance, lookup func(string) (Instance, error), now time.Time) (ObjectHealth, error) {
-	st, err := s.statusFromLoaded(o, copies, lookup, now)
+	st, err := s.statusFromLoaded(o, copies, lookup, now, func() ([]Instance, error) { return instances, nil })
 	if err != nil {
 		return ObjectHealth{}, err
 	}
@@ -164,16 +170,22 @@ func (s *Service) QueryOperations(ctx context.Context, p Principal, q Operations
 	if err := s.authorize(ctx, p, "storage.operations.read", "", Protection{}); err != nil {
 		return out, err
 	}
+	includeHints := s.accountHints != nil && s.authorize(ctx, p, "storage.custody.operations.read", "", Protection{}) == nil
 	err := s.readTx(ctx, func(tx Transaction) error {
 		now := s.now()
 		instances, err := tx.Instances(100, "")
 		if err != nil {
 			return err
 		}
+		out.Intake = s.schoolIntake(instances, now)
 		byID := make(map[string]Instance, len(instances))
 		for _, i := range instances {
 			byID[i.ID] = i
-			out.Instances = append(out.Instances, instanceHealth(i, now))
+			health := instanceHealth(i, now)
+			if includeHints && i.Authorized && i.Ownership == "contributor" {
+				health.AccountHint = s.accountHints.AccountHint(ctx, i)
+			}
+			out.Instances = append(out.Instances, health)
 		}
 
 		lookup := func(id string) (Instance, error) {

@@ -17,7 +17,7 @@ import (
 
 func TestOperatorInstanceCommandsFenceReplayAndPreserveCustody(t *testing.T) {
 	h := harnessFor(t)
-	i := h.instance(t, "instance", "platform", "platform", 1024)
+	i := h.instance(t, "instance", "platform", 1024)
 	o := h.object(t, "object", []byte("data"))
 	h.ingest(t, o.ID, []byte("data"))
 	probes := h.provider.verifyCalls
@@ -51,7 +51,7 @@ func TestOperatorInstanceCommandsFenceReplayAndPreserveCustody(t *testing.T) {
 	if _, err := h.s.CommandInstance(h.ctx, h.actor, i.ID, "quota", command); !errors.Is(err, storage.ErrConflict) {
 		t.Fatal("quota erased used bytes", err)
 	}
-	limit := int64(2048)
+	limit := int64(512)
 	command.LimitBytes = &limit
 	quota, err := h.s.CommandInstance(h.ctx, h.actor, i.ID, "quota", command)
 	if err != nil || quota.LimitBytes != limit || quota.UsedBytes != 4 || quota.ReservedBytes != 0 {
@@ -81,7 +81,7 @@ func TestOperatorInstanceCommandsFenceReplayAndPreserveCustody(t *testing.T) {
 
 func blockedUnknownIngest(t *testing.T, h *harness) (storage.Status, storage.JobFailure) {
 	t.Helper()
-	h.instance(t, "instance", "platform", "platform", 1024)
+	h.instance(t, "instance", "platform", 1024)
 	data := []byte("uncertain write")
 	o := h.object(t, "object", data)
 	h.provider.lostBegin = true
@@ -141,14 +141,14 @@ func TestOperatorRetryRejectsRevocationSupersessionAndQueueOverflow(t *testing.T
 			want := storage.ErrDenied
 			switch reason {
 			case "revoked":
-				if _, err := h.s.CommandInstance(h.ctx, h.actor, "instance", "revoke", storage.InstanceCommand{Revision: 1, Action: "revoke"}); err != nil {
+				if _, err := h.s.CommandInstance(h.ctx, h.actor, "instance", "revoke", storage.InstanceCommand{Revision: 2, Action: "revoke"}); err != nil {
 					t.Fatal(err)
 				}
 			case "expired":
 				h.clock.Add(25 * time.Hour)
 			case "superseded":
 				want = storage.ErrStale
-				if _, err := h.s.CommandInstance(h.ctx, h.actor, "instance", "pause", storage.InstanceCommand{Revision: 1, Action: "pause"}); err != nil {
+				if _, err := h.s.CommandInstance(h.ctx, h.actor, "instance", "pause", storage.InstanceCommand{Revision: 2, Action: "pause"}); err != nil {
 					t.Fatal(err)
 				}
 			case "full":
@@ -203,12 +203,12 @@ func TestOperatorCommandHTTPContract(t *testing.T) {
 	if err != nil || retry.JSON200 == nil || retry.JSON200.Generation != j.Generation+1 {
 		t.Fatal("retry SDK", err)
 	}
-	pause, err := client.CommandStorageInstanceWithResponse(h.ctx, "instance", &sdk.CommandStorageInstanceParams{IdempotencyKey: "pause"}, sdk.InstanceCommand{Revision: 1, Action: sdk.Pause})
+	pause, err := client.CommandStorageInstanceWithResponse(h.ctx, "instance", &sdk.CommandStorageInstanceParams{IdempotencyKey: "pause"}, sdk.InstanceCommand{Revision: 2, Action: sdk.Pause})
 	if err != nil || pause.JSON200 == nil || pause.JSON200.State != "paused" {
 		t.Fatal("command SDK", err)
 	}
 	h.auth.denied.Store(true)
-	pause, err = client.CommandStorageInstanceWithResponse(h.ctx, "instance", &sdk.CommandStorageInstanceParams{IdempotencyKey: "pause"}, sdk.InstanceCommand{Revision: 1, Action: sdk.Pause})
+	pause, err = client.CommandStorageInstanceWithResponse(h.ctx, "instance", &sdk.CommandStorageInstanceParams{IdempotencyKey: "pause"}, sdk.InstanceCommand{Revision: 2, Action: sdk.Pause})
 	if err != nil || pause.StatusCode() != 403 {
 		t.Fatal("HTTP permission bypass", err)
 	}
@@ -216,7 +216,7 @@ func TestOperatorCommandHTTPContract(t *testing.T) {
 
 func TestOperatorRetryRecoversTransientVerificationFailure(t *testing.T) {
 	h := harnessFor(t, func(c *storage.Config) { c.MaxAttempts = 1; c.VerificationAge = time.Minute })
-	h.instance(t, "instance", "platform", "platform", 1024)
+	h.instance(t, "instance", "platform", 1024)
 	o := h.object(t, "object", []byte("data"))
 	h.ingest(t, o.ID, []byte("data"))
 	h.clock.Add(31 * time.Second)

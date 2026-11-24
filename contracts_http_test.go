@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +44,7 @@ func (a *minPrivAuth) Authorize(_ context.Context, p storage.Principal, action, 
 
 func TestHTTPChunkedMaxBytesAuthUnavailableAndDuplicateIdempotencyHeader(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "upload-inst", "platform", "platform", 4096)
+	h.instance(t, "upload-inst", "platform", 4096)
 
 	const maxUpload = 64
 	handler, err := httpapi.New(h.s, testAuthentication{}, maxUpload)
@@ -175,11 +176,11 @@ func TestLeastPrivilegeCreateDownloadAndExpiredConsentRetryRejection(t *testing.
 	downloader := storage.Principal{Issuer: "test-issuer", Subject: "downloader"}
 	until := base.clock.Now().Add(48 * time.Hour)
 	for _, id := range []string{"p1", "p2"} {
-		if _, err = svc.Register(base.ctx, admin, "reg-"+id, storage.Instance{
+		if _, err = storagetest.RegisterContribution(base.ctx, svc, admin, "reg-"+id, storage.Instance{
 			ID:                 id,
 			Adapter:            "test",
 			OwnerDomain:        id,
-			Ownership:          "platform",
+			Ownership:          "contributor",
 			CredentialRef:      id,
 			CredentialRevision: 1,
 			Root:               "isolated",
@@ -252,7 +253,7 @@ func TestLeastPrivilegeCreateDownloadAndExpiredConsentRetryRejection(t *testing.
 
 	// 3. RetryJob must reject blocked ingest/replicate job when ContributionControl.Until has expired!
 	h2 := harnessFor(t, func(c *storage.Config) { c.MaxAttempts = 1 })
-	cInst := h2.instance(t, "contrib-retry", "c-owner", "contributor", 0)
+	cInst := h2.instance(t, "contrib-retry", "c-owner", 0)
 	cInst.State = "paused"
 	cInst, err = h2.s.UpdateInstance(h2.ctx, h2.actor, "pause-c", cInst)
 	if err != nil {

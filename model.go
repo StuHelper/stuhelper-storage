@@ -83,8 +83,12 @@ type Protection struct {
 	Encrypted bool   `json:"encrypted"`
 }
 
+func validClass(class string) bool {
+	return class == "public" || class == "quarantine" || class == "restricted"
+}
+
 func (p Protection) Valid() bool {
-	return validID(p.Class) && validID(p.Scope) && !p.Encrypted && (!p.Public || p.Class == "public")
+	return validClass(p.Class) && validID(p.Scope) && !p.Encrypted && p.Public == (p.Class == "public")
 }
 
 type Admission struct {
@@ -95,6 +99,10 @@ type Admission struct {
 }
 
 type Instance struct {
+	FallbackLimit        int64                `json:"fallback_limit,omitempty"`
+	AlertPercent         int                  `json:"alert_percent,omitempty"`
+	Trusted              bool                 `json:"trusted,omitempty"`
+	TrustConsent         *TrustConsent        `json:"trust_consent,omitempty"`
 	ContributionControl  *ContributionControl `json:"contribution_control,omitempty"`
 	ContributionApproval string               `json:"contribution_approval,omitempty"`
 	ContributionLevels   *[]string            `json:"contribution_levels,omitempty"`
@@ -122,6 +130,16 @@ type Instance struct {
 	Admissions           []Admission          `json:"admissions"`
 }
 
+func (i Instance) IsFallback() bool { return i.Adapter == "cos" && i.Ownership == "fallback" }
+
+func (i Instance) capacityWarning() bool {
+	if !i.IsFallback() || i.FallbackLimit < 1 || i.AlertPercent < 1 || i.AlertPercent > 100 {
+		return false
+	}
+	threshold := i.FallbackLimit/100*int64(i.AlertPercent) + (i.FallbackLimit%100*int64(i.AlertPercent)+99)/100
+	return i.Used+i.Reserved >= threshold
+}
+
 func (i Instance) effectiveContributionLevels() []string {
 	if i.ContributionLevels == nil {
 		return []string{"public"}
@@ -139,6 +157,16 @@ func (i Instance) allowsContributionLevel(p Protection) bool {
 	return slices.Contains(i.effectiveContributionLevels(), p.Class)
 }
 
+func (i Instance) permitsContent(p Protection, now time.Time) bool {
+	if !i.allowsContributionLevel(p) {
+		return false
+	}
+	if i.Ownership != "contributor" || p.Class == "public" {
+		return true
+	}
+	return i.trustEffective(now) && i.TrustConsent.Scope == p.Scope && slices.Contains(i.TrustConsent.Classes, p.Class)
+}
+
 func (i Instance) Allows(p Protection, now time.Time) bool {
 	if i.ContributionControl != nil && i.ContributionControl.State == "revoked" {
 		return false
@@ -146,12 +174,14 @@ func (i Instance) Allows(p Protection, now time.Time) bool {
 	if !i.Authorized || !i.ExpiresAt.After(now) || i.State == "revoked" {
 		return false
 	}
-	// Paid restricted placement requires the deferred encryption and key recovery path.
-	if p.Encrypted || p.Class == PaidRestrictedClass || !i.allowsContributionLevel(p) {
+	if !p.Valid() || !i.permitsContent(p, now) {
 		return false
 	}
 	for _, a := range i.Admissions {
-		if a.Class == p.Class && a.Scope == p.Scope && a.Plaintext && a.ExpiresAt.After(now) {
+		// A scoped owner consent and administrative trust decision can extend
+		// an enrolled public school scope to the categories explicitly accepted.
+		matches := a.Class == p.Class || i.Ownership == "contributor" && a.Class == "public" && i.trustEffective(now)
+		if matches && a.Scope == p.Scope && a.Plaintext && a.ExpiresAt.After(now) {
 			return true
 		}
 	}
@@ -159,14 +189,18 @@ func (i Instance) Allows(p Protection, now time.Time) bool {
 }
 func (i Instance) currentPlacementQuota(now time.Time) bool {
 	return i.Authorized && i.State == "active" && i.ExpiresAt.After(now) && i.QuotaExpiresAt.After(now) &&
-		(i.ContributionControl == nil || i.ContributionControl.State == "active" && i.ContributionControl.Until.After(now))
+		(i.IsFallback() || i.Ownership == "contributor" && i.ContributionControl != nil && i.ContributionControl.State == "active" && i.ContributionControl.Until.After(now))
 }
 
+func (i Instance) writeBudget() int64 {
+	limit := i.Limit
+	if i.IsFallback() {
+		return max(0, min(limit, i.FallbackLimit)-i.Used-i.Reserved)
+	}
+	return max(0, min(limit-i.Used-i.Reserved, i.ProviderFree-i.PersonalReserve-i.SafetyMargin-i.Reserved))
+}
 func (i Instance) CanWrite(p Protection, size int64, now time.Time) bool {
-	providerBudget := i.ProviderFree - i.PersonalReserve - i.SafetyMargin
-	return i.currentPlacementQuota(now) && i.Allows(p, now) && size >= 0 &&
-		i.Used <= i.Limit && i.Reserved <= i.Limit-i.Used && size <= i.Limit-i.Used-i.Reserved &&
-		i.Reserved <= providerBudget && size <= providerBudget-i.Reserved
+	return size > 0 && i.currentPlacementQuota(now) && i.Allows(p, now) && i.writeBudget() >= size
 }
 
 func (i Instance) Draining(now time.Time) bool {
@@ -182,19 +216,20 @@ func DefaultPolicy() Policy  { return Policy{Target: 3, Publish: 2} }
 func (p Policy) Valid() bool { return p.Publish >= 2 && p.Target >= p.Publish && p.Target <= 10 }
 
 type Object struct {
-	ContentGroup string      `json:"content_group,omitempty"`
-	CreationHash string      `json:"creation_hash,omitempty"`
-	ID           string      `json:"id"`
-	Owner        Principal   `json:"owner"`
-	Size         int64       `json:"size"`
-	SHA256       string      `json:"sha256"`
-	Protection   Protection  `json:"protection"`
-	Policy       Policy      `json:"policy"`
-	Revision     int64       `json:"revision"`
-	State        string      `json:"state"`
-	Published    bool        `json:"published"`
-	CreatedAt    time.Time   `json:"created_at"`
-	References   []Reference `json:"references"`
+	Envelope     *ContentEnvelope `json:"envelope,omitempty"`
+	ContentGroup string           `json:"content_group,omitempty"`
+	CreationHash string           `json:"creation_hash,omitempty"`
+	ID           string           `json:"id"`
+	Owner        Principal        `json:"owner"`
+	Size         int64            `json:"size"`
+	SHA256       string           `json:"sha256"`
+	Protection   Protection       `json:"protection"`
+	Policy       Policy           `json:"policy"`
+	Revision     int64            `json:"revision"`
+	State        string           `json:"state"`
+	Published    bool             `json:"published"`
+	CreatedAt    time.Time        `json:"created_at"`
+	References   []Reference      `json:"references"`
 }
 
 type Reference struct {
@@ -242,24 +277,25 @@ type Job struct {
 }
 
 type Event struct {
-	SpecVersion     string    `json:"specversion"`
-	Source          string    `json:"source"`
-	Subject         string    `json:"subject"`
-	DataContentType string    `json:"datacontenttype"`
-	TraceParent     string    `json:"traceparent,omitempty"`
-	SchoolID        string    `json:"schoolid,omitempty"`
-	Data            EventData `json:"data"`
-	ID              string    `json:"id"`
-	Type            string    `json:"type"`
-	Sequence        int64     `json:"-"`
-	ObjectID        string    `json:"-"`
-	Revision        int64     `json:"-"`
-	Time            time.Time `json:"time"`
-	Actor           Principal `json:"-"`
-	JobID           string    `json:"-"`
-	Reason          string    `json:"-"`
-	AuditResult     string    `json:"-"`
-	AuditSchool     string    `json:"-"`
+	TrustDecision   *TrustState `json:"-"`
+	SpecVersion     string      `json:"specversion"`
+	Source          string      `json:"source"`
+	Subject         string      `json:"subject"`
+	DataContentType string      `json:"datacontenttype"`
+	TraceParent     string      `json:"traceparent,omitempty"`
+	SchoolID        string      `json:"schoolid,omitempty"`
+	Data            EventData   `json:"data"`
+	ID              string      `json:"id"`
+	Type            string      `json:"type"`
+	Sequence        int64       `json:"-"`
+	ObjectID        string      `json:"-"`
+	Revision        int64       `json:"-"`
+	Time            time.Time   `json:"time"`
+	Actor           Principal   `json:"-"`
+	JobID           string      `json:"-"`
+	Reason          string      `json:"-"`
+	AuditResult     string      `json:"-"`
+	AuditSchool     string      `json:"-"`
 }
 
 type EventData struct {
@@ -343,6 +379,7 @@ type Transaction interface {
 	SaveInstance(Instance) error
 	DeleteRevokedInstance(string) error
 	InstanceReplicas(string) (int64, error)
+	HeldReservationBytes(string) (int64, error)
 	Object(string) (Object, error)
 	ObjectSnapshot(string) (Object, error)
 	Objects(int, string) ([]Object, error)

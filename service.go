@@ -14,6 +14,9 @@ import (
 )
 
 type Config struct {
+	RestrictedWrites          bool
+	ContentKeys               *ContentKeyring
+	IntakeScopes              []string
 	Clock                     func() time.Time
 	MaxObjectSize             int64
 	TemporaryDirectory        string
@@ -89,6 +92,9 @@ func minTransferLease(maxObjectSize, effectiveRate int64) time.Duration {
 }
 
 func New(repo Repository, auth Authorizer, resolver Resolver, verifier Verifier, cfg Config) (*Service, error) {
+	if cfg.RestrictedWrites && cfg.ContentKeys == nil {
+		return nil, ErrRestrictedUnavailable
+	}
 	if cfg.QuotaValidity == 0 {
 		cfg.QuotaValidity = 5 * time.Minute
 	}
@@ -264,7 +270,7 @@ func validateInstance(v Instance, now time.Time) bool {
 	if !validID(v.ID) || !validID(v.Adapter) || !validID(v.OwnerDomain) || !validID(v.CredentialRef) || len(v.Root) < 1 || len(v.Root) > 1024 || v.Limit < 0 || v.Limit > 1<<60 || v.CredentialRevision < 1 || (v.State != "revoked" && !v.ExpiresAt.After(now)) || len(v.Admissions) > 64 {
 		return false
 	}
-	if v.Ownership != "platform" && v.Ownership != "contributor" {
+	if v.Ownership != "contributor" {
 		return false
 	}
 	if v.State != "active" && v.State != "paused" && v.State != "draining" && v.State != "revoked" {
@@ -273,7 +279,7 @@ func validateInstance(v Instance, now time.Time) bool {
 	seen := map[string]bool{}
 	for _, a := range v.Admissions {
 		k := a.Class + "/" + a.Scope
-		if !validID(a.Class) || !validID(a.Scope) || seen[k] || (v.State != "revoked" && !a.ExpiresAt.After(now)) || a.ExpiresAt.After(v.ExpiresAt) {
+		if !validClass(a.Class) || !validID(a.Scope) || seen[k] || (v.State != "revoked" && !a.ExpiresAt.After(now)) || a.ExpiresAt.After(v.ExpiresAt) {
 			return false
 		}
 		seen[k] = true
@@ -285,7 +291,7 @@ func validateInstance(v Instance, now time.Time) bool {
 // claims. An alias or a second directory under the same account cannot add capacity.
 func (s *Service) Register(ctx context.Context, p Principal, key string, v Instance) (Instance, error) {
 	var result Instance
-	if !validID(v.ID) || v.Revision != 0 || v.ContributionControl != nil || v.ContributionLevels != nil || v.ContributionApproval != "" {
+	if !validID(v.ID) || v.Revision != 0 || v.FallbackLimit != 0 || v.AlertPercent != 0 || v.Adapter == "cos" || v.Trusted || v.TrustConsent != nil || v.ContributionControl != nil || v.ContributionLevels != nil || v.ContributionApproval != "" {
 		return result, ErrInput
 	}
 	guard := func(Transaction) error { return s.authorize(ctx, p, "storage.instances.manage", v.ID, Protection{}) }
@@ -293,7 +299,7 @@ func (s *Service) Register(ctx context.Context, p Principal, key string, v Insta
 	if hit, err := s.checkIdempotency(ctx, p, "storage.instances.register", v.ID, key, request, guard, &result); err != nil || hit {
 		return result, err
 	}
-	if !validateInstance(v, s.now()) {
+	if v.State != "paused" || v.Limit != 0 || !validateInstance(v, s.now()) {
 		return result, ErrInput
 	}
 	evidence, err := s.verifier.Verify(ctx, v)
@@ -402,9 +408,13 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 		if old.Revision != v.Revision {
 			return nil, ErrConflict
 		}
+		if old.IsFallback() {
+			return nil, ErrDenied
+		}
 		if old.Adapter != v.Adapter || old.AccountDomain != v.AccountDomain || old.Root != v.Root || old.Ownership != v.Ownership || old.OwnerDomain != v.OwnerDomain || v.CredentialRevision < old.CredentialRevision || (old.CredentialRef != v.CredentialRef && v.CredentialRevision == old.CredentialRevision) {
 			return nil, ErrInput
 		}
+		v.Trusted, v.TrustConsent = old.Trusted, old.TrustConsent
 		v.ProviderFree = old.ProviderFree
 		v.ContributionControl = old.ContributionControl
 		v.ContributionLevels = old.ContributionLevels
@@ -506,32 +516,42 @@ func (s *Service) PurgeRevokedCustodyInstance(ctx context.Context, p Principal, 
 }
 
 type CreateRequest struct {
-	Deduplicate  bool       `json:"deduplicate,omitempty"`
-	ReuseFrom    string     `json:"reuse_from,omitempty"`
-	ContentGroup string     `json:"-"`
-	ClientKey    string     `json:"client_key,omitempty"`
-	Size         int64      `json:"size"`
-	SHA256       string     `json:"sha256"`
-	Protection   Protection `json:"protection"`
-	Policy       Policy     `json:"policy"`
+	ReserveFor   *Protection `json:"reserve_for,omitempty"`
+	Deduplicate  bool        `json:"deduplicate,omitempty"`
+	ReuseFrom    string      `json:"reuse_from,omitempty"`
+	ContentGroup string      `json:"-"`
+	ClientKey    string      `json:"client_key,omitempty"`
+	Size         int64       `json:"size"`
+	SHA256       string      `json:"sha256"`
+	Protection   Protection  `json:"protection"`
+	Policy       Policy      `json:"policy"`
 }
 type Status struct {
-	ID         string     `json:"id"`
-	Size       int64      `json:"size"`
-	SHA256     string     `json:"sha256"`
-	Protection Protection `json:"protection"`
-	Policy     Policy     `json:"policy"`
-	Revision   int64      `json:"revision"`
-	State      string     `json:"state"`
-	Published  bool       `json:"published"`
-	Healthy    int        `json:"healthy"`
-	Desired    int        `json:"desired"`
+	VerifiedCOSOnly bool       `json:"verified_cos_only,omitempty"`
+	ID              string     `json:"id"`
+	Size            int64      `json:"size"`
+	SHA256          string     `json:"sha256"`
+	Protection      Protection `json:"protection"`
+	Policy          Policy     `json:"policy"`
+	Revision        int64      `json:"revision"`
+	State           string     `json:"state"`
+	Published       bool       `json:"published"`
+	Healthy         int        `json:"healthy"`
+	Desired         int        `json:"desired"`
+}
+
+// CanReference distinguishes an approved single-COS placement from two physical replicas.
+func (s Status) CanReference() bool {
+	return s.Healthy >= max(2, s.Policy.Publish) || s.VerifiedCOSOnly && s.Healthy == 1 && s.Policy.Publish == 2
 }
 
 func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateRequest) (Status, error) {
 	var out Status
 	if r.Deduplicate {
 		return s.createContent(ctx, p, key, r)
+	}
+	if r.ReserveFor != nil && (*r.ReserveFor != r.Protection || !r.ReserveFor.Valid()) {
+		return out, ErrInput
 	}
 	if r.ReuseFrom != "" {
 		return out, ErrInput
@@ -568,8 +588,16 @@ func (s *Service) Create(ctx context.Context, p Principal, key string, r CreateR
 				return nil, err
 			}
 		}
+		if err := s.initializeVersion(&o); err != nil {
+			return nil, err
+		}
 		if err := tx.SaveObject(o); err != nil {
 			return nil, err
+		}
+		if r.ReserveFor != nil {
+			if err := s.reserveMinimum(tx, o); err != nil {
+				return nil, err
+			}
 		}
 		if err := s.emitScoped(ctx, tx, p, "storage.object.created", o.ID, o.Revision, "success", o.Protection.Scope); err != nil {
 			return nil, err
@@ -591,8 +619,9 @@ func (s *Service) objectGuard(ctx context.Context, tx Transaction, p Principal, 
 	}
 	return o, s.authorize(ctx, p, action, id, o.Protection)
 }
-func (s *Service) statusFromLoaded(o Object, replicas []Replica, lookup func(string) (Instance, error), now time.Time) (Status, error) {
+func (s *Service) statusFromLoaded(o Object, replicas []Replica, lookup func(string) (Instance, error), now time.Time, candidates func() ([]Instance, error)) (Status, error) {
 	count := 0
+	verifiedFallback := false
 	seen := newIndependentSet()
 	for _, r := range replicas {
 		if r.State != "healthy" || r.ObjectRevision != o.Revision || r.VerifiedAt.Before(now.Add(-s.cfg.VerificationAge)) {
@@ -606,35 +635,64 @@ func (s *Service) statusFromLoaded(o Object, replicas []Replica, lookup func(str
 			continue
 		}
 		seen.add(i)
+		verifiedFallback = verifiedFallback || i.IsFallback()
 		count++
+	}
+	single := count == 1 && verifiedFallback && o.Policy.Publish == 2
+	if single {
+		for _, r := range replicas {
+			if !r.Reserved || r.State == "deleted" || r.State == "cleanup" {
+				continue
+			}
+			i, e := lookup(r.InstanceID)
+			if e != nil {
+				return Status{}, e
+			}
+			if !i.IsFallback() && i.currentPlacementQuota(now) && i.Allows(o.Protection, now) && i.CredentialRevision == r.CredentialRevision {
+				single = false
+				break
+			}
+		}
+	}
+	if single {
+		items, err := candidates()
+		if err != nil {
+			return Status{}, err
+		}
+		for _, i := range items {
+			if !i.IsFallback() && i.CanWrite(o.Protection, o.storedBytes(), now) {
+				single = false
+				break
+			}
+		}
 	}
 	state := o.State
 	if state != "deleting" && state != "deleted" {
 		state = "pending"
 		if count >= o.Policy.Target {
 			state = "ready"
-		} else if o.Published || count >= o.Policy.Publish {
+		} else if o.Published || single || count >= o.Policy.Publish {
 			state = "degraded"
 		}
 		if o.Published && count == 0 {
 			state = "unavailable"
 		}
 	}
-	return Status{o.ID, o.Size, o.SHA256, o.Protection, o.Policy, o.Revision, state, o.Published, count, o.Policy.Target}, nil
+	return Status{ID: o.ID, Size: o.Size, SHA256: o.SHA256, Protection: o.Protection, Policy: o.Policy, Revision: o.Revision, State: state, Published: o.Published, Healthy: count, Desired: o.Policy.Target, VerifiedCOSOnly: single}, nil
 }
 func (s *Service) status(tx Transaction, o Object) (Status, error) {
 	replicas, err := tx.Replicas(o.ID)
 	if err != nil {
 		return Status{}, err
 	}
-	return s.statusFromLoaded(o, replicas, tx.Instance, s.now())
+	return s.statusFromLoaded(o, replicas, tx.Instance, s.now(), func() ([]Instance, error) { return tx.Instances(100, "") })
 }
 func (s *Service) statusSnapshot(tx Transaction, o Object) (Status, error) {
 	replicas, err := tx.Replicas(o.ID)
 	if err != nil {
 		return Status{}, err
 	}
-	return s.statusFromLoaded(o, replicas, tx.InstanceSnapshot, s.now())
+	return s.statusFromLoaded(o, replicas, tx.InstanceSnapshot, s.now(), func() ([]Instance, error) { return tx.Instances(100, "") })
 }
 func (s *Service) Status(ctx context.Context, p Principal, id string) (Status, error) {
 	return s.statusWithAction(ctx, p, id, "storage.objects.read")
@@ -700,7 +758,7 @@ func (s *Service) Reference(ctx context.Context, p Principal, id, key string, re
 			return nil, err
 		}
 		if attach {
-			if status.Healthy < o.Policy.Publish {
+			if !status.CanReference() {
 				return nil, ErrUnavailable
 			}
 			if len(o.References) >= 1000 && index < 0 {
@@ -809,6 +867,9 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 		if o.Revision != revision || o.State == "deleting" || o.State == "deleted" {
 			return nil, ErrConflict
 		}
+		if protection != o.Protection && (protection.Class == "restricted" || o.Protection.Class == "restricted") {
+			return nil, ErrConflict
+		}
 		// Cross-business references require a separate object/version before changing requirements.
 		if len(o.References) > 0 {
 			return nil, ErrConflict
@@ -868,6 +929,27 @@ func (s *Service) ChangeProtection(ctx context.Context, p Principal, id, key str
 	return out, err
 }
 func (s *Service) enqueue(tx Transaction, objectID, replicaID, kind string) error {
+	if kind == "delete" {
+		// Deletion supersedes a queued copy or verification. In-flight work stays
+		// fenced by the object's current revision and the existing cleanup intent.
+		for _, previousKind := range []string{"replicate", "verify"} {
+			old, err := tx.Job(requestHash([]string{objectID, replicaID, previousKind}))
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if old.State == "pending" || old.State == "blocked" {
+				old.State = "done"
+				old.CompletedAt = s.now()
+				old.ErrorCode = ""
+				if err = tx.SaveJob(old); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	id := requestHash([]string{objectID, replicaID, kind})
 	replicas, err := tx.Replicas(objectID)
 	if err != nil {

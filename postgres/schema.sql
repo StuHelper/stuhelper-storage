@@ -132,3 +132,5 @@ CREATE OR REPLACE FUNCTION storage.audit_invalidate() RETURNS trigger LANGUAGE p
 REVOKE ALL ON FUNCTION storage.audit_invalidate() FROM PUBLIC;
 CREATE OR REPLACE TRIGGER audit_invalidate AFTER UPDATE OR DELETE OR TRUNCATE ON storage.audit FOR EACH STATEMENT EXECUTE FUNCTION storage.audit_invalidate();
 CREATE INDEX IF NOT EXISTS audit_query_order ON storage.audit(audit_time DESC,(id::text) COLLATE "C" DESC);
+
+CREATE INDEX IF NOT EXISTS content_handles_prepared_group ON storage.content_handles ((data->>'prepared_group')) WHERE active AND data->>'prepared_group' IS NOT NULL;

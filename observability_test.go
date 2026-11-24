@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"io"
 	"os"
 	"strings"
@@ -240,12 +241,12 @@ func TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify(t *testi
 
 	traceVal := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 	tracedCtx := storage.WithTraceParent(h.ctx, traceVal)
-	inst, err := h.s.Register(tracedCtx, h.actor, "reg-obs-1", storage.Instance{
+	inst, err := storagetest.RegisterContribution(tracedCtx, h.s, h.actor, "reg-obs-1", storage.Instance{
 		ID:                 "inst-obs-1",
 		Adapter:            "test",
 		AccountDomain:      "alias",
 		OwnerDomain:        "plat",
-		Ownership:          "platform",
+		Ownership:          "contributor",
 		CredentialRef:      "inst-obs-1",
 		CredentialRevision: 1,
 		Root:               "isolated",
@@ -258,11 +259,13 @@ func TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	notifyCtx1, cancel1 := context.WithTimeout(h.ctx, 2*time.Second)
-	n1, err := listenConn.WaitForNotification(notifyCtx1)
-	cancel1()
-	if err != nil || n1.Channel != "storage_outbox" || n1.Payload != "instance/"+inst.ID {
-		t.Fatalf("unexpected instance notification: %+v %v", n1, err)
+	for range 2 { // Enrollment and contribution activation both notify the instance stream.
+		notifyCtx1, cancel1 := context.WithTimeout(h.ctx, 2*time.Second)
+		n1, err := listenConn.WaitForNotification(notifyCtx1)
+		cancel1()
+		if err != nil || n1.Channel != "storage_outbox" || n1.Payload != "instance/"+inst.ID {
+			t.Fatalf("unexpected instance notification: %+v %v", n1, err)
+		}
 	}
 
 	data := bytes.Repeat([]byte("z"), 48<<10) // >32 KiB burst so pacer waits at least once

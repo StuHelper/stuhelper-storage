@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"io"
 	"sort"
 	"strings"
@@ -286,7 +287,7 @@ func TestServiceExecutorAndBHpanPoolRestartAndPopulatedDirectoryIntegration(t *t
 
 		provisioned.ID = ref
 		provisioned.OwnerDomain = "owner-" + ref
-		provisioned.Ownership = "platform"
+		provisioned.Ownership = "contributor"
 		provisioned.State = "active"
 		provisioned.Authorized = true
 		provisioned.Limit = 16 << 20
@@ -296,7 +297,7 @@ func TestServiceExecutorAndBHpanPoolRestartAndPopulatedDirectoryIntegration(t *t
 			Plaintext: true,
 			ExpiresAt: until,
 		}}
-		if _, err := svc1.Register(h.ctx, h.actor, "reg-"+ref, provisioned); err != nil {
+		if _, err := storagetest.RegisterContribution(h.ctx, svc1, h.actor, "reg-"+ref, provisioned); err != nil {
 			t.Fatal(err)
 		}
 	}

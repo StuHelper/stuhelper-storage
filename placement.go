@@ -77,17 +77,23 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 			continue
 		}
 		seen.add(i)
-		if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(s.now()) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision {
+		if (r.State == "healthy" || r.State == "held" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(s.now()) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision {
 			count++
 		}
 	}
 	out := []Replica{}
+	// List order is stable within each tier. Only buy COS capacity to meet
+	// the first-reference threshold, never to supply the optional third copy.
+	sort.SliceStable(candidates, func(a, b int) bool { return !candidates[a].IsFallback() && candidates[b].IsFallback() })
 	for _, candidate := range candidates {
+		if candidate.IsFallback() && count >= o.Policy.Publish {
+			continue
+		}
 		if count >= o.Policy.Target || len(out) >= maximum {
 			break
 		}
 		i := instances[candidate.ID]
-		if seen.seen(i) || !i.CanWrite(o.Protection, o.Size, s.now()) {
+		if seen.seen(i) || !i.CanWrite(o.Protection, o.storedBytes(), s.now()) {
 			continue
 		}
 		r, exists := byInstance[i.ID]
@@ -105,11 +111,11 @@ func (s *Service) plan(tx Transaction, o Object, maximum int) ([]Replica, error)
 		r.ObjectRevision = o.Revision
 		r.InstanceRevision = i.Revision
 		r.CredentialRevision = i.CredentialRevision
-		r.Size = o.Size
+		r.Size = o.storedBytes()
 		r.Reserved = true
 		r.Accounted = false
 		r.IssuedWrite = false
-		i.Reserved += o.Size
+		i.Reserved += r.Size
 		if err := tx.SaveInstance(i); err != nil {
 			return nil, err
 		}
@@ -194,14 +200,14 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					continue
 				}
 				i := snapByID[r.InstanceID]
-				if (r.State == "healthy" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(now) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, now) && r.CredentialRevision == i.CredentialRevision {
+				if (r.State == "healthy" || r.State == "held" || r.State == "reserved" || r.State == "writing" || r.State == "unknown") && !i.Draining(now) && r.ObjectRevision == o.Revision && i.Allows(o.Protection, now) && r.CredentialRevision == i.CredentialRevision {
 					plannedCount++
 				}
 				if i.Authorized && i.State != "revoked" && i.ExpiresAt.After(now) && (i.CredentialRevision != r.CredentialRevision || i.Revision != r.InstanceRevision) {
 					needsReplicaAction = true
 					revisionOrCorrupt = true
 				}
-				if r.State == "cleanup" || r.State == "corrupt" {
+				if r.State == "cleanup" || r.State == "corrupt" || r.State == "held" {
 					needsReplicaAction = true
 					revisionOrCorrupt = true
 				}
@@ -211,17 +217,24 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				if i.Draining(now) && r.State == "healthy" {
 					drainingHealthy = true
 				}
-				if !i.allowsContributionLevel(o.Protection) {
+				if !i.permitsContent(o.Protection, s.now()) {
 					needsReplicaAction = true
 					drainingHealthy = drainingHealthy || r.State == "healthy" || r.State == "checking"
 				}
 			}
-			snapStatus, err := s.statusFromLoaded(o, replicas, func(id string) (Instance, error) { return snapByID[id], nil }, now)
+			snapStatus, err := s.statusFromLoaded(o, replicas, func(id string) (Instance, error) { return snapByID[id], nil }, now, func() ([]Instance, error) { return candidates, nil })
 			if err != nil {
 				return err
 			}
 			needsPlan := !expired && o.State != "deleting" && ((snapStatus.Healthy > 0 && plannedCount < o.Policy.Target) || revisionOrCorrupt)
-			needsDrain := !expired && o.State != "deleting" && drainingHealthy
+			hasFallback := false
+			for _, r := range replicas {
+				if snapByID[r.InstanceID].IsFallback() && r.State == "healthy" {
+					hasFallback = true
+					break
+				}
+			}
+			needsDrain := !expired && o.State != "deleting" && (drainingHealthy || hasFallback && snapStatus.Healthy > o.Policy.Publish)
 			if !needsReplicaAction && !needsPlan && !needsDrain {
 				return nil
 			}
@@ -274,7 +287,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				if err != nil {
 					return err
 				}
-				if !i.allowsContributionLevel(o.Protection) && (r.State == "reserved" || r.State == "writing" || r.State == "unknown") {
+				if !i.permitsContent(o.Protection, s.now()) && (r.State == "reserved" || r.State == "writing" || r.State == "unknown") {
 					r.State = "cleanup"
 					if err := tx.SaveReplica(r); err != nil {
 						return err
@@ -313,6 +326,11 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 						return err
 					}
 					continue
+				}
+				if r.State == "held" && snapStatus.Healthy > 0 && i.Allows(o.Protection, s.now()) {
+					if err := s.enqueue(tx, o.ID, r.ID, "replicate"); err != nil {
+						return err
+					}
 				}
 				if i.Allows(o.Protection, s.now()) && ((r.State == "healthy" && !r.VerifiedAt.After(s.now().Add(-s.cfg.VerificationAge/2))) || r.State == "checking") {
 					if err := s.enqueue(tx, o.ID, r.ID, "verify"); err != nil {
@@ -357,6 +375,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			// Drain only after replacements are healthy. Revocation can happen sooner,
 			// but does not grant permission to keep using the withdrawn credentials.
 			replacements := 0
+			contributionCopies := 0
 			for _, r := range replicas {
 				if r.State == "deleted" {
 					continue
@@ -367,9 +386,12 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				}
 				if r.State == "healthy" && !i.Draining(s.now()) && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision && r.ObjectRevision == o.Revision && !r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) {
 					replacements++
+					if !i.IsFallback() {
+						contributionCopies++
+					}
 				}
 			}
-			if replacements >= o.Policy.Target {
+			if replacements >= o.Policy.Target || contributionCopies >= o.Policy.Publish {
 				for _, r := range replicas {
 					if r.State == "deleted" {
 						continue
@@ -378,8 +400,9 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					if err != nil {
 						return err
 					}
-					policyWithdrawn := !i.allowsContributionLevel(o.Protection) && (r.State == "healthy" || r.State == "checking")
-					if policyWithdrawn || (i.Draining(s.now()) && r.State == "healthy") {
+					policyWithdrawn := !i.permitsContent(o.Protection, s.now()) && (r.State == "healthy" || r.State == "checking")
+					if (i.IsFallback() && contributionCopies >= o.Policy.Publish && r.State == "healthy") ||
+						replacements >= o.Policy.Target && (policyWithdrawn || i.Draining(s.now()) && r.State == "healthy") {
 						r.State = "cleanup"
 						if err := tx.SaveReplica(r); err != nil {
 							return err
@@ -420,16 +443,22 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 		if err != nil {
 			return err
 		}
+		if snapshot.IsFallback() {
+			return nil
+		}
 		if !snapshot.Authorized || snapshot.State == "revoked" || !snapshot.ExpiresAt.After(s.now()) {
 			return ErrDenied
 		}
-		if snapshot.Reserved != 0 {
-			return ErrConflict
+		if err := checkHeldBudget(tx, snapshot); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
 		s.observe("refresh_quota_precheck", id, "", err)
 		return err
+	}
+	if snapshot.IsFallback() {
+		return nil
 	}
 	evidence, err := s.verifier.Verify(ctx, snapshot)
 	if err == nil && (evidence.AccountDomain != snapshot.AccountDomain || !evidence.validQuota(s.now())) {
@@ -468,8 +497,11 @@ func (s *Service) finishQuotaRefresh(ctx context.Context, p Principal, snapshot 
 		if !i.Authorized || i.State == "revoked" || !i.ExpiresAt.After(s.now()) {
 			return ErrDenied
 		}
-		if i.Revision != snapshot.Revision || !i.quotaLedgerMatches(snapshot) {
+		if i.Revision != snapshot.Revision || i.QuotaRevision != snapshot.QuotaRevision || i.Reserved != snapshot.Reserved || i.Used != snapshot.Used || i.ProviderFree != snapshot.ProviderFree {
 			return ErrConflict
+		}
+		if err := checkHeldBudget(tx, i); err != nil {
+			return err
 		}
 		if evidence == nil {
 			if i.QuotaObservation.ReadFailed {
@@ -484,3 +516,19 @@ func (s *Service) finishQuotaRefresh(ctx context.Context, p Principal, snapshot 
 }
 
 func isMissing(err error) bool { return errors.Is(err, ErrNotFound) }
+
+// A pre-upload hold cannot have changed provider usage. Any issued or
+// ambiguous write still fences capacity sampling.
+func checkHeldBudget(tx Transaction, i Instance) error {
+	if i.Reserved == 0 {
+		return nil
+	}
+	held, err := tx.HeldReservationBytes(i.ID)
+	if err != nil {
+		return err
+	}
+	if held != i.Reserved {
+		return ErrConflict
+	}
+	return nil
+}

@@ -428,7 +428,7 @@ func TestCustodyBlockedRecoveryReauthorizeReplayQuotaAndSlidingBudget(t *testing
 func TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota(t *testing.T) {
 	h := harnessFor(t)
 	h.provider.verificationClock = h.clock.Now
-	i := h.instance(t, "idem-inst", "owner", "platform", 2048)
+	i := h.instance(t, "idem-inst", "owner", 2048)
 	callsAfterRegister := h.provider.verifyCalls
 
 	// Replay Register with same key must not call Verify again.
@@ -437,13 +437,13 @@ func TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota(t *testin
 		Adapter:            "test",
 		AccountDomain:      "untrusted-alias",
 		OwnerDomain:        "owner",
-		Ownership:          "platform",
+		Ownership:          "contributor",
 		CredentialRef:      "idem-inst",
 		CredentialRevision: 1,
 		Root:               "isolated",
-		State:              "active",
+		State:              "paused",
 		Authorized:         true,
-		Limit:              2048,
+		Limit:              0,
 		ExpiresAt:          i.ExpiresAt,
 		Admissions:         i.Admissions,
 	}
@@ -592,7 +592,7 @@ func (v updatingVerifier) Verify(ctx context.Context, i storage.Instance) (stora
 
 func TestInstanceUpdatePreservesNewerQuotaSample(t *testing.T) {
 	h := harnessFor(t)
-	i := h.instance(t, "sampling", "platform", "platform", 4096)
+	i := h.instance(t, "sampling", "platform", 4096)
 	verifier := updatingVerifier{h.provider, func() {
 		err := h.repo.Transaction(h.ctx, func(tx storage.Transaction) error {
 			current, err := tx.Instance(i.ID)
@@ -616,7 +616,7 @@ func TestInstanceUpdatePreservesNewerQuotaSample(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close(h.ctx) })
 	i.Limit = 2048
 	updated, err := s.UpdateInstance(h.ctx, h.actor, "sampling-update", i)
-	if err != nil || updated.ProviderFree != 42 || updated.QuotaRevision != i.QuotaRevision+1 || updated.Limit != 2048 {
+	if err != nil || updated.ProviderFree != 42 || updated.QuotaRevision != i.QuotaRevision+1 || updated.Limit != i.ContributionControl.LimitBytes {
 		t.Fatalf("quota=%d revision=%d error=%v", updated.ProviderFree, updated.QuotaRevision, err)
 	}
 }
