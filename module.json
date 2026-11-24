@@ -217,7 +217,8 @@
     ],
     "STORAGE-43": [
       "admission_policy_test.go#TestAdmissionPolicySelectorsAndDefault",
-      "admission_policy_integration_test.go#TestContributionTrustRequiresOwnerConsentAndAdministration"
+      "admission_policy_integration_test.go#TestContributionTrustRequiresOwnerConsentAndAdministration",
+      "admission_policy_integration_test.go#TestContributionAdmissionNarrowingRepairsVerifiedReplicas"
     ],
     "STORAGE-44": [
       "quota_test.go#TestProviderQuotaRefreshFailureExpiryAndRecovery",
