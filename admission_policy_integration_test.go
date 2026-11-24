@@ -9,6 +9,7 @@ import (
 	"time"
 
 	storage "github.com/StuHelper/stuhelper-storage"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 )
 
 func registerContributor(t *testing.T, h *harness, id string, owner storage.Principal, limit int64) storage.Instance {
@@ -124,5 +125,58 @@ func TestAdmissionReservesThresholdAndPrefersContributions(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestContributionAdmissionNarrowingRepairsVerifiedReplicas(t *testing.T) {
+	h := harnessFor(t)
+	owner := storage.ContributionOwnerDomain(h.actor)
+	for _, id := range []string{"a", "b", "c"} {
+		i := registerContributor(t, h, id, h.actor, 1<<20)
+		if _, err := storagetest.Trust(h.ctx, h.s, h.actor, i, "school-a", []string{"quarantine"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data := []byte("quarantined example")
+	sum := sha256.Sum256(data)
+	object, err := h.s.Create(h.ctx, h.actor, "quarantine", storage.CreateRequest{
+		Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), Protection: storage.Protection{Class: "quarantine", Scope: "school-a"},
+		Policy: storage.Policy{Target: 2, Publish: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.ingest(t, object.ID, data)
+	h.reconcile(t)
+	h.run(t)
+	before, err := h.s.Status(h.ctx, h.actor, object.ID)
+	if err != nil || before.Healthy != 2 || len(h.provider.files["a"]) != 1 || len(h.provider.files["b"]) != 1 {
+		t.Fatalf("expected two verified contribution replicas: %+v %v", before, err)
+	}
+	policy := storage.ContributionAdmissionPolicy{
+		Rules:       []storage.ContributionAdmissionRule{{SubjectKind: "contributor", SubjectID: owner, InstanceID: "a", Levels: []string{"public"}}},
+		Memberships: []storage.ContributionAdmissionMembership{},
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		applied, err := h.s.ReplaceContributionAdmissionPolicy(h.ctx, h.actor, "narrow", policy)
+		if err != nil || applied.Revision != 1 {
+			t.Fatal(applied, err)
+		}
+	}
+	after, err := h.s.Status(h.ctx, h.actor, object.ID)
+	if err != nil || after.Healthy != 1 || after.CanReference() {
+		t.Fatalf("withdrawn contribution still counted: %+v %v", after, err)
+	}
+	h.reconcile(t)
+	h.run(t)
+	h.reconcile(t)
+	h.run(t)
+	repaired, err := h.s.Status(h.ctx, h.actor, object.ID)
+	if err != nil || repaired.Healthy != 2 || len(h.provider.files["a"]) != 0 || len(h.provider.files["b"]) != 1 || len(h.provider.files["c"]) != 1 {
+		t.Fatalf("replacement or cleanup failed: %+v %v", repaired, err)
+	}
+	var audits int
+	if err := h.db.QueryRow(`SELECT count(*) FROM storage.audit WHERE audit_action='storage.contribution_admission.updated.v1'`).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("expected one policy audit after retry, got %d: %v", audits, err)
 	}
 }
