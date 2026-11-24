@@ -31,6 +31,9 @@ func (t *custodyTx) Operation(id string) (custody.Operation, error) {
 	return read[custody.Operation](t.transaction, `SELECT data FROM storage.custody_operations WHERE id=$1`, id)
 }
 func (t *custodyTx) SaveBinding(b custody.Binding) error {
+	if err := t.allowCustodyWrite(b.Owner); err != nil {
+		return err
+	}
 	data, e := json.Marshal(b)
 	if e != nil {
 		return storage.ErrInput
@@ -60,6 +63,9 @@ func (t *custodyTx) DeleteBinding(id string, owner storage.Principal, keepAttemp
 	return t.safe("mark_orphan_operations", e)
 }
 func (t *custodyTx) SaveOperation(o custody.Operation) error {
+	if err := t.allowCustodyWrite(o.Owner); err != nil {
+		return err
+	}
 	data, e := json.Marshal(o)
 	if e != nil {
 		return storage.ErrInput
@@ -143,4 +149,20 @@ func (t *custodyTx) Idempotency(key string) (storage.Idempotency, error) {
 }
 func (t *custodyTx) SaveIdempotency(v storage.Idempotency) error {
 	return t.transaction.SaveIdempotency(v)
+}
+
+func (t *custodyTx) allowCustodyWrite(owner storage.Principal) error {
+	domain := custody.OwnerDomain(owner)
+	if err := t.Lock("closure:" + domain); err != nil {
+		return err
+	}
+	var blocked bool
+	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.owner_closures WHERE owner_domain=$1 AND finalizing AND NOT cancelled)`, domain).Scan(&blocked)
+	if err != nil {
+		return t.safe("custody_closure", err)
+	}
+	if blocked {
+		return storage.ErrConflict
+	}
+	return nil
 }

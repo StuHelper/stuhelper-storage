@@ -255,3 +255,9 @@ postgres/audit_query_test.go 的 TestPublicAuditQuery 使用独立 PostgreSQL �
 | --- | --- |
 | STORAGE-CRYPT-01 | 受限版本的独立密钥、物理占用、分块认证、跨块读取及中断后继续轮换。 |
 | STORAGE-INTAKE-01 | 受理前按学校、分类和文件大小预占副本。优先贡献账号，COS 只补发布门槛。纯 COS 以一个经核验的实际副本发布。 |
+
+## 业务账号注销排空
+
+| 场景 | 预期结果 |
+| --- | --- |
+| STORAGE-CLOSURE-01 | 进入冷静期后，名下贡献实例停止接收新写入；后台核验替代副本后排空。撤销仅取消该申请的限制，旧申请重试不能解除新的限制 |
