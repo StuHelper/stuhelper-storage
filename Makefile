@@ -9,8 +9,8 @@ generate:
 check-generated:
 	node scripts/generate.mjs --check
 check: check-generated
-	pnpm exec tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM sdk/custody-browser.ts
-	node --test sdk/custody-browser.test.ts
+	pnpm exec tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM sdk/custody-browser.ts sdk/capacity.ts
+	node --test sdk/custody-browser.test.ts sdk/capacity.test.ts
 	test -n "$(STUHELPER_STORAGE_TEST_DSN)" || (echo 'Set STUHELPER_STORAGE_TEST_DSN to an isolated PostgreSQL test server'; exit 1)
 	pnpm exec stuhelper-check repository
 	node scripts/check-module.mjs

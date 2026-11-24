@@ -128,6 +128,10 @@ Executor.Stop 先停止领取，等待在途任务到指定期限，再取消超
 
 `GET /api/v1/storage/contributions/community/summary` 要求 `storage.contributions.summary`。它从贡献者实例账本汇总申报额度、有效可用容量、占用与预占及活跃数。平台自营实例和单实例标识不在该汇总中。
 
+## 容量单位
+
+浏览器 SDK 的 `capacity.ts` 统一提供容量显示、输入和回填。每级单位按 1024 换算。额度以整数字节传输，编辑框使用能还原原字节数的最短小数字符串。显示按当前语言舍入。
+
 ## 验收场景
 
 `module.json` 的 `scenario_tests` 记录各场景对应的测试文件和函数。数据库集成场景使用独立 PostgreSQL 及隔离运行身份。供应商测试使用可控驱动或协议夹具验证远端副作用。
