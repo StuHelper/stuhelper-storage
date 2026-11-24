@@ -24,6 +24,10 @@ func (s *Service) changeContentProtection(ctx context.Context, p Principal, id, 
 		if h.State != "active" || h.Revision != revision || len(h.References) > 0 || !h.Verified {
 			return nil, ErrConflict
 		}
+		if g.Protection != protection && (g.Protection.Class == "restricted" || protection.Class == "restricted") {
+			// Restricted content starts encrypted and keeps its protection context for its entire immutable version.
+			return nil, ErrConflict
+		}
 		if g.Protection == protection {
 			if h.PendingGroup != "" {
 				cancelledGroup = h.PendingGroup

@@ -64,6 +64,26 @@ func TestRestrictedCiphertextPerVersionAndRotation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A public or quarantine upload cannot become a restricted immutable
+	// version after its bytes have already reached a plaintext replica.
+	public := s.Protection{Class: "public", Public: true, Scope: p.Scope}
+	bad := req
+	bad.ClientKey = "mixed-protection"
+	bad.Protection = public
+	if _, e := h.s.Create(h.ctx, h.actor, "mixed-protection", bad); !errors.Is(e, s.ErrInput) {
+		t.Fatal("accepted a plaintext first stage for restricted content", e)
+	}
+	before, e := h.s.Status(h.ctx, h.actor, handles[0])
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = h.s.ChangeProtection(h.ctx, h.actor, handles[0], "publish-restricted-plain", before.Revision, public); !errors.Is(e, s.ErrConflict) {
+		t.Fatal("mutated an encrypted version into public plaintext", e)
+	}
+	after, e := h.s.Status(h.ctx, h.actor, handles[0])
+	if e != nil || before != after {
+		t.Fatal("denied mutation changed the restricted version", e)
+	}
 	physical := len(data) + 2*16
 	seen := map[[32]byte]int{}
 	for _, objects := range h.provider.files {
@@ -143,4 +163,19 @@ func TestRestrictedCiphertextPerVersionAndRotation(t *testing.T) {
 	if _, err = reopened.Create(h.ctx, h.actor, "bad-reuse", req); !errors.Is(err, s.ErrInput) {
 		t.Fatal("accepted cross-version reuse", err)
 	}
+	pubReq := s.CreateRequest{Deduplicate: true, ClientKey: "public-version", Size: int64(len(data)), SHA256: req.SHA256, Protection: public}
+	pub, e := h.s.Create(h.ctx, h.actor, "public-version", pubReq)
+	if e != nil {
+		t.Fatal(e)
+	}
+	pub = h.ingest(t, pub.ID, data)
+	writes := h.provider.writes
+	if _, e = h.s.ChangeProtection(h.ctx, h.actor, pub.ID, "classify-after-upload", pub.Revision, p); !errors.Is(e, s.ErrConflict) {
+		t.Fatal("accepted a restricted classification after plaintext upload", e)
+	}
+	unchanged, e := h.s.Status(h.ctx, h.actor, pub.ID)
+	if e != nil || unchanged != pub || writes != h.provider.writes {
+		t.Fatal("denied reclassification changed storage", e)
+	}
+
 }
