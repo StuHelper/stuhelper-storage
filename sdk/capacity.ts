@@ -32,7 +32,7 @@ export function defaultQuotaUnit(bytes: number): QuotaUnit {
 export function parseQuotaBytes(raw: string, unit: QuotaUnit): number | undefined {
   const text = raw.trim();
   const match = /^(\d{1,16})(?:\.(\d{1,13}))?$/u.exec(text);
-  if (!match) return undefined;
+  if (!match?.[1]) return undefined;
   const digits = match[2] ?? '';
   if (digits.length > precision[unit]) return undefined;
   const scale = 10n ** BigInt(digits.length);
