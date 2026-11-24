@@ -99,10 +99,12 @@ type Admission struct {
 }
 
 type Instance struct {
-	FallbackLimit        int64                `json:"fallback_limit,omitempty"`
-	AlertPercent         int                  `json:"alert_percent,omitempty"`
-	Trusted              bool                 `json:"trusted,omitempty"`
-	TrustConsent         *TrustConsent        `json:"trust_consent,omitempty"`
+	FallbackLimit int64         `json:"fallback_limit,omitempty"`
+	AlertPercent  int           `json:"alert_percent,omitempty"`
+	Trusted       bool          `json:"trusted,omitempty"`
+	TrustConsent  *TrustConsent `json:"trust_consent,omitempty"`
+	// ClosureDraining overlays the owner's cooling period on current consent.
+	ClosureDraining      bool                 `json:"-"`
 	ContributionControl  *ContributionControl `json:"contribution_control,omitempty"`
 	ContributionApproval string               `json:"contribution_approval,omitempty"`
 	ContributionLevels   *[]string            `json:"contribution_levels,omitempty"`
@@ -188,7 +190,7 @@ func (i Instance) Allows(p Protection, now time.Time) bool {
 	return false
 }
 func (i Instance) currentPlacementQuota(now time.Time) bool {
-	return i.Authorized && i.State == "active" && i.ExpiresAt.After(now) && i.QuotaExpiresAt.After(now) &&
+	return !i.ClosureDraining && i.Authorized && i.State == "active" && i.ExpiresAt.After(now) && i.QuotaExpiresAt.After(now) &&
 		(i.IsFallback() || i.Ownership == "contributor" && i.ContributionControl != nil && i.ContributionControl.State == "active" && i.ContributionControl.Until.After(now))
 }
 
@@ -204,7 +206,7 @@ func (i Instance) CanWrite(p Protection, size int64, now time.Time) bool {
 }
 
 func (i Instance) Draining(now time.Time) bool {
-	return i.State == "draining" || (i.ContributionControl != nil && (i.ContributionControl.State == "draining" || !i.ContributionControl.Until.After(now)) && i.State != "revoked")
+	return i.ClosureDraining || i.State == "draining" || (i.ContributionControl != nil && (i.ContributionControl.State == "draining" || !i.ContributionControl.Until.After(now)) && i.State != "revoked")
 }
 
 type Policy struct {
@@ -359,7 +361,18 @@ type ReadRepository interface {
 
 // Locks are acquired object -> instances in sorted ID order -> job. Claim only
 // locks a job and commits before execution, so it cannot invert that order.
+type OwnerCleanup struct {
+	InstanceCursor, BindingCursor string
+	InstancesDone, BindingsDone   bool
+}
+
 type Transaction interface {
+	OwnerCleanup(owner, closureID string) (OwnerCleanup, error)
+	AdvanceOwnerCleanup(owner, closureID string, prior, next OwnerCleanup) error
+	SetOwnerClosure(owner, closureID string, cancel bool) error
+	OwnerDrainComplete(owner, closureID string) (bool, error)
+	FinalizeOwnerDrain(owner, closureID, issuer, subject string) (bool, error)
+	OwnerInstances(owner, after string, limit int) ([]Instance, error)
 	ContentGroup(string) (ContentGroup, error)
 	ActiveContentGroup(string) (ContentGroup, error)
 	SaveContentGroup(ContentGroup) error

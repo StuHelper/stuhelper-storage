@@ -233,6 +233,9 @@
     "STORAGE-CRYPT-01": [
       "encryption_test.go#TestRestrictedEnvelopeRestoreAndAuthenticatedChunks",
       "encryption_integration_test.go#TestRestrictedCiphertextPerVersionAndRotation"
+    ],
+    "STORAGE-CLOSURE-01": [
+      "closure_test.go#TestCoolingOwnerDrainsExistingAndNewInstancesAndCancelsOnlyOwnBarrier"
     ]
   }
 }
