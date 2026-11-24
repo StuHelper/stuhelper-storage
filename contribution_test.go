@@ -17,20 +17,21 @@ func (p *provider) AccountHint(_ context.Context, i storage.Instance) string {
 func TestContributionCandidatesAreOwnedEmptyAndDoNotProbe(t *testing.T) {
 	h := harnessFor(t)
 	for _, id := range []string{"a", "b", "foreign", "platform", "active"} {
-		owner, kind := "owner", "contributor"
+		owner := "owner"
 		if id == "foreign" {
 			owner = "other"
 		}
 		if id == "platform" {
-			kind = "platform"
-		}
-		i := h.instance(t, id, owner, kind, 1024)
-		if id != "active" {
-			i.State = "paused"
-			if _, e := h.s.UpdateInstance(h.ctx, h.actor, "pause-"+id, i); e != nil {
-				t.Fatal(e)
+			if err := h.s.ConfigureFallback(h.ctx, h.actor, storage.FallbackConfig{ID: id, AccountDomain: "cos:fixture", Root: "replicas", Limit: 1024, AlertPercent: 80, Scopes: []string{"school-a"}}); err != nil {
+				t.Fatal(err)
 			}
+			continue
 		}
+		limit := int64(0)
+		if id == "active" {
+			limit = 1024
+		}
+		h.instance(t, id, owner, limit)
 	}
 	before := h.provider.verifyCalls
 	facts := map[string]string{"a": "owner", "b": "other", "foreign": "owner", "platform": "owner", "missing": "owner"}
@@ -76,7 +77,7 @@ func TestContributionCandidatesAreOwnedEmptyAndDoNotProbe(t *testing.T) {
 
 func TestContributionControlFencesOwnershipReplayAndConsentExpiry(t *testing.T) {
 	h := harnessFor(t)
-	i := h.instance(t, "contributor", "owner", "contributor", 1024)
+	i := h.instance(t, "contributor", "owner", 0)
 	i.State = "paused"
 	var err error
 	i, err = h.s.UpdateInstance(h.ctx, h.actor, "prepare", i)
@@ -155,7 +156,7 @@ func TestContributionControlFencesOwnershipReplayAndConsentExpiry(t *testing.T) 
 
 func TestContributionExitWaitsForRecordedReplicaCleanup(t *testing.T) {
 	h := harnessFor(t)
-	i := h.instance(t, "contributor", "owner", "contributor", 1024)
+	i := h.instance(t, "contributor", "owner", 0)
 	i.State = "paused"
 	var err error
 	i, err = h.s.UpdateInstance(h.ctx, h.actor, "prepare", i)

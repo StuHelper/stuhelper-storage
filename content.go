@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,22 +25,27 @@ type ContentGroup struct {
 	State            string     `json:"state"`
 }
 type ContentHandle struct {
-	CreatedAt    time.Time   `json:"created_at"`
-	ID           string      `json:"id"`
-	GroupID      string      `json:"group_id"`
-	Owner        Principal   `json:"owner"`
-	CreationHash string      `json:"creation_hash"`
-	Revision     int64       `json:"revision"`
-	State        string      `json:"state"`
-	Verified     bool        `json:"verified"`
-	Published    bool        `json:"published"`
-	References   []Reference `json:"references"`
-	SourceGroup  string      `json:"source_group,omitempty"`
-	SourceObject string      `json:"source_object,omitempty"`
-	SourceID     string      `json:"source_id,omitempty"`
-	PendingGroup string      `json:"pending_group,omitempty"`
+	PreparedGroup string      `json:"prepared_group,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	ID            string      `json:"id"`
+	GroupID       string      `json:"group_id"`
+	Owner         Principal   `json:"owner"`
+	CreationHash  string      `json:"creation_hash"`
+	Revision      int64       `json:"revision"`
+	State         string      `json:"state"`
+	Verified      bool        `json:"verified"`
+	Published     bool        `json:"published"`
+	References    []Reference `json:"references"`
+	SourceGroup   string      `json:"source_group,omitempty"`
+	SourceObject  string      `json:"source_object,omitempty"`
+	SourceID      string      `json:"source_id,omitempty"`
+	PendingGroup  string      `json:"pending_group,omitempty"`
 }
 
+// ContentHandleID identifies a caller-scoped deterministic create receipt.
+func ContentHandleID(owner Principal, clientKey string) string {
+	return "content-" + requestHash([]string{owner.Issuer, owner.Subject, clientKey})
+}
 func contentID(id string) bool { return strings.HasPrefix(id, "content-") }
 
 // The global content ledger lock covers short metadata transactions only. It
@@ -72,6 +78,13 @@ func (s *Service) contentGroup(tx Transaction, p Principal, r CreateRequest) (Co
 		Protection Protection
 		Policy     Policy
 	}{p, r.Size, r.SHA256, r.Protection, r.Policy})
+	// Restricted content has a separate immutable physical object for every handle.
+	if r.Protection.Class == "restricted" {
+		if !s.cfg.RestrictedWrites {
+			return ContentGroup{}, ErrRestrictedUnavailable
+		}
+		fingerprint = requestHash([]string{fingerprint, r.ClientKey})
+	}
 	g, err := tx.ActiveContentGroup(fingerprint)
 	if err == nil {
 		return g, nil
@@ -96,7 +109,7 @@ func (s *Service) contentViewWith(tx Transaction, h ContentHandle, g ContentGrou
 		if !h.Verified && h.SourceObject == "" && h.PendingGroup == "" {
 			return out, nil
 		}
-		for _, id := range []string{h.GroupID, h.SourceGroup, h.PendingGroup} {
+		for _, id := range []string{h.GroupID, h.SourceGroup, h.PendingGroup, h.PreparedGroup} {
 			if id == "" {
 				continue
 			}
@@ -136,6 +149,7 @@ func (s *Service) contentViewWith(tx Transaction, h ContentHandle, g ContentGrou
 		return out, err
 	}
 	out.Healthy = st.Healthy
+	out.VerifiedCOSOnly = st.VerifiedCOSOnly
 	if st.State == "deleting" || st.State == "deleted" {
 		return out, ErrUnavailable
 	}
@@ -144,7 +158,7 @@ func (s *Service) contentViewWith(tx Transaction, h ContentHandle, g ContentGrou
 		out.State = "ready"
 	case h.Published && out.Healthy == 0:
 		out.State = "unavailable"
-	case h.Published || out.Healthy >= g.Policy.Publish:
+	case h.Published || out.CanReference():
 		out.State = "degraded"
 	}
 	return out, nil
@@ -178,6 +192,10 @@ func (s *Service) contentStatusAction(ctx context.Context, p Principal, id, acti
 	return out, err
 }
 func (s *Service) createContent(ctx context.Context, p Principal, key string, r CreateRequest) (Status, error) {
+	if r.ReserveFor != nil && (!r.ReserveFor.Valid() || r.ReserveFor.Scope != r.Protection.Scope ||
+		(r.ReserveFor.Class == "restricted") != (r.Protection.Class == "restricted")) {
+		return Status{}, ErrInput
+	}
 	if r.Policy == (Policy{}) {
 		r.Policy = DefaultPolicy()
 	}
@@ -193,7 +211,7 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 	}, func(tx Transaction) (any, error) {
 		id := "content-" + newID()
 		if r.ClientKey != "" {
-			id = "content-" + requestHash([]string{p.Issuer, p.Subject, r.ClientKey})
+			id = ContentHandleID(p, r.ClientKey)
 		}
 		if h, e := tx.ContentHandle(id); e == nil {
 			if h.Owner != p || h.CreationHash != requestHash(r) {
@@ -207,7 +225,12 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 		} else if !errors.Is(e, ErrNotFound) {
 			return nil, e
 		}
-		g, e := s.contentGroup(tx, p, r)
+		if r.Protection.Class == "restricted" && r.ReuseFrom != "" {
+			return nil, ErrInput
+		}
+		groupRequest := r
+		groupRequest.ClientKey = id
+		g, e := s.contentGroup(tx, p, groupRequest)
 		if e != nil {
 			return nil, e
 		}
@@ -228,6 +251,39 @@ func (s *Service) createContent(ctx context.Context, p Principal, key string, r 
 				h.SourceID = ""
 				h.SourceObject = ""
 				h.SourceGroup = ""
+			}
+		}
+		if r.ReserveFor != nil {
+			if e := s.authorize(ctx, p, "storage.objects.create", "", *r.ReserveFor); e != nil {
+				return nil, e
+			}
+			groups := []ContentGroup{g}
+			if *r.ReserveFor != r.Protection {
+				next := groupRequest
+				next.Protection = *r.ReserveFor
+				target, e := s.contentGroup(tx, p, next)
+				if e != nil {
+					return nil, e
+				}
+				groups = append(groups, target)
+				h.PreparedGroup = target.ID
+			}
+			// Workers lock objects before instances. Acquire every affected object
+			// in stable order before either stage reserves the shared instance rows.
+			ids := []string{g.ObjectID}
+			if len(groups) == 2 {
+				ids = append(ids, groups[1].ObjectID)
+			}
+			slices.Sort(ids)
+			for _, objectID := range ids {
+				if e := tx.Lock("object:" + objectID); e != nil {
+					return nil, e
+				}
+			}
+			for _, group := range groups {
+				if e := s.reserveGroup(ctx, tx, p, group); e != nil {
+					return nil, e
+				}
 			}
 		}
 		if e = tx.SaveContentHandle(h); e != nil {
@@ -273,6 +329,9 @@ func (s *Service) contentSource(ctx context.Context, tx Transaction, p Principal
 			return o, group, ErrDenied
 		}
 	}
+	if o.Protection.Class == "restricted" {
+		return o, group, ErrDenied
+	}
 	st, e := s.status(tx, o)
 	if e != nil {
 		return o, group, e
@@ -285,45 +344,63 @@ func (s *Service) contentSource(ctx context.Context, tx Transaction, p Principal
 func (s *Service) ensureContentObject(ctx context.Context, actor Principal, g ContentGroup) (Status, error) {
 	var out Status
 	err := s.repo.Transaction(ctx, func(tx Transaction) error {
-		if err := tx.Lock("object:" + g.ObjectID); err != nil {
+		obj, err := s.contentObject(ctx, tx, actor, g)
+		if err != nil {
 			return err
 		}
-		existing, err := tx.Object(g.ObjectID)
-		if err == nil {
-			if existing.ContentGroup != g.ID || existing.Owner != g.Owner || existing.Size != g.Size || existing.SHA256 != g.SHA256 || existing.Protection != g.Protection || existing.Policy != g.Policy {
-				return ErrConflict
-			}
-			out, err = s.status(tx, existing)
-			return err
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		creation := CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy}
-		o := Object{
-			ContentGroup: g.ID,
-			CreationHash: requestHash(creation),
-			ID:           g.ObjectID,
-			Owner:        g.Owner,
-			Size:         g.Size,
-			SHA256:       g.SHA256,
-			Protection:   g.Protection,
-			Policy:       g.Policy,
-			Revision:     1,
-			State:        "pending",
-			CreatedAt:    s.now(),
-			References:   []Reference{},
-		}
-		if err := tx.SaveObject(o); err != nil {
-			return err
-		}
-		if err := s.emit(ctx, tx, actor, "storage.object.created", o.ID, o.Revision); err != nil {
-			return err
-		}
-		out, err = s.status(tx, o)
+		out, err = s.status(tx, obj)
 		return err
 	})
 	return out, err
+}
+
+func (s *Service) reserveGroup(ctx context.Context, tx Transaction, p Principal, g ContentGroup) error {
+	o, err := s.contentObject(ctx, tx, p, g)
+	if err != nil {
+		return err
+	}
+	return s.reserveMinimum(tx, o)
+}
+
+func (s *Service) contentObject(ctx context.Context, tx Transaction, actor Principal, g ContentGroup) (Object, error) {
+	if err := tx.Lock("object:" + g.ObjectID); err != nil {
+		return Object{}, err
+	}
+	existing, err := tx.Object(g.ObjectID)
+	if err == nil {
+		if existing.ContentGroup != g.ID || existing.Owner != g.Owner || existing.Size != g.Size || existing.SHA256 != g.SHA256 || existing.Protection != g.Protection || existing.Policy != g.Policy {
+			return Object{}, ErrConflict
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Object{}, err
+	}
+	creation := CreateRequest{ClientKey: "content:" + g.ID, Size: g.Size, SHA256: g.SHA256, Protection: g.Protection, Policy: g.Policy}
+	o := Object{
+		ContentGroup: g.ID,
+		CreationHash: requestHash(creation),
+		ID:           g.ObjectID,
+		Owner:        g.Owner,
+		Size:         g.Size,
+		SHA256:       g.SHA256,
+		Protection:   g.Protection,
+		Policy:       g.Policy,
+		Revision:     1,
+		State:        "pending",
+		CreatedAt:    s.now(),
+		References:   []Reference{},
+	}
+	if err := s.initializeVersion(&o); err != nil {
+		return Object{}, err
+	}
+	if err := tx.SaveObject(o); err != nil {
+		return Object{}, err
+	}
+	if err := s.emit(ctx, tx, actor, "storage.object.created", o.ID, o.Revision); err != nil {
+		return Object{}, err
+	}
+	return o, nil
 }
 
 func (s *Service) writeContentObject(ctx context.Context, g ContentGroup, f *stagedFile, checkAuth func(Transaction) error) error {
@@ -353,27 +430,12 @@ func (s *Service) writeContentObject(ctx context.Context, g ContentGroup, f *sta
 		if o.State == "deleting" || o.State == "deleted" {
 			return ErrStale
 		}
-		replicas, err := tx.Replicas(o.ID)
-		if err != nil {
+		chosen, exists, err := s.firstIngestReplica(tx, o)
+		already = exists
+		replica := chosen
+		if err != nil || already {
 			return err
 		}
-		for _, r := range replicas {
-			if r.State == "healthy" && r.ObjectRevision == o.Revision {
-				already = true
-				return nil
-			}
-			if r.State != "deleted" {
-				return ErrConflict
-			}
-		}
-		planned, err := s.plan(tx, o, 1)
-		if err != nil {
-			return err
-		}
-		if len(planned) == 0 {
-			return ErrCapacity
-		}
-		replica := planned[0]
 		replica.State = "writing"
 		if err := tx.SaveReplica(replica); err != nil {
 			return err
@@ -515,7 +577,7 @@ func (s *Service) contentReference(ctx context.Context, p Principal, id, key str
 			}
 		}
 		if attach {
-			if !h.Verified || st.Healthy < g.Policy.Publish {
+			if !h.Verified || !st.CanReference() {
 				return nil, ErrUnavailable
 			}
 			if index < 0 {
@@ -584,7 +646,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 		if e := tx.SaveContentHandle(h); e != nil {
 			return nil, e
 		}
-		for _, gid := range []string{h.GroupID, h.SourceGroup, h.PendingGroup} {
+		for _, gid := range []string{h.GroupID, h.SourceGroup, h.PendingGroup, h.PreparedGroup} {
 			if e := s.releaseContentGroup(tx, gid); e != nil {
 				return nil, e
 			}
@@ -595,7 +657,7 @@ func (s *Service) deleteContent(ctx context.Context, p Principal, id, key string
 		return s.contentView(tx, h, g)
 	}, &out)
 	if err == nil {
-		for _, groupID := range []string{h.GroupID, h.SourceGroup, h.PendingGroup} {
+		for _, groupID := range []string{h.GroupID, h.SourceGroup, h.PendingGroup, h.PreparedGroup} {
 			if groupID != "" {
 				if e := s.cleanupContentGroup(ctx, p, groupID); e != nil {
 					err = e
@@ -638,7 +700,7 @@ func (s *Service) openContentDownload(ctx context.Context, p Principal, id strin
 			if e != nil {
 				return e
 			}
-			if st.Healthy < 1 || (!review && !h.Published && st.Healthy < g.Policy.Publish) {
+			if st.Healthy < 1 || (!review && !h.Published && !st.CanReference()) {
 				return ErrUnavailable
 			}
 			if object != "" && (object != g.ObjectID || revision != h.Revision) {
@@ -832,7 +894,7 @@ func (s *Service) expireContentHandles(ctx context.Context, p Principal, limit i
 			if e = tx.SaveContentHandle(h); e != nil {
 				return e
 			}
-			for _, gid := range []string{h.GroupID, h.SourceGroup, h.PendingGroup} {
+			for _, gid := range []string{h.GroupID, h.SourceGroup, h.PendingGroup, h.PreparedGroup} {
 				if e = s.releaseContentGroup(tx, gid); e != nil {
 					return e
 				}

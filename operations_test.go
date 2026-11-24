@@ -21,7 +21,7 @@ import (
 func TestMissingReplicaIsRebuiltWithNewIntentAndBalancedCapacity(t *testing.T) {
 	h := harnessFor(t, func(c *storage.Config) { c.VerificationAge = time.Minute })
 	for n := 1; n <= 3; n++ {
-		h.instance(t, fmt.Sprintf("i%d", n), "platform", "platform", 1024)
+		h.instance(t, fmt.Sprintf("i%d", n), "platform", 1024)
 	}
 	data := []byte("durable repair")
 	o := h.object(t, "create", data)
@@ -101,7 +101,7 @@ func TestMissingReplicaIsRebuiltWithNewIntentAndBalancedCapacity(t *testing.T) {
 func TestOperationsAuthorizationCapacityFailuresAndPagination(t *testing.T) {
 	h := harnessFor(t)
 	for n := 1; n <= 3; n++ {
-		h.instance(t, fmt.Sprintf("i%d", n), "platform", "platform", 1024)
+		h.instance(t, fmt.Sprintf("i%d", n), "platform", 1024)
 	}
 	o := h.object(t, "create", []byte("ops"))
 	h.ingest(t, o.ID, []byte("ops"))
@@ -189,7 +189,7 @@ func TestSupersededVerificationIsNotAnActionableBlockage(t *testing.T) {
 	h := harnessFor(t, func(c *storage.Config) { c.VerificationAge = time.Minute })
 	var first storage.Instance
 	for n := 1; n <= 3; n++ {
-		i := h.instance(t, fmt.Sprintf("i%d", n), "platform", "platform", 1024)
+		i := h.instance(t, fmt.Sprintf("i%d", n), "platform", 1024)
 		if n == 1 {
 			first = i
 		}
@@ -224,9 +224,9 @@ func TestSupersededVerificationIsNotAnActionableBlockage(t *testing.T) {
 
 func TestOperationsReadSnapshotDoesNotBlockOrDeadlockConcurrentWrites(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "i1", "p1", "platform", 1024)
-	h.instance(t, "i2", "p2", "platform", 1024)
-	c1 := h.instance(t, "c1", "contrib-owner", "contributor", 1024)
+	h.instance(t, "i1", "p1", 1024)
+	h.instance(t, "i2", "p2", 1024)
+	c1 := h.instance(t, "c1", "contrib-owner", 1024)
 
 	o1 := h.object(t, "o1", []byte("alpha"))
 	h.ingest(t, o1.ID, []byte("alpha"))
@@ -268,7 +268,7 @@ func TestOperationsReadSnapshotDoesNotBlockOrDeadlockConcurrentWrites(t *testing
 func TestReconcileSkipsTombstonesAndHealthyObjectInstanceLocks(t *testing.T) {
 	h := harnessFor(t)
 	for n := 1; n <= 4; n++ {
-		h.instance(t, fmt.Sprintf("i%d", n), fmt.Sprintf("p%d", n), "platform", 4096)
+		h.instance(t, fmt.Sprintf("i%d", n), fmt.Sprintf("p%d", n), 4096)
 	}
 	tomb := h.object(t, "tomb", []byte("unused"))
 	if _, err := h.s.Delete(h.ctx, h.actor, tomb.ID, "del-tomb", tomb.Revision); err != nil {

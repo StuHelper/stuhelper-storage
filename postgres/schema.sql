@@ -132,3 +132,44 @@ CREATE OR REPLACE FUNCTION storage.audit_invalidate() RETURNS trigger LANGUAGE p
 REVOKE ALL ON FUNCTION storage.audit_invalidate() FROM PUBLIC;
 CREATE OR REPLACE TRIGGER audit_invalidate AFTER UPDATE OR DELETE OR TRUNCATE ON storage.audit FOR EACH STATEMENT EXECUTE FUNCTION storage.audit_invalidate();
 CREATE INDEX IF NOT EXISTS audit_query_order ON storage.audit(audit_time DESC,(id::text) COLLATE "C" DESC);
+
+CREATE INDEX IF NOT EXISTS content_handles_prepared_group ON storage.content_handles ((data->>'prepared_group')) WHERE active AND data->>'prepared_group' IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS storage.owner_closures(
+    closure_id text PRIMARY KEY, owner_domain text NOT NULL, cancelled boolean NOT NULL,
+    changed_at timestamptz NOT NULL DEFAULT statement_timestamp()
+);
+ALTER TABLE storage.owner_closures ADD COLUMN IF NOT EXISTS finalizing boolean NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX IF NOT EXISTS owner_closures_active ON storage.owner_closures(owner_domain) WHERE NOT cancelled;
+ALTER TABLE storage.instances ADD COLUMN IF NOT EXISTS closure_draining boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS instances_contributor_owner ON storage.instances((data->>'owner_domain'),id) WHERE data->>'ownership'='contributor';
+
+-- Serialize enrollment/adoption with a change of the owner's write barrier.
+CREATE OR REPLACE FUNCTION storage.set_instance_closure() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND NEW.data->>'ownership' IS NOT DISTINCT FROM OLD.data->>'ownership'
+    AND NEW.data->>'owner_domain' IS NOT DISTINCT FROM OLD.data->>'owner_domain' THEN
+    RETURN NEW;
+ END IF;
+ NEW.closure_draining=false;
+ IF NEW.data->>'ownership'='contributor' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('stuhelper-storage:closure:' || (NEW.data->>'owner_domain'),0));
+    IF EXISTS(SELECT 1 FROM storage.owner_closures WHERE owner_domain=NEW.data->>'owner_domain' AND finalizing AND NOT cancelled)
+       AND NOT EXISTS(SELECT 1 FROM storage.instances i WHERE i.id=NEW.id AND i.data->>'owner_domain'=NEW.data->>'owner_domain') THEN
+       RAISE EXCEPTION 'closing storage owner' USING ERRCODE='40001';
+    END IF;
+    SELECT EXISTS(SELECT 1 FROM storage.owner_closures WHERE owner_domain=NEW.data->>'owner_domain' AND NOT cancelled) INTO NEW.closure_draining;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS instance_closure ON storage.instances;
+CREATE TRIGGER instance_closure BEFORE INSERT OR UPDATE OF data ON storage.instances FOR EACH ROW EXECUTE FUNCTION storage.set_instance_closure();
+ALTER TABLE storage.owner_closures ADD COLUMN IF NOT EXISTS instance_cursor text NOT NULL DEFAULT '';
+ALTER TABLE storage.owner_closures ADD COLUMN IF NOT EXISTS binding_cursor text NOT NULL DEFAULT '';
+ALTER TABLE storage.owner_closures ADD COLUMN IF NOT EXISTS instances_done boolean NOT NULL DEFAULT false;
+ALTER TABLE storage.owner_closures ADD COLUMN IF NOT EXISTS bindings_done boolean NOT NULL DEFAULT false;
+
+ALTER TABLE storage.owner_closures ADD COLUMN IF NOT EXISTS completed_at timestamptz;
+CREATE INDEX IF NOT EXISTS owner_closure_completed ON storage.owner_closures(completed_at,closure_id) WHERE completed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS owner_closure_cancelled ON storage.owner_closures(changed_at,closure_id) WHERE cancelled;

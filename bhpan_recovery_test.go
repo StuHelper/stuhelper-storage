@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"io"
 	"os"
 	"strings"
@@ -295,12 +296,12 @@ func newBHpanRecoveryHarness(t *testing.T) (*harness, *bhpanFakeClient, *bhpanFa
 		}
 		prov.ID = id
 		prov.OwnerDomain = id
-		prov.Ownership = "platform"
+		prov.Ownership = "contributor"
 		prov.State = "active"
 		prov.Authorized = true
 		prov.Limit = 1 << 20
 		prov.Admissions = []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: expires}}
-		if _, err = svc.Register(base.ctx, base.actor, "reg-"+id, prov); err != nil {
+		if _, err = storagetest.RegisterContribution(base.ctx, svc, base.actor, "reg-"+id, prov); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -469,12 +470,12 @@ func TestFreshUploadAndUnissuedDeleteSkipRootListingAndShardSubdirectories(t *te
 		}
 		prov.ID = id
 		prov.OwnerDomain = id
-		prov.Ownership = "platform"
+		prov.Ownership = "contributor"
 		prov.State = "active"
 		prov.Authorized = true
 		prov.Limit = 1 << 20
 		prov.Admissions = []storage.Admission{{Class: "public", Scope: "school-a", Plaintext: true, ExpiresAt: expires}}
-		if _, err = svc.Register(base.ctx, base.actor, "reg-"+id, prov); err != nil {
+		if _, err = storagetest.RegisterContribution(base.ctx, svc, base.actor, "reg-"+id, prov); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -669,7 +670,7 @@ func TestMultipartRechecksObjectAfterPartUpload(t *testing.T) {
 	}
 	inst.ID = "multipart"
 	inst.OwnerDomain = "test"
-	inst.Ownership = "platform"
+	inst.Ownership = "contributor"
 	inst.State = "active"
 	inst.Authorized = true
 	inst.Limit = 1024
@@ -681,7 +682,7 @@ func TestMultipartRechecksObjectAfterPartUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Close(context.Background())
-	if _, err = svc.Register(h.ctx, h.actor, "register-multipart", inst); err != nil {
+	if _, err = storagetest.RegisterContribution(h.ctx, svc, h.actor, "register-multipart", inst); err != nil {
 		t.Fatal(err)
 	}
 	data := []byte("0123456789abcdef")

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	storage "github.com/StuHelper/stuhelper-storage"
 	"github.com/StuHelper/stuhelper-storage/postgres"
+	"github.com/StuHelper/stuhelper-storage/storagetest"
 	"sync"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func physicalCount(t *testing.T, h *harness) int {
 func TestSharedContentConcurrentProofAndSinglePhysicalObject(t *testing.T) {
 	h := harnessFor(t)
 	for i := 0; i < 3; i++ {
-		h.instance(t, fmt.Sprint(i), fmt.Sprint(i), "platform", 1024)
+		h.instance(t, fmt.Sprint(i), fmt.Sprint(i), 1024)
 	}
 	data := []byte("shared immutable content")
 	req := sharedRequest(data)
@@ -105,7 +106,7 @@ func TestSharedContentConcurrentProofAndSinglePhysicalObject(t *testing.T) {
 func TestSharedContentIndependentReferencesAndLastRelease(t *testing.T) {
 	h := harnessFor(t)
 	for i := 0; i < 3; i++ {
-		h.instance(t, fmt.Sprint(i), fmt.Sprint(i), "platform", 1024)
+		h.instance(t, fmt.Sprint(i), fmt.Sprint(i), 1024)
 	}
 	data := []byte("keep the other reference")
 	a := sharedCreate(t, h, "a", sharedRequest(data))
@@ -161,9 +162,8 @@ func TestSharedContentIndependentReferencesAndLastRelease(t *testing.T) {
 func TestSharedContentProtectionMigrationAndReuseRemainIndependent(t *testing.T) {
 	h := harnessFor(t)
 	for i := 0; i < 3; i++ {
-		v := h.instance(t, fmt.Sprint(i), fmt.Sprint(i), "platform", 4096)
-		v.Admissions = append(v.Admissions, storage.Admission{Class: "quarantine", Scope: "school-a", Plaintext: true, ExpiresAt: v.ExpiresAt})
-		if _, e := h.s.UpdateInstance(h.ctx, h.actor, "admit-"+v.ID, v); e != nil {
+		v := h.instance(t, fmt.Sprint(i), storage.ContributionOwnerDomain(h.actor), 4096)
+		if _, e := storagetest.Trust(h.ctx, h.s, h.actor, v, "school-a", []string{"quarantine"}); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -206,7 +206,7 @@ func TestSharedContentProtectionMigrationAndReuseRemainIndependent(t *testing.T)
 }
 func TestSharedContentReplayScopePolicyAndMigration(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "one", "one", "platform", 4096)
+	h.instance(t, "one", "one", 4096)
 	data := []byte("stable content key")
 	req := sharedRequest(data)
 	req.ClientKey = "same-session"
@@ -248,7 +248,7 @@ func TestSharedContentReplayScopePolicyAndMigration(t *testing.T) {
 
 func TestSharedContentLostReplyExpiryAndCanonicalProtection(t *testing.T) {
 	h := harnessFor(t)
-	instance := h.instance(t, "one", "one", "platform", 4096)
+	instance := h.instance(t, "one", "one", 4096)
 	instance.ExpiresAt = h.clock.Now().Add(72 * time.Hour)
 	for i := range instance.Admissions {
 		instance.Admissions[i].ExpiresAt = instance.ExpiresAt
@@ -298,7 +298,7 @@ func TestSharedContentLostReplyExpiryAndCanonicalProtection(t *testing.T) {
 
 func TestConcurrentSharedIngestKeepsOneProviderIntent(t *testing.T) {
 	h := harnessFor(t)
-	h.instance(t, "one", "one", "platform", 4096)
+	h.instance(t, "one", "one", 4096)
 	data := []byte("overlapping provider uploads")
 	a := sharedCreate(t, h, "first", sharedRequest(data))
 	b := sharedCreate(t, h, "second", sharedRequest(data))
@@ -337,9 +337,8 @@ func TestConcurrentSharedIngestKeepsOneProviderIntent(t *testing.T) {
 
 func TestDeleteDuringSharedProtectionCopyCleansDestinationAndKeepsOtherHandle(t *testing.T) {
 	h := harnessFor(t)
-	i := h.instance(t, "one", "one", "platform", 4096)
-	i.Admissions = append(i.Admissions, storage.Admission{Class: "quarantine", Scope: "school-a", Plaintext: true, ExpiresAt: i.ExpiresAt})
-	if _, e := h.s.UpdateInstance(h.ctx, h.actor, "quarantine", i); e != nil {
+	i := h.instance(t, "one", storage.ContributionOwnerDomain(h.actor), 4096)
+	if _, e := storagetest.Trust(h.ctx, h.s, h.actor, i, "school-a", []string{"quarantine"}); e != nil {
 		t.Fatal(e)
 	}
 	data := []byte("cancel protection copy")
@@ -411,11 +410,11 @@ func TestSharedContentProtectionChangeLeastPrivilegeAndRollback(t *testing.T) {
 
 	actor := storage.Principal{Issuer: "test-issuer", Subject: "service"}
 	until := base.clock.Now().Add(24 * time.Hour)
-	inst, err := svc.Register(base.ctx, actor, "reg-pub", storage.Instance{
+	inst, err := storagetest.RegisterContribution(base.ctx, svc, actor, "reg-pub", storage.Instance{
 		ID:                 "pub-only",
 		Adapter:            "test",
-		OwnerDomain:        "platform",
-		Ownership:          "platform",
+		OwnerDomain:        storage.ContributionOwnerDomain(base.actor),
+		Ownership:          "contributor",
 		CredentialRef:      "pub-only",
 		CredentialRevision: 1,
 		Root:               "isolated",
@@ -478,11 +477,7 @@ func TestSharedContentProtectionChangeLeastPrivilegeAndRollback(t *testing.T) {
 	}
 
 	// 2. Admit quarantine on instance, then ChangeProtection with ONLY protection.change + protection.assign!
-	auth.mu.Lock()
-	auth.allowed["service"]["storage.instances.manage"] = true
-	auth.mu.Unlock()
-	inst.Admissions = append(inst.Admissions, storage.Admission{Class: "quarantine", Scope: "school-a", Plaintext: true, ExpiresAt: until})
-	if _, err = svc.UpdateInstance(base.ctx, actor, "admit-quarantine", inst); err != nil {
+	if _, err := storagetest.Trust(base.ctx, base.s, base.actor, inst, "school-a", []string{"quarantine"}); err != nil {
 		t.Fatal(err)
 	}
 	auth.mu.Lock()
@@ -528,11 +523,11 @@ func TestSharedContentCleanupUsesActualActorWithoutOwnerPermissions(t *testing.T
 	creator := storage.Principal{Issuer: "test-issuer", Subject: "creator"}
 	maintainer := storage.Principal{Issuer: "test-issuer", Subject: "maintainer"}
 	until := base.clock.Now().Add(48 * time.Hour)
-	if _, err = svc.Register(base.ctx, creator, "reg-1", storage.Instance{
+	if _, err = storagetest.RegisterContribution(base.ctx, svc, creator, "reg-1", storage.Instance{
 		ID:                 "inst-1",
 		Adapter:            "test",
 		OwnerDomain:        "platform",
-		Ownership:          "platform",
+		Ownership:          "contributor",
 		CredentialRef:      "inst-1",
 		CredentialRevision: 1,
 		Root:               "isolated",

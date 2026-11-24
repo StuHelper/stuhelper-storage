@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "StuHelper Storage API",
-    "version": "0.1.2",
-    "description": "Internal service and storage administration API. Current issuer/subject authorization is mandatory on every operation. Target replicas 3, initial publication 2; encryption deferred. Account domains and credential references are administrative data."
+    "version": "0.1.3",
+    "description": "Storage service and administration API. Account enrollment requires user custody and a separate contribution. An explicitly configured private COS store can supplement the first-reference threshold."
   },
   "paths": {
     "/api/v1/storage/instances": {
@@ -3720,6 +3720,234 @@
           }
         }
       }
+    },
+    "/api/v1/storage/instances/{id}/trust-consent": {
+      "get": {
+        "operationId": "getOwnStorageTrustConsent",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "description": "Return the current owner’s decision and available school scopes."
+      },
+      "put": {
+        "operationId": "setOwnStorageTrustConsent",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrustConsentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "description": "Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only."
+      }
     }
   },
   "components": {
@@ -3758,7 +3986,12 @@
         ],
         "properties": {
           "class": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "public",
+              "quarantine",
+              "restricted"
+            ]
           },
           "scope": {
             "type": "string"
@@ -3770,7 +4003,8 @@
             "type": "boolean",
             "enum": [
               false
-            ]
+            ],
+            "description": "Client-supplied ciphertext is unsupported. Storage applies authenticated encryption to restricted files before writing any replica."
           }
         }
       },
@@ -3859,7 +4093,6 @@
           "ownership": {
             "type": "string",
             "enum": [
-              "platform",
               "contributor"
             ]
           },
@@ -3976,8 +4209,8 @@
           "ownership": {
             "type": "string",
             "enum": [
-              "platform",
-              "contributor"
+              "contributor",
+              "fallback"
             ]
           },
           "credential_ref": {
@@ -4078,6 +4311,19 @@
           "contribution_approval": {
             "type": "string",
             "description": "Sanitized operator approval receipt for an adopted contribution. Never a credential or user identifier."
+          },
+          "trusted": {
+            "type": "boolean"
+          },
+          "trust_consent": {
+            "$ref": "#/components/schemas/TrustConsent"
+          },
+          "fallback_limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "alert_percent": {
+            "type": "integer"
           }
         }
       },
@@ -4178,6 +4424,10 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "verified_cos_only": {
+            "type": "boolean",
+            "description": "True only for a verified fallback COS copy with no eligible contribution account. This permits a first reference without counting a second physical copy."
           }
         }
       },
@@ -4342,6 +4592,23 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "trusted": {
+            "type": "boolean"
+          },
+          "trust_consent": {
+            "$ref": "#/components/schemas/TrustConsent"
+          },
+          "adapter": {
+            "type": "string"
+          },
+          "account_hint": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "capacity_warning": {
+            "type": "boolean",
+            "description": "The separately capped fallback allocation is at or above its alert threshold."
           }
         }
       },
@@ -4542,6 +4809,12 @@
           },
           "failures_next_cursor": {
             "type": "string"
+          },
+          "intake": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchoolIntake"
+            }
           }
         }
       },
@@ -4607,7 +4880,9 @@
               "resume",
               "drain",
               "revoke",
-              "quota"
+              "quota",
+              "trust",
+              "untrust"
             ]
           },
           "limit_bytes": {
@@ -5114,7 +5389,12 @@
             "items": {
               "type": "string",
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$",
-              "description": "Storage protection class. Initial levels are public, quarantine, restricted (non-paid) and paid-restricted (requires completed encryption and recovery support)."
+              "description": "File protection class. Billing separately controls prices and entitlements.",
+              "enum": [
+                "public",
+                "quarantine",
+                "restricted"
+              ]
             },
             "maxItems": 32,
             "uniqueItems": true
@@ -5198,6 +5478,159 @@
           "memberships"
         ],
         "description": "Complete policy snapshot. Instance-specific selectors precede global selectors. Contributor selectors precede role and group selectors at the same instance specificity. Equally specific role or group selectors intersect. Empty levels deny; no match defaults to public. Per-account authorization, school and protection controls still apply."
+      },
+      "TrustConsentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "scope",
+          "classes",
+          "until"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "classes": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "quarantine",
+                "restricted"
+              ]
+            }
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TrustConsent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scope",
+          "classes",
+          "until",
+          "recorded_at",
+          "source"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "classes": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "quarantine",
+                "restricted"
+              ]
+            }
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "owner_session",
+              "confirmed_by_owner"
+            ]
+          }
+        }
+      },
+      "TrustState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "trusted",
+          "available_scopes",
+          "maximum_until"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trusted": {
+            "type": "boolean"
+          },
+          "consent": {
+            "$ref": "#/components/schemas/TrustConsent"
+          },
+          "available_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "maximum_until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SchoolIntake": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scope",
+          "class",
+          "mode",
+          "contribution_accounts",
+          "max_file_bytes"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "paused",
+              "bhpan",
+              "cos_only",
+              "mixed"
+            ]
+          },
+          "contribution_accounts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_file_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
       }
     }
   }

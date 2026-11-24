@@ -38,6 +38,11 @@ func (t *transaction) InstanceReplicas(id string) (int64, error) {
 	return count, t.safe("instance_replicas", err)
 }
 
+func (t *transaction) HeldReservationBytes(id string) (int64, error) {
+	var n int64
+	err := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(sum((data->>'size')::bigint),0) FROM storage.replicas WHERE instance_id=$1 AND data->>'state'='held' AND (data->>'reserved')::boolean AND NOT (data->>'issued_write')::boolean`, id).Scan(&n)
+	return n, t.safe("held_capacity", err)
+}
 func (t *transaction) ActiveWrites(replicaID string, now time.Time) (bool, error) {
 	var active bool
 	err := t.tx.QueryRowContext(t.ctx, `SELECT EXISTS(SELECT 1 FROM storage.jobs WHERE data->>'replica_id'=$1 AND data->>'kind' IN ('ingest','replicate') AND state='running' AND lease_until>$2)`, replicaID, now).Scan(&active)
@@ -150,12 +155,16 @@ func (t *transaction) save(query string, item any, args ...any) error {
 	return t.safe("save", err)
 }
 
+const readInstance = `CASE WHEN closure_draining THEN data || '{"closure_draining":true}'::jsonb ELSE data END`
+
 type instanceRecord struct {
+	Draining bool `json:"closure_draining,omitempty"`
 	storage.Instance
 	QuotaObservation storage.QuotaObservation `json:"quota_observation,omitzero"`
 }
 
 func (r instanceRecord) instance() storage.Instance {
+	r.Instance.ClosureDraining = r.Draining
 	r.Instance.QuotaObservation = r.QuotaObservation
 	return r.Instance
 }
@@ -173,18 +182,18 @@ func (t *transaction) instances(query string, args ...any) ([]storage.Instance, 
 }
 
 func (t *transaction) Instance(id string) (storage.Instance, error) {
-	row, err := read[instanceRecord](t, `SELECT data FROM storage.instances WHERE id=$1 FOR UPDATE`, id)
+	row, err := read[instanceRecord](t, `SELECT `+readInstance+` FROM storage.instances WHERE id=$1 FOR UPDATE`, id)
 	return row.instance(), err
 }
 func (t *transaction) InstanceSnapshot(id string) (storage.Instance, error) {
-	row, err := read[instanceRecord](t, `SELECT data FROM storage.instances WHERE id=$1`, id)
+	row, err := read[instanceRecord](t, `SELECT `+readInstance+` FROM storage.instances WHERE id=$1`, id)
 	return row.instance(), err
 }
 func (t *transaction) InstanceSnapshots(ids []string) ([]storage.Instance, error) {
-	return t.instances(`SELECT data FROM storage.instances WHERE id = ANY($1)`, ids)
+	return t.instances(`SELECT `+readInstance+` FROM storage.instances WHERE id = ANY($1)`, ids)
 }
 func (t *transaction) ContributionCandidates(owner string, now time.Time, limit int, after string) ([]storage.Instance, error) {
-	return t.instances(`SELECT i.data FROM storage.instances i WHERE i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->>'authorized')::boolean AND (i.data->>'expires_at')::timestamptz>$3 AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $4`, after, owner, now, limit)
+	return t.instances(`SELECT i.data FROM storage.instances i WHERE NOT i.closure_draining AND i.id>$1 AND i.data->>'owner_domain'=$2 AND i.data->>'ownership'='contributor' AND i.data->>'state'='paused' AND (i.data->>'authorized')::boolean AND (i.data->>'expires_at')::timestamptz>$3 AND (i.data->'contribution_control' IS NULL OR i.data->'contribution_control'='null'::jsonb) AND (i.data->>'used')::bigint=0 AND (i.data->>'reserved')::bigint=0 AND NOT EXISTS(SELECT 1 FROM storage.replicas r WHERE r.instance_id=i.id AND r.data->>'state'<>'deleted') ORDER BY i.id LIMIT $4`, after, owner, now, limit)
 }
 func (t *transaction) ContributionAdmissionPolicy() (storage.ContributionAdmissionPolicy, error) {
 	return read[storage.ContributionAdmissionPolicy](t, `SELECT data FROM storage.contribution_admission_policy WHERE singleton`)
@@ -193,7 +202,7 @@ func (t *transaction) SaveContributionAdmissionPolicy(policy storage.Contributio
 	return t.save(`INSERT INTO storage.contribution_admission_policy(singleton,data) VALUES(true,$1) ON CONFLICT(singleton) DO UPDATE SET data=excluded.data`, policy)
 }
 func (t *transaction) Instances(limit int, after string) ([]storage.Instance, error) {
-	return t.instances(`SELECT data FROM storage.instances WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
+	return t.instances(`SELECT `+readInstance+` FROM storage.instances WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
 }
 func (t *transaction) SaveInstance(v storage.Instance) error {
 	row := instanceRecord{Instance: v, QuotaObservation: v.QuotaObservation}
@@ -355,9 +364,10 @@ func (t *transaction) Event(v storage.Event) error {
 		school = "*"
 	}
 	if err := t.save(`INSERT INTO storage.audit(id,reason,result,audit_school,data) VALUES($1,$2,$3,$4,$5)`, struct {
-		Event storage.Event     `json:"event"`
-		Actor storage.Principal `json:"actor"`
-	}{v, v.Actor}, v.ID, v.Reason, result, school); err != nil {
+		Event         storage.Event       `json:"event"`
+		Actor         storage.Principal   `json:"actor"`
+		TrustDecision *storage.TrustState `json:"trust_decision,omitempty"`
+	}{v, v.Actor, v.TrustDecision}, v.ID, v.Reason, result, school); err != nil {
 		return err
 	}
 	_, err := t.tx.ExecContext(t.ctx, `SELECT pg_notify('storage_outbox', $1)`, v.Subject)

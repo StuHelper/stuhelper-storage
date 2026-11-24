@@ -427,6 +427,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/instances/{id}/trust-consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Return the current owner’s decision and available school scopes. */
+        get: operations["getOwnStorageTrustConsent"];
+        /** @description Record or withdraw the authenticated owner’s scoped consent. Empty classes withdraw consent. An administrator must separately approve trust. Restricted consent covers application-encrypted content only. */
+        put: operations["setOwnStorageTrustConsent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -436,10 +454,14 @@ export interface components {
             retry_after_seconds?: number;
         };
         Protection: {
-            class: string;
+            /** @enum {string} */
+            class: "public" | "quarantine" | "restricted";
             scope: string;
             public: boolean;
-            /** @enum {boolean} */
+            /**
+             * @description Client-supplied ciphertext is unsupported. Storage applies authenticated encryption to restricted files before writing any replica.
+             * @enum {boolean}
+             */
             encrypted: false;
         };
         Policy: {
@@ -461,7 +483,7 @@ export interface components {
             account_domain: string;
             owner_domain: string;
             /** @enum {string} */
-            ownership: "platform" | "contributor";
+            ownership: "contributor";
             credential_ref: string;
             /** Format: int64 */
             credential_revision: number;
@@ -499,7 +521,7 @@ export interface components {
             account_domain: string;
             owner_domain: string;
             /** @enum {string} */
-            ownership: "platform" | "contributor";
+            ownership: "contributor" | "fallback";
             credential_ref: string;
             /** Format: int64 */
             credential_revision: number;
@@ -542,6 +564,11 @@ export interface components {
             contribution_levels?: string[];
             /** @description Sanitized operator approval receipt for an adopted contribution. Never a credential or user identifier. */
             contribution_approval?: string;
+            trusted?: boolean;
+            trust_consent?: components["schemas"]["TrustConsent"];
+            /** Format: int64 */
+            fallback_limit?: number;
+            alert_percent?: number;
         };
         CreateObject: {
             /** Format: int64 */
@@ -574,6 +601,8 @@ export interface components {
             healthy: number;
             /** Format: int64 */
             desired: number;
+            /** @description True only for a verified fallback COS copy with no eligible contribution account. This permits a first reference without counting a second physical copy. */
+            verified_cos_only?: boolean;
         };
         Reference: {
             module: string;
@@ -620,6 +649,12 @@ export interface components {
             used_bytes: number;
             /** Format: int64 */
             reserved_bytes: number;
+            trusted?: boolean;
+            trust_consent?: components["schemas"]["TrustConsent"];
+            adapter?: string;
+            account_hint?: string;
+            /** @description The separately capped fallback allocation is at or above its alert threshold. */
+            capacity_warning?: boolean;
         };
         ObjectHealth: {
             id: string;
@@ -676,6 +711,7 @@ export interface components {
             failures: components["schemas"]["JobFailure"][];
             next_cursor: string;
             failures_next_cursor: string;
+            intake?: components["schemas"]["SchoolIntake"][];
         };
         ReplicaWriteOff: {
             /** Format: int64 */
@@ -693,7 +729,7 @@ export interface components {
             /** Format: int64 */
             revision: number;
             /** @enum {string} */
-            action: "pause" | "resume" | "drain" | "revoke" | "quota";
+            action: "pause" | "resume" | "drain" | "revoke" | "quota" | "trust" | "untrust";
             /** Format: int64 */
             limit_bytes?: number;
         };
@@ -842,7 +878,7 @@ export interface components {
              */
             subject_kind: "contributor" | "role" | "group";
             subject_id: string;
-            levels: string[];
+            levels: ("public" | "quarantine" | "restricted")[];
             /** @description Optional instance restriction. The instance owner must match the selector. */
             instance_id?: string;
         };
@@ -858,6 +894,43 @@ export interface components {
             revision: number;
             rules: components["schemas"]["ContributionAdmissionRule"][];
             memberships: components["schemas"]["ContributionAdmissionMembership"][];
+        };
+        TrustConsentRequest: {
+            /** Format: int64 */
+            revision: number;
+            scope: string;
+            classes: ("quarantine" | "restricted")[];
+            /** Format: date-time */
+            until: string;
+        };
+        TrustConsent: {
+            scope: string;
+            classes: ("quarantine" | "restricted")[];
+            /** Format: date-time */
+            until: string;
+            /** Format: date-time */
+            recorded_at: string;
+            /** @enum {string} */
+            source: "owner_session" | "confirmed_by_owner";
+        };
+        TrustState: {
+            /** Format: int64 */
+            revision: number;
+            trusted: boolean;
+            consent?: components["schemas"]["TrustConsent"];
+            available_scopes: string[];
+            /** Format: date-time */
+            maximum_until: string;
+        };
+        SchoolIntake: {
+            scope: string;
+            class: string;
+            /** @enum {string} */
+            mode: "paused" | "bhpan" | "cos_only" | "mixed";
+            contribution_accounts: number;
+            /** Format: int64 */
+            max_file_bytes: number;
+            reason?: string;
         };
     };
     responses: never;
@@ -3643,6 +3716,182 @@ export interface operations {
             };
             /** @description Stable sanitized error */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getOwnStorageTrustConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustState"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setOwnStorageTrustConsent: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustState"];
+                };
+            };
+            /** @description Stable sanitized error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stable sanitized error */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

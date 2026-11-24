@@ -7,10 +7,7 @@ import (
 	"strings"
 )
 
-const (
-	PaidRestrictedClass   = "paid-restricted"
-	admissionPolicyObject = "contribution-admission-policy"
-)
+const admissionPolicyObject = "contribution-admission-policy"
 
 type ContributionAdmissionRule struct {
 	SubjectKind string   `json:"subject_kind"`
@@ -59,6 +56,11 @@ func (p ContributionAdmissionPolicy) valid() bool {
 		if keys[key] || !validID(rule.SubjectID) || (rule.InstanceID != "" && !validID(rule.InstanceID)) || !validIDList(rule.Levels, 32) {
 			return false
 		}
+		for _, level := range rule.Levels {
+			if !validClass(level) {
+				return false
+			}
+		}
 		switch rule.SubjectKind {
 		case "contributor":
 			if !validOwnerDomain(rule.SubjectID) {
@@ -90,6 +92,9 @@ func (p ContributionAdmissionPolicy) levels(i Instance) []string {
 	}
 	priority := 0
 	allowed := []string{"public"}
+	if i.Trusted && i.TrustConsent != nil {
+		allowed = append(allowed, i.TrustConsent.Classes...)
+	}
 	for _, rule := range p.Rules {
 		if rule.InstanceID != "" && rule.InstanceID != i.ID {
 			continue
