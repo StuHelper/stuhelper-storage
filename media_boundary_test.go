@@ -41,11 +41,11 @@ func TestStableClientKeySurvivesReplayExpiryAndDeletion(t *testing.T) {
 func TestProtectionChangePreservesLastVerifiedSource(t *testing.T) {
 	h := harnessFor(t)
 	i := h.instance(t, "controlled", storage.ContributionOwnerDomain(h.actor), 1024)
-	i, trustErr := storagetest.Trust(h.ctx, h.s, h.actor, i, "school-a", []string{"restricted"})
+	i, trustErr := storagetest.Trust(h.ctx, h.s, h.actor, i, "school-a", []string{"quarantine"})
 	if trustErr != nil {
 		t.Fatal(trustErr)
 	}
-	i.Admissions = []storage.Admission{{Class: "restricted", Scope: "school-a", Plaintext: true, ExpiresAt: i.ExpiresAt}}
+	i.Admissions = []storage.Admission{{Class: "quarantine", Scope: "school-a", Plaintext: true, ExpiresAt: i.ExpiresAt}}
 	var err error
 	i, err = h.s.UpdateInstance(h.ctx, h.actor, "quarantine", i)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestProtectionChangePreservesLastVerifiedSource(t *testing.T) {
 	}
 	data := []byte("preserve source")
 	o := h.object(t, "create", data)
-	o, err = h.s.ChangeProtection(h.ctx, h.actor, o.ID, "initial", o.Revision, storage.Protection{Class: "restricted", Scope: "school-a"})
+	o, err = h.s.ChangeProtection(h.ctx, h.actor, o.ID, "initial", o.Revision, storage.Protection{Class: "quarantine", Scope: "school-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
