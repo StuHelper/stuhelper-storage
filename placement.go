@@ -376,6 +376,8 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 			// but does not grant permission to keep using the withdrawn credentials.
 			replacements := 0
 			contributionCopies := 0
+			closingReplica := false
+			var remainingReplicas []Replica
 			for _, r := range replicas {
 				if r.State == "deleted" {
 					continue
@@ -384,6 +386,12 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 				if err != nil {
 					return err
 				}
+				if i.ClosureDraining && r.State == "healthy" {
+					closingReplica = true
+				}
+				if !i.Draining(now) {
+					remainingReplicas = append(remainingReplicas, r)
+				}
 				if r.State == "healthy" && !i.Draining(s.now()) && i.Allows(o.Protection, s.now()) && r.CredentialRevision == i.CredentialRevision && r.ObjectRevision == o.Revision && !r.VerifiedAt.Before(s.now().Add(-s.cfg.VerificationAge)) {
 					replacements++
 					if !i.IsFallback() {
@@ -391,7 +399,17 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 					}
 				}
 			}
-			if replacements >= o.Policy.Target || contributionCopies >= o.Policy.Publish {
+			closureReady := false
+			if closingReplica {
+				// Evaluate publication with the departing replicas removed. This
+				// also checks independent domains and the verified COS exception.
+				after, err := s.statusFromLoaded(o, remainingReplicas, tx.Instance, now, func() ([]Instance, error) { return tx.Instances(100, "") })
+				if err != nil {
+					return err
+				}
+				closureReady = after.Healthy >= o.Policy.Publish || after.VerifiedCOSOnly
+			}
+			if replacements >= o.Policy.Target || contributionCopies >= o.Policy.Publish || closureReady {
 				for _, r := range replicas {
 					if r.State == "deleted" {
 						continue
@@ -401,7 +419,7 @@ func (s *Service) Reconcile(ctx context.Context, p Principal, limit int, after s
 						return err
 					}
 					policyWithdrawn := !i.permitsContent(o.Protection, s.now()) && (r.State == "healthy" || r.State == "checking")
-					if (i.IsFallback() && contributionCopies >= o.Policy.Publish && r.State == "healthy") ||
+					if (closureReady && i.ClosureDraining && r.State == "healthy") || (i.IsFallback() && contributionCopies >= o.Policy.Publish && r.State == "healthy") ||
 						replacements >= o.Policy.Target && (policyWithdrawn || i.Draining(s.now()) && r.State == "healthy") {
 						r.State = "cleanup"
 						if err := tx.SaveReplica(r); err != nil {
