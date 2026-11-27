@@ -424,7 +424,6 @@ func (s *Service) UpdateInstance(ctx context.Context, p Principal, key string, v
 			v.PersonalReserve = old.PersonalReserve
 		}
 		v.QuotaRevision = old.QuotaRevision
-		v.RootNameReceipt = old.RootNameReceipt
 		v.QuotaObservation = old.QuotaObservation
 		v.Used = old.Used
 		v.Reserved = old.Reserved
