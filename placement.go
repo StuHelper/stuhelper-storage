@@ -499,8 +499,6 @@ func (s *Service) RefreshInstance(ctx context.Context, p Principal, id string) e
 	err = s.finishQuotaRefresh(ctx, p, snapshot, &evidence)
 	if err != nil {
 		s.observe("refresh_quota_persist", id, "", err)
-	} else {
-		s.migrateRootName(ctx, snapshot, true)
 	}
 	return err
 }

@@ -240,7 +240,7 @@
       "closure_test.go#TestClosureDrainsToVerifiedFallbackAndRepairsWhenContributionReturns"
     ],
     "STORAGE-45": [
-      "root_name_test.go#TestLegacyContributionRootMigrationAndReceipt"
+      "drivers/bhpan/restore_test.go#TestManagedRootNameAndRestoreByBoundID"
     ]
   }
 }

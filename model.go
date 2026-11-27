@@ -99,11 +99,10 @@ type Admission struct {
 }
 
 type Instance struct {
-	RootNameReceipt RootNameReceipt `json:"-"`
-	FallbackLimit   int64           `json:"fallback_limit,omitempty"`
-	AlertPercent    int             `json:"alert_percent,omitempty"`
-	Trusted         bool            `json:"trusted,omitempty"`
-	TrustConsent    *TrustConsent   `json:"trust_consent,omitempty"`
+	FallbackLimit int64         `json:"fallback_limit,omitempty"`
+	AlertPercent  int           `json:"alert_percent,omitempty"`
+	Trusted       bool          `json:"trusted,omitempty"`
+	TrustConsent  *TrustConsent `json:"trust_consent,omitempty"`
 	// ClosureDraining overlays the owner's cooling period on current consent.
 	ClosureDraining      bool                 `json:"-"`
 	ContributionControl  *ContributionControl `json:"contribution_control,omitempty"`
