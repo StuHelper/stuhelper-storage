@@ -79,7 +79,7 @@ func (p *Pool) Restore(ctx context.Context, i storage.Instance, client Client) e
 	}
 	found := false
 	for _, entry := range dir.Directories {
-		if entry.ID == i.Root && strings.HasPrefix(entry.Name, "stuhelper-storage-") && intentPattern.MatchString(strings.TrimPrefix(entry.Name, "stuhelper-storage-")) {
+		if entry.ID == i.Root {
 			found = true
 		}
 	}

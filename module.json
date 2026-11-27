@@ -238,6 +238,9 @@
     "STORAGE-CLOSURE-01": [
       "closure_test.go#TestCoolingOwnerDrainsExistingAndNewInstancesAndCancelsOnlyOwnBarrier",
       "closure_test.go#TestClosureDrainsToVerifiedFallbackAndRepairsWhenContributionReturns"
+    ],
+    "STORAGE-45": [
+      "drivers/bhpan/restore_test.go#TestManagedRootNameAndRestoreByBoundID"
     ]
   }
 }

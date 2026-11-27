@@ -32,7 +32,7 @@ func (f *restoringClient) List(ctx context.Context, id string) (protocol.Directo
 	return d, err
 }
 func restoredClient(i storage.Instance) *restoringClient {
-	return &restoringClient{fake: &fake{root: i.Root}, account: "stable-user", name: "stuhelper-storage-" + strings.Repeat("a", 32)}
+	return &restoringClient{fake: &fake{root: i.Root}, account: "stable-user", name: rootPrefix + "1234abcd"}
 }
 func TestRestoreExistingBindingAndReplaceSession(t *testing.T) {
 	p, _, i := fixture(t)
@@ -72,7 +72,7 @@ func TestRestoreExistingBindingAndReplaceSession(t *testing.T) {
 func TestRestoreRejectsForeignRootAndRevokedLateResult(t *testing.T) {
 	p, _, i := fixture(t)
 	bad := restoredClient(i)
-	bad.name = "personal"
+	bad.fake.root = "gns://library/another-id"
 	if err := p.Restore(context.Background(), i, bad); !errors.Is(err, storage.ErrDenied) {
 		t.Fatal(err)
 	}
@@ -119,5 +119,30 @@ func TestOlderRevocationPreservesNewerCredentialWork(t *testing.T) {
 	replacement.beforeList = nil
 	if _, err = p.Verify(ctx, i); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestManagedRootNameAndRestoreByBoundID(t *testing.T) {
+	name, err := NewRootName()
+	if err != nil || !IsManagedRootName(name) || len(strings.TrimPrefix(name, "【严禁自行删除！StuHelper贡献空间 严禁自行删除！】")) != 8 {
+		t.Fatal("wrong new root format", err)
+	}
+	p, _, i := fixture(t)
+	defer p.Close()
+	for _, name := range []string{"stuhelper-storage-" + strings.Repeat("a", 32), "用户改过的名称"} {
+		c := restoredClient(i)
+		c.name = name
+		if err := p.Restore(context.Background(), i, c); err != nil {
+			t.Fatal("could not restore the bound ID", err)
+		}
+		if _, err := p.Verify(context.Background(), i); err != nil {
+			t.Fatal("could not use restored session", err)
+		}
+	}
+	c := restoredClient(i)
+	c.name = name
+	c.fake.root = "gns://library/foreign"
+	if err := p.Restore(context.Background(), i, c); !errors.Is(err, storage.ErrDenied) {
+		t.Fatal("restored a different ID with the expected name", err)
 	}
 }
