@@ -498,6 +498,12 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			b.DirectoryIntent = nil
 		} else if b.DirectoryIntent != nil {
 			b.LastError = "result_unknown"
+			if !b.DirectoryIntent.ReviewRequired {
+				b.DirectoryIntent.ReviewRequired = true
+				if err := s.event(ctx, tx, p, b, "directory_review_required", "unknown"); err != nil {
+					return err
+				}
+			}
 		} else if recoverClaim && op.Result == nil && op.Attempts < 5 && op.Until.After(s.cfg.Clock()) {
 			b.LastError = "result_unknown"
 		} else if op.Result == nil && (errors.Is(resultErr, storage.ErrDenied) || errors.Is(resultErr, storage.ErrNotFound) || isChallenge(resultErr)) {

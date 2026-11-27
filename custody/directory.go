@@ -9,9 +9,10 @@ import (
 
 // DirectoryIntent is private provider metadata. Never copy it into a public View.
 type DirectoryIntent struct {
-	Library string
-	Name    string
-	Root    string
+	Library        string
+	Name           string
+	Root           string
+	ReviewRequired bool `json:",omitempty"`
 }
 
 type directoryRecorderKey struct{}
@@ -54,6 +55,7 @@ func (s *Service) directoryRecorder(ctx context.Context, target string, op Opera
 				return storage.ErrConflict
 			}
 			if prior := b.DirectoryIntent; prior != nil {
+				intent.ReviewRequired = prior.ReviewRequired
 				if prior.Library != intent.Library || prior.Name != intent.Name || prior.Root != "" && prior.Root != intent.Root {
 					return storage.ErrConflict
 				}

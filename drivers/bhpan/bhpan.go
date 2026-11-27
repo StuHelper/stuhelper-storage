@@ -59,6 +59,7 @@ type session struct {
 }
 
 type provisionOperation struct {
+	account  string
 	revision int64
 	cancel   context.CancelFunc
 }
@@ -172,7 +173,7 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	p.inFlight[ref]++
 	p.mu.Unlock()
 
-	root, library, account, err := p.provisionRemote(opCtx, client)
+	root, library, account, err := p.provisionRemote(opCtx, ref, client)
 
 	p.mu.Lock()
 	delete(p.provisioning, ref)
@@ -200,13 +201,39 @@ func (p *Pool) Provision(ctx context.Context, ref string, revision int64, client
 	return storage.Instance{Adapter: "bhpan", AccountDomain: s.account, Root: root, CredentialRef: ref, CredentialRevision: revision, ExpiresAt: expires}, nil
 }
 
-func (p *Pool) provisionRemote(ctx context.Context, client Client) (string, string, string, error) {
+// The registration database serializes online enrollments. Standalone Pool
+// callers can also provision two different refs for the same verified account.
+func (p *Pool) reserveProvisionAccount(ref, account string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.provisioning[ref] == nil {
+		return storage.ErrDenied
+	}
+	for _, s := range p.sessions {
+		if s.account == account {
+			return storage.ErrConflict
+		}
+	}
+	for _, pending := range p.provisioning {
+		if pending.account == account {
+			return storage.ErrConflict
+		}
+	}
+	p.provisioning[ref].account = account
+	return nil
+}
+
+func (p *Pool) provisionRemote(ctx context.Context, ref string, client Client) (string, string, string, error) {
 	identity, err := client.Identity(ctx)
 	if err != nil {
 		return "", "", "", p.safe("identity", err)
 	}
 	if identity.ID == "" {
 		return "", "", "", storage.ErrDenied
+	}
+	account := accountDomain(identity.ID)
+	if err := p.reserveProvisionAccount(ref, account); err != nil {
+		return "", "", "", err
 	}
 	libraries, err := client.Libraries(ctx)
 	if err != nil {
@@ -238,7 +265,7 @@ func (p *Pool) provisionRemote(ctx context.Context, client Client) (string, stri
 	if !child(library, root) {
 		return "", "", "", storage.ErrUnknown
 	}
-	return root, library, accountDomain(identity.ID), nil
+	return root, library, account, nil
 }
 
 func (p *Pool) Revoke(ref string, revision int64) {

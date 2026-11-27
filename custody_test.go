@@ -726,6 +726,14 @@ func TestCustodyUnregisteredDirectoryBlocksAnotherBindingAfterExpiry(t *testing.
 	if err != nil || v.State != "blocked" {
 		t.Fatalf("failed provisioning: state=%s err=%v", v.State, err)
 	}
+	h.clock.Add(3 * time.Minute)
+	if _, err = s.Resume(h.ctx, user, key, custody.ResumeRequest{RequestID: key, Revision: v.Revision}, false); err != nil {
+		t.Fatal(err)
+	}
+	var notices int
+	if err = h.db.QueryRow(`SELECT count(*) FROM storage.outbox WHERE data->>'type'='storage.custody.directory_review_required.v1' AND data->>'subject'=$1`, "custody/"+key).Scan(&notices); err != nil || notices != 1 {
+		t.Fatalf("expected one operator review notification, got %d: %v", notices, err)
+	}
 	h.clock.Add(25 * time.Hour)
 	var domain, name string
 	if err = h.db.QueryRow(`SELECT account_domain,data->'DirectoryIntent'->>'Name' FROM storage.custody_bindings WHERE id=$1`, key).Scan(&domain, &name); err != nil || domain != p.account || name != "test-platform-directory" {
