@@ -483,7 +483,7 @@ func TestCallerCancellationAndLeaseDeadlinePreserveSession(t *testing.T) {
 
 func TestProvisionDoesNotBlockPoolOrLeakRefCapacity(t *testing.T) {
 	p, _, active := fixture(t)
-	other, err := p.Provision(context.Background(), "other-credential", 1, &fake{}, time.Now().Add(time.Minute))
+	other, err := p.Provision(context.Background(), "other-credential", 1, &fake{identityID: "other-account"}, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func TestProvisionDoesNotBlockPoolOrLeakRefCapacity(t *testing.T) {
 			t.Fatalf("unexpected error at %d: %v", n, err)
 		}
 	}
-	if _, err := p.Provision(context.Background(), "valid-after-120-failures", 1, &fake{}, time.Now().Add(time.Minute)); err != nil {
+	if _, err := p.Provision(context.Background(), "valid-after-120-failures", 1, &fake{identityID: "new-account"}, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("failed attempts leaked versions capacity: %v", err)
 	}
 }
