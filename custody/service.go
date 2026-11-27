@@ -165,6 +165,9 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 			if b.Revision != q.Revision {
 				return storage.ErrConflict
 			}
+			if b.DirectoryIntent != nil {
+				return storage.ErrConflict
+			}
 			if b.State == "blocked" || b.State == "pending" {
 				now := s.cfg.Clock()
 				prevOp, opErr := tx.Operation(b.RequestID)
@@ -216,7 +219,7 @@ func (s *Service) Submit(ctx context.Context, p storage.Principal, target, key s
 // The provider may have created a root after claiming the account and before
 // returning a candidate. Recover that operation before accepting new credentials.
 func unknownPreparation(b Binding) bool {
-	return b.Instance.ID == "" && b.AccountDomain != "" && (b.LastError == "result_unknown" || b.State == "pending")
+	return b.Instance.ID == "" && b.AccountDomain != "" && (b.DirectoryIntent != nil || b.LastError == "result_unknown" || b.State == "pending")
 }
 
 // Check after recording the pending state inside the registry transaction.
@@ -334,6 +337,7 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 	}
 	work, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
+	work = context.WithValue(work, directoryRecorderKey{}, s.directoryRecorder(work, target, op))
 	claim := func(account string) error {
 		if !id.MatchString(account) {
 			return storage.ErrDenied
@@ -491,6 +495,9 @@ func (s *Service) run(ctx context.Context, p storage.Principal, target string, q
 			op.CompletedAt = s.cfg.Clock()
 			b.State = "ready"
 			b.Instance = applied
+			b.DirectoryIntent = nil
+		} else if b.DirectoryIntent != nil {
+			b.LastError = "result_unknown"
 		} else if recoverClaim && op.Result == nil && op.Attempts < 5 && op.Until.After(s.cfg.Clock()) {
 			b.LastError = "result_unknown"
 		} else if op.Result == nil && (errors.Is(resultErr, storage.ErrDenied) || errors.Is(resultErr, storage.ErrNotFound) || isChallenge(resultErr)) {

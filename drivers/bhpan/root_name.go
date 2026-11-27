@@ -1,6 +1,7 @@
 package bhpan
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"strings"
@@ -27,4 +28,19 @@ func IsManagedRootName(name string) bool {
 	}
 	_, err := hex.DecodeString(suffix)
 	return err == nil && suffix == strings.ToLower(suffix)
+}
+
+// CheckRootAvailable examines the library before a new root is issued. A
+// matching warning label is a conflict and never sufficient proof of ownership.
+func CheckRootAvailable(ctx context.Context, client Client, library string) error {
+	listing, err := client.List(ctx, library)
+	if err != nil {
+		return storage.ErrUnavailable
+	}
+	for _, entry := range listing.Directories {
+		if IsManagedRootName(entry.Name) {
+			return storage.ErrConflict
+		}
+	}
+	return nil
 }

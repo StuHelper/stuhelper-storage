@@ -146,3 +146,13 @@ func TestManagedRootNameAndRestoreByBoundID(t *testing.T) {
 		t.Fatal("restored a different ID with the expected name", err)
 	}
 }
+
+func TestProvisionRejectsExistingManagedDirectory(t *testing.T) {
+	p := NewPool()
+	defer p.Close()
+	existing := &restoringClient{fake: &fake{root: "gns://library/old"}, account: "confirmed-account", name: rootPrefix + "12345678"}
+	_, err := p.Provision(t.Context(), "new-ref", 1, existing, time.Now().Add(time.Hour))
+	if !errors.Is(err, storage.ErrConflict) || existing.root != "gns://library/old" {
+		t.Fatalf("existing root overwritten: root=%q err=%v", existing.root, err)
+	}
+}

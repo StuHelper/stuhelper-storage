@@ -61,7 +61,9 @@ type Binding struct {
 	View
 	Owner         storage.Principal
 	AccountDomain string
-	Instance      storage.Instance
+	// Retained across failed attempts until registration or manual reconciliation.
+	DirectoryIntent *DirectoryIntent `json:",omitempty"`
+	Instance        storage.Instance
 }
 type Operation struct {
 	ID               string

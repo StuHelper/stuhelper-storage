@@ -111,6 +111,7 @@ type custodyProvider struct {
 	failPrepare       atomic.Bool
 	failAfterClaim    atomic.Bool
 	unknownAfterClaim atomic.Bool
+	recordDirectory   bool
 	prepareInputs     atomic.Int32
 	account           string
 }
@@ -143,6 +144,12 @@ func (p *custodyProvider) Prepare(ctx context.Context, id string, until time.Tim
 	}
 	if e := claim(account); e != nil {
 		return storage.Instance{}, e
+	}
+	if p.recordDirectory {
+		intent := custody.DirectoryIntent{Library: "gns://test", Name: "test-platform-directory"}
+		if err := custody.RecordDirectoryIntent(ctx, account, intent); err != nil {
+			return storage.Instance{}, err
+		}
 	}
 	if p.unknownAfterClaim.Load() {
 		return storage.Instance{}, storage.ErrUnknown
@@ -707,4 +714,35 @@ func TestAdoptedInstanceOwnerCanReauthorizeOriginal(t *testing.T) {
 		}
 	}
 	t.Fatal("renewal failed to preserve the account and refresh quota", err)
+}
+
+func TestCustodyUnregisteredDirectoryBlocksAnotherBindingAfterExpiry(t *testing.T) {
+	h, s, p, _, user, q := custodyFixture(t)
+	p.account = "account:shared"
+	p.recordDirectory = true
+	p.failAfterClaim.Store(true)
+	key := "99000000-0000-4000-8000-000000000001"
+	v, err := s.Submit(h.ctx, user, "", key, q)
+	if err != nil || v.State != "blocked" {
+		t.Fatalf("failed provisioning: state=%s err=%v", v.State, err)
+	}
+	h.clock.Add(25 * time.Hour)
+	var domain, name string
+	if err = h.db.QueryRow(`SELECT account_domain,data->'DirectoryIntent'->>'Name' FROM storage.custody_bindings WHERE id=$1`, key).Scan(&domain, &name); err != nil || domain != p.account || name != "test-platform-directory" {
+		t.Fatalf("lost directory intent: domain=%q name=%q err=%v", domain, name, err)
+	}
+	if _, err = s.Delete(h.ctx, user, key, "99000000-0000-4000-8000-000000000002"); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("deleted unresolved directory evidence: %v", err)
+	}
+	q.Until = h.clock.Now().Add(time.Hour)
+	q.Revision = v.Revision
+	if _, err = s.Submit(h.ctx, user, key, "99000000-0000-4000-8000-000000000003", q); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("replaced unresolved request: %v", err)
+	}
+	q.Revision = 0
+	p.failAfterClaim.Store(false)
+	v, err = s.Submit(h.ctx, user, "", "99000000-0000-4000-8000-000000000004", q)
+	if err != nil || v.State != "blocked" || p.creates.Load() != 0 {
+		t.Fatalf("another binding created directory: state=%s writes=%d err=%v", v.State, p.creates.Load(), err)
+	}
 }

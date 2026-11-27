@@ -224,6 +224,9 @@ func (p *Pool) provisionRemote(ctx context.Context, client Client) (string, stri
 	if library == "" {
 		return "", "", "", storage.ErrDenied
 	}
+	if err := CheckRootAvailable(ctx, client, library); err != nil {
+		return "", "", "", err
+	}
 	name, err := NewRootName()
 	if err != nil {
 		return "", "", "", err
