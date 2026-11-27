@@ -158,12 +158,14 @@ func (t *transaction) save(query string, item any, args ...any) error {
 const readInstance = `CASE WHEN closure_draining THEN data || '{"closure_draining":true}'::jsonb ELSE data END`
 
 type instanceRecord struct {
-	Draining bool `json:"closure_draining,omitempty"`
+	RootNameReceipt storage.RootNameReceipt `json:"root_name_receipt,omitzero"`
+	Draining        bool                    `json:"closure_draining,omitempty"`
 	storage.Instance
 	QuotaObservation storage.QuotaObservation `json:"quota_observation,omitzero"`
 }
 
 func (r instanceRecord) instance() storage.Instance {
+	r.Instance.RootNameReceipt = r.RootNameReceipt
 	r.Instance.ClosureDraining = r.Draining
 	r.Instance.QuotaObservation = r.QuotaObservation
 	return r.Instance
@@ -205,7 +207,7 @@ func (t *transaction) Instances(limit int, after string) ([]storage.Instance, er
 	return t.instances(`SELECT `+readInstance+` FROM storage.instances WHERE id>$1 ORDER BY id LIMIT $2`, after, limit)
 }
 func (t *transaction) SaveInstance(v storage.Instance) error {
-	row := instanceRecord{Instance: v, QuotaObservation: v.QuotaObservation}
+	row := instanceRecord{Instance: v, RootNameReceipt: v.RootNameReceipt, QuotaObservation: v.QuotaObservation}
 	return t.save(`INSERT INTO storage.instances(id,account_domain,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET account_domain=excluded.account_domain,data=excluded.data`, row, v.ID, v.AccountDomain)
 }
 func (t *transaction) DeleteRevokedInstance(id string) error {

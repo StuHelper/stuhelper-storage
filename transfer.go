@@ -327,7 +327,7 @@ func (s *Service) readSource(ctx context.Context, o Object, excluded string) (*s
 	return nil, ErrUnavailable
 }
 func (s *Service) readRemote(ctx context.Context, o Object, i Instance, remote Locator) (*stagedFile, error) {
-	driver, err := s.resolver.Resolve(ctx, i)
+	driver, err := s.resolveDriver(ctx, i)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +455,7 @@ func (s *Service) writeReplica(ctx context.Context, j Job, src io.Reader) error 
 	if err != nil {
 		return err
 	}
-	driver, err := s.resolver.Resolve(ctx, i)
+	driver, err := s.resolveDriver(ctx, i)
 	if err != nil {
 		return err
 	}
@@ -710,7 +710,7 @@ func (s *Service) deleteReplica(ctx context.Context, j Job) error {
 	if err != nil {
 		return err
 	}
-	driver, err := s.resolver.Resolve(ctx, i)
+	driver, err := s.resolveDriver(ctx, i)
 	if err != nil {
 		return err
 	}

@@ -4,7 +4,6 @@ package bhpan
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -225,11 +224,11 @@ func (p *Pool) provisionRemote(ctx context.Context, client Client) (string, stri
 	if library == "" {
 		return "", "", "", storage.ErrDenied
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", "", "", storage.ErrUnavailable
+	name, err := NewRootName()
+	if err != nil {
+		return "", "", "", err
 	}
-	root, err := client.CreateDirectory(ctx, library, "stuhelper-storage-"+hex.EncodeToString(nonce[:]))
+	root, err := client.CreateDirectory(ctx, library, name)
 	if err != nil {
 		return "", "", "", p.safe("create-directory", err)
 	}
