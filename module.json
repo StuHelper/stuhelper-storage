@@ -136,6 +136,9 @@
     ],
     "STORAGE-28": [
       "custody_test.go#TestCustodyRecoveryAndRenewalPreserveExistingInstance",
+      "custody_test.go#TestCustodyUnregisteredDirectoryBlocksAnotherBindingAfterExpiry",
+      "drivers/bhpan/restore_test.go#TestProvisionRejectsExistingManagedDirectory",
+      "drivers/bhpan/restore_test.go#TestConcurrentProvisionReservesVerifiedAccountBeforeCreate",
       "custody_test.go#TestInstanceIdempotencySkipsSupplierProbeAndRefreshesExpiredQuota",
       "custody_test.go#TestInstanceUpdatePreservesNewerQuotaSample"
     ],

@@ -146,3 +146,29 @@ func TestManagedRootNameAndRestoreByBoundID(t *testing.T) {
 		t.Fatal("restored a different ID with the expected name", err)
 	}
 }
+
+func TestProvisionRejectsExistingManagedDirectory(t *testing.T) {
+	p := NewPool()
+	defer p.Close()
+	existing := &restoringClient{fake: &fake{root: "gns://library/old"}, account: "confirmed-account", name: rootPrefix + "12345678"}
+	_, err := p.Provision(t.Context(), "new-ref", 1, existing, time.Now().Add(time.Hour))
+	if !errors.Is(err, storage.ErrConflict) || existing.root != "gns://library/old" {
+		t.Fatalf("existing root overwritten: root=%q err=%v", existing.root, err)
+	}
+}
+
+func TestConcurrentProvisionReservesVerifiedAccountBeforeCreate(t *testing.T) {
+	p := NewPool()
+	defer p.Close()
+	listing, release := make(chan struct{}), make(chan struct{})
+	first := &restoringClient{fake: &fake{}, account: "one-account", beforeList: func() { close(listing); <-release }}
+	done := make(chan error, 1)
+	go func() { _, err := p.Provision(t.Context(), "first", 1, first, time.Now().Add(time.Hour)); done <- err }()
+	<-listing
+	second := &fake{identityID: "one-account"}
+	_, err := p.Provision(t.Context(), "second", 1, second, time.Now().Add(time.Hour))
+	close(release)
+	if firstErr := <-done; firstErr != nil || !errors.Is(err, storage.ErrConflict) || second.root != "" {
+		t.Fatalf("concurrent create: first=%v second=%v root=%q", firstErr, err, second.root)
+	}
+}
