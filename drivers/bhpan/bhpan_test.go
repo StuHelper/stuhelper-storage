@@ -612,3 +612,24 @@ func TestWriteWithExistingShardInOversizedLegacyRoot(t *testing.T) {
 	}
 
 }
+
+func TestUploadDiagnosticsRetainWriteStageForProviderErrors(t *testing.T) {
+	for _, check := range []struct{ stage, operation string }{
+		{"create-directory", "mkdir"}, {"begin-upload", "upload-begin"},
+		{"write-part", "part-write"}, {"complete-multipart", "multipart-complete"},
+	} {
+		t.Run(check.stage, func(t *testing.T) {
+			p := NewPool()
+			var events []storage.Diagnostic
+			p.SetObserver(diagnosticObserver(func(d storage.Diagnostic) { events = append(events, d) }))
+			err := p.safe(check.stage, &protocol.Error{Operation: check.operation, Status: 404, Kind: protocol.ErrNotFound})
+			if !errors.Is(err, storage.ErrNotFound) || len(events) != 1 || events[0].Operation != check.stage || events[0].Category != "storage_not_found" || events[0].HTTPStatus != 404 {
+				t.Fatalf("expected the first failed write stage, got %v and %+v", err, events)
+			}
+			p.safe("file-info", protocol.ErrNotFound)
+			if len(events) != 1 {
+				t.Fatal("an expected lookup miss emitted a write failure")
+			}
+		})
+	}
+}
