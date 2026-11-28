@@ -192,7 +192,8 @@
       "retention_test.go#TestBoundedRetentionCleanupPreservesActiveAndUnexpiredRecords"
     ],
     "STORAGE-40": [
-      "observability_test.go#TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify"
+      "observability_test.go#TestObservabilitySanitizedDiagnosticsRuntimeMetricsAndOutboxNotify",
+      "drivers/bhpan/bhpan_test.go#TestUploadDiagnosticsRetainWriteStageForProviderErrors"
     ],
     "STORAGE-42": [
       "bhpan_integration_test.go#TestServiceExecutorAndBHpanPoolRestartAndPopulatedDirectoryIntegration"

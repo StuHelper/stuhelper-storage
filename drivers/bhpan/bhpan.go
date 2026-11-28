@@ -411,6 +411,7 @@ func (s *session) ensureShard(ctx context.Context, opCtx context.Context, prefix
 	created, err := s.client.CreateDirectory(opCtx, s.root, prefix)
 	if err == nil {
 		if !child(s.root, created) {
+			s.pool.observe("create-directory", "bhpan_protocol", 0)
 			return "", storage.ErrUnknown
 		}
 		return s.rememberParent(prefix, created), nil
@@ -603,6 +604,7 @@ func (p *Pool) WriteWithFence(ctx context.Context, i storage.Instance, intent st
 		return remote, s.safeErr(ctx, "begin-upload", err)
 	}
 	if !child(shard, u.DocumentID) {
+		s.pool.observe("begin-upload", "bhpan_protocol", 0)
 		return remote, storage.ErrUnknown
 	}
 	if err := s.checkContext(ctx); err != nil {
@@ -809,11 +811,14 @@ func (p *Pool) safe(op string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if !errors.Is(err, protocol.ErrNotFound) {
+	// A missing object is expected during reconciliation. During a write, a
+	// missing directory or grant is the first failure and must remain visible.
+	write := isUploadStage(op)
+	if write || !errors.Is(err, protocol.ErrNotFound) {
 		status := 0
 		var pe *protocol.Error
 		if errors.As(err, &pe) {
-			if pe.Operation != "" {
+			if !write && pe.Operation != "" {
 				op = pe.Operation
 			}
 			status = pe.Status
@@ -822,6 +827,15 @@ func (p *Pool) safe(op string, err error) error {
 	}
 	return safe(err)
 }
+func isUploadStage(op string) bool {
+	switch op {
+	case "create-directory", "begin-upload", "write-upload", "finish-upload",
+		"multipart-options", "begin-multipart", "part-grants", "write-part", "complete-multipart":
+		return true
+	}
+	return false
+}
+
 func (p *Pool) observe(op, category string, status int) {
 	if p == nil {
 		return
@@ -837,6 +851,8 @@ func (p *Pool) observe(op, category string, status int) {
 }
 func bhpanCategory(err error) string {
 	switch {
+	case errors.Is(err, protocol.ErrNotFound):
+		return "storage_not_found"
 	case errors.Is(err, protocol.ErrSession):
 		return "bhpan_session"
 	case errors.Is(err, protocol.ErrChallenge):
